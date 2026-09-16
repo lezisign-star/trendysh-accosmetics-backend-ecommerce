@@ -1,0 +1,174 @@
+package com.nbh.backend.catalog.service;
+
+import com.nbh.backend.catalog.dto.CreateProductRequest;
+import com.nbh.backend.catalog.dto.ProductDto;
+import com.nbh.backend.catalog.dto.ProductVariantDto;
+import com.nbh.backend.catalog.entity.*;
+import com.nbh.backend.catalog.repository.*;
+import jakarta.persistence.EntityNotFoundException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.security.SecureRandom;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Product/variant creation — the "easy to add a product" flow the founder
+ * called out as a priority. One request creates the product template plus
+ * every initial variant/SKU in a single transaction; variants and barcodes
+ * can also be added one at a time later via the narrower endpoints.
+ *
+ * Deliberately does NOT touch stock — a newly created variant has zero stock
+ * everywhere until a GOODS_RECEIPT is posted through StockPostingService.
+ * Product creation and stock receipt are two different real-world events and
+ * two different permissions (PRODUCT_MANAGE vs STOCK_RECEIVE).
+ */
+@Service
+public class ProductService {
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final ProductRepository productRepository;
+    private final ProductVariantRepository variantRepository;
+    private final BrandRepository brandRepository;
+    private final CategoryRepository categoryRepository;
+    private final ProductAttributeValueRepository attributeValueRepository;
+    private final VariantAttributeValueRepository variantAttributeValueRepository;
+    private final VariantBarcodeRepository variantBarcodeRepository;
+
+    public ProductService(ProductRepository productRepository,
+                           ProductVariantRepository variantRepository,
+                           BrandRepository brandRepository,
+                           CategoryRepository categoryRepository,
+                           ProductAttributeValueRepository attributeValueRepository,
+                           VariantAttributeValueRepository variantAttributeValueRepository,
+                           VariantBarcodeRepository variantBarcodeRepository) {
+        this.productRepository = productRepository;
+        this.variantRepository = variantRepository;
+        this.brandRepository = brandRepository;
+        this.categoryRepository = categoryRepository;
+        this.attributeValueRepository = attributeValueRepository;
+        this.variantAttributeValueRepository = variantAttributeValueRepository;
+        this.variantBarcodeRepository = variantBarcodeRepository;
+    }
+
+    @Transactional
+    public ProductDto createProduct(CreateProductRequest request) {
+        Product product = new Product();
+        product.setName(request.name());
+        product.setSlug(generateUniqueSlug(request.name()));
+        product.setShortDescription(request.shortDescription());
+        product.setDescription(request.description());
+        product.setIngredients(request.ingredients());
+        product.setHowToUse(request.howToUse());
+        product.setPublished(false); // staff publishes explicitly once photos/pricing are ready
+
+        if (request.brandId() != null) {
+            product.setBrand(brandRepository.findById(request.brandId())
+                    .orElseThrow(() -> new EntityNotFoundException("No brand: " + request.brandId())));
+        }
+        if (request.categoryId() != null) {
+            product.setCategory(categoryRepository.findById(request.categoryId())
+                    .orElseThrow(() -> new EntityNotFoundException("No category: " + request.categoryId())));
+        }
+        if (request.subcategoryId() != null) {
+            product.setSubcategory(categoryRepository.findById(request.subcategoryId())
+                    .orElseThrow(() -> new EntityNotFoundException("No subcategory: " + request.subcategoryId())));
+        }
+
+        Product savedProduct = productRepository.save(product);
+
+        List<ProductVariantDto> variantDtos = request.variants().stream()
+                .map(vr -> createVariant(savedProduct, vr))
+                .toList();
+
+        return ProductDto.from(savedProduct, variantDtos);
+    }
+
+    private ProductVariantDto createVariant(Product product, CreateProductRequest.CreateVariantRequest vr) {
+        ProductVariant variant = new ProductVariant();
+        variant.setProduct(product);
+        variant.setSku(vr.sku());
+        variant.setVariantName(vr.variantName());
+        variant.setSellingPrice(new BigDecimal(vr.sellingPrice()));
+        if (vr.compareAtPrice() != null) variant.setCompareAtPrice(new BigDecimal(vr.compareAtPrice()));
+        if (vr.standardCost() != null) variant.setStandardCost(new BigDecimal(vr.standardCost()));
+        if (vr.uom() != null) variant.setUom(vr.uom());
+        if (vr.vatRate() != null) variant.setVatRate(new BigDecimal(vr.vatRate()));
+        variant.setVatExempt(vr.vatExempt());
+        if (vr.reorderLevel() != null) variant.setReorderLevel(new BigDecimal(vr.reorderLevel()));
+
+        variant = variantRepository.save(variant);
+
+        if (vr.attributeValueIds() != null) {
+            for (UUID attrValueId : vr.attributeValueIds()) {
+                ProductAttributeValue attrValue = attributeValueRepository.findById(attrValueId)
+                        .orElseThrow(() -> new EntityNotFoundException("No attribute value: " + attrValueId));
+                VariantAttributeValue join = new VariantAttributeValue();
+                join.setVariant(variant);
+                join.setAttributeValue(attrValue);
+                variantAttributeValueRepository.save(join);
+            }
+        }
+
+        if (vr.barcodes() != null) {
+            for (String code : vr.barcodes()) {
+                VariantBarcode barcode = new VariantBarcode();
+                barcode.setVariant(variant);
+                barcode.setBarcode(code);
+                barcode.setBarcodeType(VariantBarcode.BarcodeType.INTERNAL);
+                barcode.setPrimary(variantBarcodeRepository.findByVariantId(variant.getId()).isEmpty());
+                variantBarcodeRepository.save(barcode);
+            }
+        }
+
+        return ProductVariantDto.from(variant);
+    }
+
+    @Transactional(readOnly = true)
+    public ProductDto getProduct(UUID id) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + id));
+        List<ProductVariantDto> variants = variantRepository.findByProductId(id).stream()
+                .map(ProductVariantDto::from)
+                .toList();
+        return ProductDto.from(product, variants);
+    }
+
+    /**
+     * Audit finding F12 (session 3): this had no pagination and issued one
+     * variant query per product — fine at a handful of products, a 1000-query
+     * response against the founder's stated 1000+ SKU catalogue. Now paginated,
+     * with variants for the whole page batch-fetched in a single query.
+     */
+    @Transactional(readOnly = true)
+    public org.springframework.data.domain.Page<ProductDto> listProducts(org.springframework.data.domain.Pageable pageable) {
+        var page = productRepository.findAll(pageable);
+        List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
+
+        Map<UUID, List<ProductVariantDto>> variantsByProduct = variantRepository.findByProductIdIn(productIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        v -> v.getProduct().getId(),
+                        java.util.stream.Collectors.mapping(ProductVariantDto::from, java.util.stream.Collectors.toList())));
+
+        return page.map(p -> ProductDto.from(p, variantsByProduct.getOrDefault(p.getId(), List.of())));
+    }
+
+    private String generateUniqueSlug(String name) {
+        String base = name.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-|-$)", "");
+        if (base.isBlank()) {
+            base = "product";
+        }
+        String candidate = base;
+        while (productRepository.existsBySlug(candidate)) {
+            candidate = base + "-" + (1000 + RANDOM.nextInt(9000));
+        }
+        return candidate;
+    }
+}

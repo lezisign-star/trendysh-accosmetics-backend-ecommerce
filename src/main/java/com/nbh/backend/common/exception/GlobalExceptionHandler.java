@@ -1,0 +1,160 @@
+package com.nbh.backend.common.exception;
+
+import jakarta.persistence.EntityNotFoundException;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * §4 C7 refactor. Three changes from the pre-refactor version:
+ *
+ * <ol>
+ *   <li>{@code InsufficientStockException}/{@code InsufficientAvailabilityException}
+ *   no longer need their own handlers or a service-class import — both now
+ *   extend {@link DomainException} (via {@link ConflictException}) and are
+ *   caught by {@link #handleDomainException} along with every other domain
+ *   exception. This removes the inverted dependency where the web layer
+ *   imported {@code StockPostingService}/{@code StockReservationService} just
+ *   to reference their nested exception types.</li>
+ *   <li>{@link #handleUnexpected} is a new true fallback — previously an
+ *   unmapped exception fell through to Boot's default error handling with no
+ *   log line at all, which meant a genuine 500 could go completely unnoticed.
+ *   Every handler here now logs, and this one logs at ERROR with a
+ *   correlation id in both the log line and the response body, so a reported
+ *   error can be found in the logs without needing a stack trace pasted into
+ *   a support ticket.</li>
+ *   <li>{@link #handleDataIntegrityViolation} now logs the real exception
+ *   (previously swallowed entirely) — the actual violated constraint name
+ *   never reached a log from here before, which made diagnosing a real
+ *   collision (as opposed to the idempotency-key races handled transparently
+ *   inside {@code StockPostingService.post}) harder than it needed to be.</li>
+ * </ol>
+ *
+ * {@code IllegalStateException}/{@code IllegalArgumentException} stay mapped
+ * (422/400) as a safety net for call sites not yet migrated to the typed
+ * taxonomy — see each type's own handler for why neither should be the
+ * *first* choice for new domain-error code.
+ */
+@Slf4j
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ResponseEntity<Object> handleNotFound(EntityNotFoundException e) {
+        log.warn("404: {}", e.getMessage());
+        return body(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<Object> handleBadCredentials(BadCredentialsException e) {
+        log.warn("401: {}", e.getMessage());
+        return body(HttpStatus.UNAUTHORIZED, e.getMessage());
+    }
+
+    /** Branch-scoping violations (audit finding F12, session 3) surface here as a normal 403 JSON body. */
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<Object> handleAccessDenied(org.springframework.security.access.AccessDeniedException e) {
+        log.warn("403: {}", e.getMessage());
+        return body(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
+    /**
+     * Every exception in the §4 C7 taxonomy — {@link NotFoundException},
+     * {@link ConflictException} (including {@code InsufficientStockException}/
+     * {@code InsufficientAvailabilityException}), {@link UnprocessableException},
+     * and {@link ConfigurationException} — carries its own correct status, so
+     * one handler covers all of them instead of one per concrete type.
+     */
+    @ExceptionHandler(DomainException.class)
+    public ResponseEntity<Object> handleDomainException(DomainException e) {
+        if (e.getStatus().is5xxServerError()) {
+            log.error("{}: {}", e.getStatus().value(), e.getMessage(), e);
+        } else {
+            log.warn("{}: {}", e.getStatus().value(), e.getMessage());
+        }
+        return body(e.getStatus(), e.getMessage());
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Object> handleIllegalState(IllegalStateException e) {
+        log.warn("422: {}", e.getMessage());
+        return body(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Object> handleIllegalArgument(IllegalArgumentException e) {
+        log.warn("400: {}", e.getMessage());
+        return body(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    /** A malformed numeric string in a request body (audit finding F12, session 3) — 400, not a raw 500. */
+    @ExceptionHandler(NumberFormatException.class)
+    public ResponseEntity<Object> handleNumberFormat(NumberFormatException e) {
+        log.warn("400: invalid numeric value: {}", e.getMessage());
+        return body(HttpStatus.BAD_REQUEST, "Invalid numeric value: " + e.getMessage());
+    }
+
+    /**
+     * A genuine DB-level collision that slipped past application checks — e.g. a
+     * document_no collision unrelated to idempotency (audit finding F5/F10,
+     * session 3). The idempotency-key race itself is handled transparently
+     * inside StockPostingService.post(); this is the backstop for everything
+     * else, so a real collision is a 409 a caller can retry, not a raw 500.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Object> handleDataIntegrityViolation(DataIntegrityViolationException e) {
+        log.error("409: unhandled data integrity violation", e);
+        return body(HttpStatus.CONFLICT, "A conflicting record already exists — please retry");
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Object> handleValidation(MethodArgumentNotValidException e) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        e.getBindingResult().getFieldErrors().forEach(fe -> fieldErrors.put(fe.getField(), fe.getDefaultMessage()));
+        log.warn("400: validation failed: {}", fieldErrors);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("timestamp", Instant.now().toString());
+        payload.put("status", HttpStatus.BAD_REQUEST.value());
+        payload.put("error", "Validation failed");
+        payload.put("fields", fieldErrors);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(payload);
+    }
+
+    /**
+     * True fallback — anything not mapped above previously fell through to
+     * Boot's default error handling with no application log line at all, so a
+     * genuine 500 could go completely unnoticed. The correlation id appears in
+     * both the log line (searchable) and the response body (quotable by
+     * whoever reports the error), without leaking the exception's message or
+     * stack trace to the client.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Object> handleUnexpected(Exception e) {
+        String correlationId = UUID.randomUUID().toString();
+        log.error("500 [{}]: unhandled exception", correlationId, e);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("timestamp", Instant.now().toString());
+        payload.put("status", HttpStatus.INTERNAL_SERVER_ERROR.value());
+        payload.put("error", "An unexpected error occurred");
+        payload.put("correlationId", correlationId);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(payload);
+    }
+
+    private ResponseEntity<Object> body(HttpStatus status, String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("timestamp", Instant.now().toString());
+        payload.put("status", status.value());
+        payload.put("error", message);
+        return ResponseEntity.status(status).body(payload);
+    }
+}

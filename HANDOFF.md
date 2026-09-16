@@ -1,0 +1,541 @@
+# Nairobi Beauty Hub Backend — Handoff
+
+**Status as of 2026-09-14 (session 8):** Phases 0-2 (stock core, staff auth/
+RBAC, cart/checkout/orders/payments) built and live-verified end-to-end
+against real Postgres. **Tier 1 of the session-7 improvement plan (items
+1-8: the four payment bugs, the Mockito unit-test layer, backend events, two
+new ArchUnit rules, the password-encoder fix) is now done and live-verified
+— see "Session 8" below.** Tier 2/3 of that plan (Boot 3.3.4→3.5.x, the
+exception taxonomy, RestClient timeouts, etc.) remain open and are the
+natural next work, alongside Phase 3+ feature work.
+
+Full design rationale: `C:\Users\ADMIN\.claude\NairobiBeautyHub_Platform_Architecture.md`
+(read this first — it explains *why* every table/service below exists, with
+Odoo/ERPNext source citations). The full audit is
+`C:\Users\ADMIN\.claude\NairobiBeautyHub_Backend_Improvement_Plan.md` — still
+worth reading in full for Tier 2/3 and the reasoning behind Tier 1's fixes.
+
+## Founder decisions confirmed 2026-09-12 (closes architecture doc §8 Q1-Q5)
+
+1. **Payment provider: M-Pesa via Daraja direct** (not PayHero) — same
+   integration pattern as Moments Packaging's `DarajaService`.
+2. **One shared catalogue, no branch-exclusive products.** Founder's own
+   words: e-commerce doesn't distinguish branches at all; dispatch can come
+   from either branch. The design doc's default (`branch_product_availability`
+   table NOT needed) stands as originally proposed.
+3. **Cart reservation: none at add-to-cart; reserve at checkout initiation
+   with a 15-minute TTL.** Matches `StockReservation.expiresAt` already
+   modelled with `ONLINE_CART` as a distinct source from `ONLINE_ORDER`.
+4. **Order fulfilment branch: a fixed default branch for now** (Branch A is
+   already seeded `is_default_online_fulfilment = true` in `V4`). Smarter
+   assignment (nearest-to-address, whichever-has-stock) is explicitly
+   deferred, not decided against — revisit once there's real order volume.
+5. **Negative stock: hard-blocked, confirmed** — matches what's already
+   implemented (`StockPostingService.applyMovement`'s guard).
+
+These unblock Phase 2 (cart/checkout/orders) once Phase 1 hardening (below)
+is complete.
+
+## What's built
+
+- Maven/Spring Boot 3.3.4, Java 21, Postgres + Flyway — same shape as Moments
+  Packaging's backend (`pom.xml`, `mvnw` wrapper copied from there).
+- **Flyway migrations** (`src/main/resources/db/migration/`):
+  `V1` branches + stock_location (2 branches seeded, physical + virtual
+  locations), `V2` catalogue (product/variant/attributes/images/barcodes),
+  `V3` the stock core (stock_document, stock_document_line,
+  stock_ledger_entry — DB-trigger-enforced append-only — stock_balance,
+  stock_reservation), `V4` seeds Branch A / Branch B and their locations.
+- **Entities + repositories** for all of the above (`branch/`, `catalog/`,
+  `stock/` packages).
+- **`StockPostingService`** (`stock/service/`) — the single enforced write
+  path for every stock quantity change. Implements the sorted-lock,
+  balance-row-first locking protocol from the design doc §4.5/§4.3.
+- **`StockReservationService`** — the anti-oversell mechanism unifying
+  online-cart/order and POS-ticket holds against one `stock_reservation`
+  table.
+- **`StockBalanceRebuildService`** — the from-ledger consistency check.
+- **`SingleWritePathArchitectureTest`** (ArchUnit) — mechanically fails the
+  build if any class outside `stock.service` ever writes
+  `stock_ledger_entry`/`stock_balance` directly. **Passes.**
+- **`ConcurrentReservationRaceTest`** — 12 threads race for the last unit of
+  one SKU across simulated ONLINE_ORDER/POS_TICKET reservations; asserts
+  exactly one wins. **Written but not yet run** — needs a real local Postgres
+  test database; see below.
+
+Verified: `./mvnw compile` and `./mvnw test-compile` both succeed with no
+errors (41 main classes). The ArchUnit test has been run and passes.
+
+## Session 2 additions — staff auth/RBAC
+
+- **`V5__staff_auth_and_rbac.sql`** — `staff_role` (+ `staff_role_permissions`
+  collection table), `staff_user`, `staff_branch_assignment` (the
+  branch-scope dimension Moments' RBAC lacks — design doc §4.8).
+- **`Permission`** enum, **`StaffRole`**, **`StaffUser`** (implements
+  `UserDetails`, staff-only — no customer auth yet, that's Phase 2),
+  **`StaffBranchAssignment`**.
+- **`StaffRoleSeeder`** — seeds 5 default roles on boot (SUPER_ADMIN,
+  BRANCH_MANAGER, CASHIER, STOCK_CONTROLLER, VIEWER) and re-syncs any
+  role still flagged `isDefault` whenever `Permission` gains new values,
+  mirroring Moments' `StaffRoleSeeder` pattern.
+- **`StaffUserSeeder`** — creates one bootstrap SUPER_ADMIN account on first
+  boot (email from `BOOTSTRAP_ADMIN_EMAIL`, default
+  `admin@nairobibeautyhub.co.ke`), logs a random temp password **once**,
+  flags `mustChangePassword`. Depends on `StaffRoleSeeder` to force boot
+  ordering (`@PostConstruct` order isn't guaranteed across unrelated beans).
+- **`JwtService`/`JwtAuthFilter`/`SecurityConfig`** — adapted from Moments,
+  trimmed to staff-only (no cookie auth, no impersonation, no refresh token
+  yet — access tokens are 8h-lived via `app.jwt.access-token-expiration-ms`
+  until a refresh flow is built).
+- **`AuthController`** — `POST /api/v1/auth/login`,
+  `POST /api/v1/auth/change-password`, `GET /api/v1/auth/me`.
+
+**Set a real `JWT_SECRET` env var before any non-local deployment** — the
+`application.yml` default is a placeholder that says so in its own comment.
+
+## To run against a real database
+
+```bash
+createdb -h localhost -U postgres nairobi_beauty_hub_test
+./mvnw test -Dtest=ConcurrentReservationRaceTest
+```
+
+Set `DB_USERNAME`/`DB_PASSWORD` env vars if your local Postgres isn't the
+default `postgres`/`postgres` — this session didn't have the local Postgres
+password, so neither the concurrency test nor a full app boot (Flyway
+migrate + all seeders) has been run yet. The `ConcurrentReservationRaceTest`
+is the Phase-1 gate the architecture doc calls for — don't build anything on
+top of the stock core until it's green on your machine. Also worth doing:
+`./mvnw spring-boot:run` against the same test/dev DB and confirm the
+bootstrap SUPER_ADMIN log line appears and `POST /api/v1/auth/login` works.
+
+## Session 3 additions — REST layer + live end-to-end verification
+
+- **Controllers**: `BranchController` (list/get/create branch, list a
+  branch's locations), `ProductController` + `ProductService` (create a
+  product with N variants/attributes/barcodes in one call — the "easy to
+  add a product" flow — plus list/get), `CategoryController`,
+  `BrandController`, `StockController` (`/stock/receive`, `/stock/adjust`,
+  `/stock/balance`), `StockReservationController`
+  (`/stock/reservations` reserve/release/fulfill).
+- **`GlobalExceptionHandler`** — maps `EntityNotFoundException` (404),
+  `InsufficientStockException`/`InsufficientAvailabilityException` (409),
+  validation failures (400), bad credentials (401) to sane JSON error bodies.
+- **Given a real Postgres password this session**, ran the full loop against
+  a live local Postgres: `dropdb`/`createdb`, full `mvnw test` (both tests
+  green), then `mvnw spring-boot:run` and drove the actual HTTP API with
+  curl — login, create product+variant, receive 50 units, reserve 5,
+  adjust -3, confirmed balances at every step (`SUPPLIER` went to -50 as
+  designed, `BR-A/SALES_FLOOR` correctly showed on_hand 47 / reserved 5 /
+  available 42 with avg_cost 900.00 after the moving-average update).
+
+**Four real bugs found and fixed during that verification pass** (not
+hypothetical — each one failed a real test or a real curl call first):
+1. Seven tables were missing `created_at`/`updated_at` columns their JPA
+   entities require (`product_attribute`, `product_attribute_value`,
+   `variant_barcode`, `product_image`, `stock_document_line`,
+   `stock_balance`, `stock_reservation`) — Hibernate schema validation
+   failed on boot. Fixed in `V2`/`V3` directly (nothing was deployed yet).
+2. **The negative-stock guard was blocking virtual locations.** Receiving
+   goods failed because `SUPPLIER` (correctly meant to go negative — it's
+   the "infinite" other side of every receipt) tripped the same
+   hard-block as physical locations. Fixed: the guard in
+   `StockPostingService.applyMovement` now checks `location.isInternal()`;
+   also removed the blanket `CHECK(on_hand_qty >= 0)` from the
+   `stock_balance` migration for the same reason.
+3. **Ledger entries were being saved before their parent document/lines
+   were persisted** — `StockLedgerEntry.document`/`documentLine` are
+   NOT NULL FKs, and Hibernate can't resolve a reference to a still-
+   transient entity. Fixed: `post()` now `saveAndFlush`s the document
+   (cascading its lines) before building any ledger entries.
+4. **`StockController.balance()` threw `LazyInitializationException`** —
+   `StockBalance.variant`/`.location` are lazy, and the controller method
+   wasn't transactional, so the Hibernate session was gone by the time the
+   DTO mapper accessed `variant.getSku()`/`location.getCode()`. Fixed with
+   `@Transactional(readOnly = true)` on the endpoint.
+
+## Session 4 — Opus audit fixes (F1-F7 of 12 findings)
+
+An independent Opus audit (`C:\Users\ADMIN\.claude\NairobiBeautyHub_Backend_Audit_Session3.md`)
+confirmed session 3's four bug fixes were correct, then found 12 new issues —
+two critical. All of F1-F7 are now fixed and covered by passing tests
+(7 tests across 4 classes, all green against real Postgres):
+
+- **F1 (critical)** — `StockReservationController`'s `reserve`/`release`/
+  `fulfill` were gated on `PERM_STOCK_VIEW`, a read-only permission `VIEWER`
+  holds. Fixed: now `hasAnyAuthority('PERM_POS_SELL','PERM_ORDER_MANAGE_ALL','PERM_STOCK_ADJUST')`.
+- **F3 (critical)** — the negative-stock guard only checked `on_hand >= 0`,
+  never `on_hand >= reserved_qty`, so a write-off or unreserved sale could
+  silently consume a paying customer's already-reserved unit — the exact
+  oversell this whole subsystem exists to prevent. Fixed: `StockDocumentLine`
+  now carries an optional `reservation` link; `StockPostingService` enforces
+  a reserved-qty floor on unreserved outbound movements and, when a line
+  does reference its own reservation, closes that hold (decrements
+  `reserved_qty`, marks `FULFILLED`) in the SAME transaction as the ledger
+  append. New migration `V6__stock_document_line_reservation_link.sql`.
+- **F2 (critical)** — the ArchUnit single-write-path rule matched only
+  `save(Object)` by exact overload (missing `saveAndFlush`, `saveAll`,
+  `delete*`, dirty-checking entirely) and was scoped by package, not by
+  class. Fixed: `SingleWritePathArchitectureTest` now has 3 rules matching
+  call targets structurally (owner + method-name prefix) and naming
+  `StockPostingService`/`StockReservationService` explicitly. Verified: the
+  audit empirically proved the old rule's gaps with a throwaway violating
+  class before I rewrote it.
+- **F4 (high)** — `StockReservationService.release`/`fulfill` read the
+  reservation with an unlocked `findById`, so two concurrent terminations of
+  the same hold could double-decrement `reserved_qty`, silently hidden by a
+  `.max(ZERO)` clamp. Fixed: both now lock the balance row first, then
+  lock the reservation itself (`StockReservationRepository.lockById`) and
+  re-check `ACTIVE` status inside that lock; the clamp is gone so a real
+  accounting error now hits the DB's `CHECK(reserved_qty >= 0)` instead of
+  being absorbed.
+- **F5 (high)** — the "first balance creation" and idempotency-key retries
+  were written to catch-and-retry inside the SAME `@Transactional` method,
+  which cannot work on Postgres: once any statement in a transaction fails,
+  the whole transaction is aborted and every subsequent statement — including
+  the "retry" — fails too ("current transaction is aborted"). **Caught by my
+  own new test** (`ConcurrentPostingRaceTest`) before this was written up as
+  fixed. Real fix: `StockBalanceRepository.insertZeroIfAbsent` is a native
+  `INSERT ... ON CONFLICT (variant_id, location_id) DO NOTHING`, which never
+  raises, so the locking SELECT after it always succeeds. The document-level
+  idempotency race is left as an honest gap (no caller sets `idempotencyKey`
+  yet) — a real collision now surfaces as 409 via `GlobalExceptionHandler`,
+  not a raw 500.
+- **F6 (medium)** — `/stock/receive` and `/stock/adjust` accepted virtual
+  locations (`SUPPLIER`/`CUSTOMER`/`ADJUSTMENT`/`IN_TRANSIT`) as the target,
+  bypassing the negative-stock guard entirely. Fixed: both now reject any
+  non-internal or inactive location via `findInternalActiveLocationOrThrow`.
+- **F7 (medium)** — `StockBalanceRebuildService` was dead code (nothing
+  called it) and, worse, didn't actually rebuild anything — it compared the
+  cached balance against `findLatestQtyAfter`, which reads the SAME
+  denormalised value the write path wrote, so it could never disagree with
+  itself. Fixed: real single-pass reconciliation via
+  `SUM(qty_change) GROUP BY (variant, location)`, plus the double-entry
+  invariant check (`SUM(qty_change)` per variant across ALL locations = 0).
+  Exposed behind `GET /api/v1/admin/stock/consistency-check`
+  (`PERM_SETTINGS_MANAGE`).
+
+**New tests closing the Phase-1 gate** (the architecture doc's three-clause
+gate was previously only 1/3 covered — see the audit report §3):
+`ConcurrentPostingRaceTest` (exactly one posting wins the last unit,
+`on_hand` never negative; all concurrent first-receipts for a never-before-
+stocked pair succeed with no lost updates) and `RebuildFromLedgerTest`
+(a mixed receipt/sale/transfer sequence reconciles exactly). All 3 gate
+clauses are now real, passing tests.
+
+## Session 5 — F8-F12 closed, plus founder decisions confirmed
+
+All remaining audit findings from session 3's independent Opus audit are now
+fixed (F1-F12, all 12). Full suite still green (7 tests, 4 classes) after
+each change, plus a live boot + HTTP smoke test for the two hardest to
+unit-test (JWT startup guard, sequential document numbering).
+
+- **F8 (medium)** — the dev JWT secret had no guard. Fixed:
+  `JwtService.validateSecretIsNotTheDevDefaultOutsideDev` (`@PostConstruct`)
+  refuses to boot if the secret still equals the committed dev placeholder
+  while no dev/test/default profile is active. Verified live: boots fine
+  locally (no profile set = treated as safe), would refuse to start on a
+  real deployment profile with `JWT_SECRET` unset. The datasource default
+  (`postgres`/`postgres`) was deliberately NOT given the same treatment — a
+  bad `DB_URL` already fails loudly by definition (can't connect = won't
+  boot), unlike a bad JWT secret which succeeds silently.
+- **F9 (medium)** — no sweeper ever expired a lapsed cart hold or gave its
+  qty back to `stock_balance.reserved_qty`, so the cached "available"
+  figure (used by, e.g., a future storefront stock badge) could diverge
+  from `StockReservationService.reserve()`'s own live, expiry-aware
+  arithmetic. Fixed: `StockReservationExpirySweeper` (`@Scheduled`, every
+  60s by default, `app.stock.reservation-sweep-interval-ms`) flips lapsed
+  `ACTIVE` reservations to a new `EXPIRED` status through the same locked
+  `terminate()` path release/fulfill use — same double-decrement protection
+  (F4) applies. `@EnableScheduling` added to the main application class.
+- **F10 (low/medium)** — `document_no` used a random 4-digit suffix (9000
+  values/prefix/day); the audit's birthday-bound math showed ~55% collision
+  odds at 120 documents/day, >99% at 300. Fixed: `stock_document_counter`
+  table (`V7`) backs a real atomic per-(type, day) counter via
+  `INSERT ... ON CONFLICT DO UPDATE` — the increment and the read-back
+  happen in one `@Transactional` method so the row lock is held across
+  both, making it impossible for two callers to receive the same number.
+  New format: `GRN-20260912-000001`. **Verified live** — three consecutive
+  receipts produced `...000001`, `...000002`, `...000003`.
+- **F11 (low)** — moving-average cost was computed at 4dp but
+  `stock_balance.avg_cost`/`stock_ledger_entry.avg_cost_after`/
+  `stock_value*` were stored at 2dp, so a from-ledger rebuild could not
+  reproduce values byte-identically (the doc's own §4.4 acceptance
+  criterion). Fixed: widened those columns to `NUMERIC(14,4)` (`V8`) to
+  match the computation rather than rounding the computation down and
+  losing real precision. `unit_cost` columns deliberately left at 2dp —
+  they're direct human/sale-price inputs, not derived averages.
+- **F12 (low, partial)** — `GET /api/v1/products` is now paginated
+  (`Pageable`, default page size 20) with variants for the whole page
+  batch-fetched in one query instead of one-per-product; numeric request
+  fields that fail to parse now map to 400 via a new `NumberFormatException`
+  handler instead of a raw 500; `BranchController.create` now validates
+  (`@Valid`, `@NotBlank`). **The bigger item — `staff_branch_assignment`
+  enforcement — is done too**: `StaffBranchAccessService` checks a staff
+  account's assigned branch(es) (if any — an account with zero assignments,
+  e.g. the bootstrap SUPER_ADMIN, is treated as unrestricted) against the
+  target branch on `/stock/receive`, `/stock/adjust`, and
+  `/stock/reservations` (reserve); a mismatch is a 403 via a new
+  `AccessDeniedException` handler. `release`/`fulfill` by raw reservation
+  ID still have no ownership check — left as a known gap until
+  carts/tickets exist to check ownership against (same reasoning as F1's
+  original fix note).
+
+(See "Founder decisions confirmed 2026-09-12" near the top of this file for
+the §8 Q1-Q5 answers — payment provider, catalogue sharing, cart TTL,
+fulfilment branch, negative stock. All confirmed; every audit finding from
+the session 3 review is now closed. Phase 2 (cart/checkout/orders) is the
+genuinely next piece of work.)
+
+## Session 6 — Phase 2: cart, checkout, orders, payments
+
+Guest-only (no customer account system yet — deferred per architecture doc
+§2.1). New migrations `V9` (cart/cart_item/customer_order/
+customer_order_item/payment_record) and `V10` (order_counter, same
+atomic-counter pattern as `V7`'s stock document counter).
+
+**The full loop is built and live-verified end-to-end against real
+Postgres** — not just unit tests. Sequence tested: create product → receive
+10 units → guest adds 3 to cart (`CartController`, scoped by an
+`X-Cart-Session` header, no login) → checkout (`CheckoutController` →
+`CheckoutService`) creates a `PENDING_PAYMENT` order **and reserves stock in
+the same transaction** (`on_hand=10, reserved=3, available=7` — confirmed via
+`/stock/balance`) → manual payment confirmation (`PaymentController`'s
+`confirm-manual`, standing in for the real Daraja callback — see below) →
+`PaymentService.confirmSuccess` flips the reservation from the 15-minute
+`ONLINE_CART` hold to a permanent `ONLINE_ORDER` hold
+(`StockReservationService.confirmForOrder`) and the order to `PAID` → staff
+calls `POST /orders/{id}/fulfil` (`OrderFulfilmentService`), which posts a
+real `SALE_ONLINE` stock document with each line naming the reservation it
+closes — **confirmed live**: `on_hand` dropped 10→7, `reserved` dropped
+3→0, `CUSTOMER` (virtual) correctly showed +3, order status → `DISPATCHED`.
+
+**Two real bugs found and fixed during that live pass:**
+1. `cart_item` extends `BaseEntity` (needs `created_at`) but `V9` only gave
+   it `added_at`/`updated_at` — the exact same class of migration/entity
+   mismatch as session 3's F-something findings. Fixed directly in `V9`
+   (nothing deployed yet).
+2. `PaymentRecord.rawResponse`/`rawRequest` are mapped as `jsonb`
+   (`@JdbcTypeCode(SqlTypes.JSON)`), but `PaymentController` was passing a
+   bare `Map.toString()` (Daraja callback path — `{Body={stkCallback=...}}`
+   uses `=`, not valid JSON) and a plain concatenated string (manual-confirm
+   path) — both failed Postgres's jsonb parse with `invalid input syntax for
+   type json`, surfaced correctly as a 409 via the F5 `DataIntegrityViolationException`
+   handler rather than a raw 500, but still wrong. Fixed: both call sites now
+   go through a shared `toJson()` helper using Jackson's `ObjectMapper`.
+
+Also proactively avoided a third bug of the exact class session 3's audit
+found (F4 in that audit — `LazyInitializationException` from DTO-mapping
+outside a transaction): `OrderController.fulfil()` needed `@Transactional`
+on the *controller* method itself (not just the service method it calls) so
+`OrderDto.from()`'s lazy `variant`/`branch` access joins the same Hibernate
+session the service used, instead of hitting a closed one after the
+service's own `@Transactional` boundary commits and returns.
+
+**What's real vs. what's a stand-in:**
+- `CartService`, `CheckoutService`, `StockReservationService.confirmForOrder`,
+  `PaymentService`, `OrderFulfilmentService` are all real, tested, working
+  code — not stubs.
+- `DarajaPaymentGateway` (M-Pesa STK push) is structurally complete —
+  OAuth token fetch, STK push request shape, all following Safaricom's
+  documented Daraja v1 API — but **NOT LIVE-TESTED**. `app.mpesa.*` are
+  unset placeholders; calling it will fail clearly (refuses to even try
+  with blank credentials) rather than silently. Needs real Safaricom
+  sandbox credentials (consumer key/secret, shortcode, passkey) before it
+  can be trusted. Until then, `PaymentController`'s `confirm-manual`/
+  `fail-manual` (staff-only, cash/bank/manually-confirmed M-Pesa till
+  payments) are the real path to move an order out of `PENDING_PAYMENT` —
+  and stay useful permanently for payment methods that don't have a
+  webhook at all.
+- Delivery fee calculation is not built — `order.deliveryFee` is always 0.
+  `DELIVERY_COURIER`/`DELIVERY_TUMABODA` are accepted as valid
+  `fulfilmentType` values but nothing computes a fee or dispatches a rider
+  yet.
+- Order status only moves `PENDING_PAYMENT → PAID → DISPATCHED` — the
+  `PICKING`/`READY` sub-stages exist in the enum but nothing sets them
+  yet (deliberately collapsed for this pass — see `OrderFulfilmentService`'s
+  javadoc).
+- `unitCostAtSale` is captured correctly at fulfilment time from the stock
+  ledger's average cost — real margin data, not a placeholder.
+
+## Session 8 — Tier 1 of the session-7 improvement plan (all 8 items)
+
+Worked through `NairobiBeautyHub_Backend_Improvement_Plan.md`'s §5 Tier 1 in
+the order given. Every code-behaviour claim in the plan and in this file was
+checked against the actual source before relying on it (line numbers had
+drifted slightly from Phase 2 work; the substance was accurate). Full test
+suite: **45 tests, all green** against a fresh `nairobi_beauty_hub_test`
+(11 migrations, `V11` new this session), plus live HTTP verification via
+curl against `nairobi_beauty_hub_dev` for every fix with an HTTP-visible
+behaviour, the same way every prior session did.
+
+**§4 C1 — the M-Pesa callback was unauthenticated.** `PaymentController.mpesaCallback`
+now requires a high-entropy secret path segment
+(`/api/v1/payments/mpesa/callback/{secret}`, compared with `MessageDigest.isEqual`
+against `app.mpesa.callback-secret`, blank by default = reject everything),
+cross-checks the callback's own claimed `Amount` against the `PaymentRecord`'s
+before ever confirming success, and binds to a typed `MpesaCallbackRequest`
+record instead of `Map<String,Object>` + unchecked casts (a malformed/unknown
+body now logs and returns Safaricom's expected 200/Accepted, never a 500).
+`SecurityConfig`'s permitAll pattern updated to `.../callback/**`.
+**Live-verified** (`nairobi_beauty_hub_dev`, real checkout → payment record,
+provider reference set to simulate a completed `initiate-mpesa`): missing
+secret → 403 (falls out of permitAll entirely), wrong secret → 404, correct
+secret + the attacker's own known `CheckoutRequestID` but no secret → 404
+(the exact self-confirm attack the finding described no longer works),
+malformed/empty/unparseable bodies → 200 with no crash, unknown reference →
+200 with no crash, amount mismatch → order correctly marked `PAYMENT_FAILED`
+not `PAID`, matching amount → order correctly flips to `PAID`.
+
+**§4 C2 — `PaymentRecord` status was an unlocked read-modify-write.**
+`PaymentRecordRepository.lockById` (`PESSIMISTIC_WRITE`, same pattern as F4's
+fix on `StockReservation`) now backs both `confirmSuccess` and `markFailed`.
+**Proven, not just asserted**, by a new integration test,
+`ConcurrentPaymentConfirmationRaceTest`: two threads call `confirmSuccess`/
+`markFailed` on the same payment simultaneously; asserts exactly one applies
+and the other is rejected by the guard, and that order status and reservation
+state never disagree. Temporarily reverted the fix (back to `findById`) to
+confirm the test actually fails without it — **failed 5/5 runs** ("Exactly
+one of confirmSuccess/markFailed must actually apply its write" — both
+applied), then restored the fix and confirmed green again. This is the same
+empirical-proof standard session 4 used for the ArchUnit rewrite.
+
+**§4 C3 — audit finding F1 recurred verbatim.** `confirmManual`/`failManual`
+were gated on `PERM_PAYMENT_VIEW` (a read permission) — added `PAYMENT_MANAGE`
+to the `Permission` enum, changed both to `hasAnyAuthority('PERM_PAYMENT_MANAGE','PERM_ORDER_MANAGE_ALL')`.
+No migration needed (`staff_role_permissions.permission` has no CHECK
+constraint). **Live-verified**: a seeded VIEWER-role account (only
+`PERM_PAYMENT_VIEW`) → 403 on `confirm-manual`; SUPER_ADMIN (now has
+`PAYMENT_MANAGE`) → 200 and the payment/order actually confirm.
+
+**§4 C4 — the callback loaded the entire `payment_record` table.**
+`findAll().stream().filter(...)` replaced with
+`PaymentRecordRepository.findByProviderReference`, backed by a new unique
+index (`V11__payment_record_provider_reference_index.sql` — Postgres treats
+NULLs as distinct, so CASH/BANK payments without a reference are unaffected).
+Exercised implicitly by every C1 callback test above.
+
+**§3 — the Mockito unit-test layer.** All four named targets, all sketched
+cases from the plan's §3.4 tables plus the two events tests §3.2a explicitly
+calls out as highest-value (the *negative* edge-trigger case). Every test
+asserts on a returned/mutated value or an exception's type+message, never on
+a mock call count alone (§3.2's "result driven" standard) —
+`ArgumentCaptor` used for `StockLedgerEntry`/`LowStockThresholdCrossedEvent`
+field assertions, `verify(x, never())` only for genuine negative guarantees.
+- `StockPostingServiceUnitTest` (13 tests) — every case from §3.4-A (moving
+  average incl. the zero-on-hand and no-unit-cost-fallback branches, both
+  guards at their exact boundary, the reservation-fulfilling exemption) plus
+  3 new low-stock-event tests (fires on the crossing, does NOT fire on a
+  second low sale — proving edge- not level-triggered — does not fire on a
+  virtual location).
+- `CheckoutServiceUnitTest` (8 tests) — all of §3.4-B, including the
+  per-line-rounding case (hand-verified: three lines of 333.33 at 16% VAT →
+  45.98 each → 137.94 total, not a total-then-round 137.93).
+- `StockReservationServiceUnitTest` (6 tests) — all of §3.4-C, including the
+  null-vs-past-vs-exactly-now expiry semantics.
+- `PaymentServiceUnitTest` (8 tests, not sketched in the plan — designed
+  from the real guard logic) — idempotent-on-SUCCESS, throws-on-terminal-
+  state, skips items with no reservation, and the C2 corruption scenario
+  restated as a unit-level guarantee (`markFailedWhenAlreadySucceededThrowsAndNeverReleasesStock`).
+- **§3.7's `Clock` injection** done exactly as specified: a `ClockConfig`
+  bean (`Clock.systemUTC()`), threaded into the constructors of all four
+  `Instant.now()` call sites named in the plan
+  (`StockPostingService`/`CheckoutService`/`StockReservationService`/`PaymentService`),
+  tests use `Clock.fixed(...)`. No other `Instant.now()` call site touched
+  (out of scope per the plan).
+- Confirmed the promised inner-loop win: `./mvnw test -Dtest='*UnitTest'`
+  needs no `DB_USERNAME`/`DB_PASSWORD` and no Postgres at all.
+
+**§2 — the five backend events.** `common/event/` — five records
+(`OrderPlacedEvent`, `PaymentConfirmedEvent`, `PaymentFailedEvent`,
+`OrderFulfilledEvent`, `LowStockThresholdCrossedEvent`; IDs and scalars only,
+never entities) and one `EventLoggingListener` with all five methods
+explicitly `@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)`
+(written explicitly per the plan even though it's the default), synchronous,
+log-only per §2.8 (no `@Async` — nothing does real I/O yet). Publishers added
+to `CheckoutService.checkout`, `PaymentService.confirmSuccess`/`markFailed`,
+`OrderFulfilmentService.fulfil`, and `StockPostingService.applyMovement`
+(the low-stock check — edge-triggered exactly as §2.6 specifies, and
+deliberately restricted to `location.isInternal()`, my own addition beyond
+the plan's literal pseudocode: a virtual location like SUPPLIER going more
+negative is the designed other side of every receipt, not a "running low"
+event). **Live-proven, not just unit-tested**: the concurrency integration
+test's log output shows `EventLoggingListener` actually firing
+after-commit against real Postgres (`"Payment confirmed: order RACE-... paid
+500.00 via MPESA..."`).
+
+**§4 C16 — the two new ArchUnit rules**, `ControllerArchitectureTest`
+(new file, `architecture` package): (1) a controller method that calls a DTO's
+static `from(...)` must be `@Transactional`; (2) a mutating endpoint
+(`@Post/@Put/@Patch/@DeleteMapping`) may not be gated only on `*_VIEW`
+authorities. Landing rule 1 required adding `@Transactional`
+(`readOnly = true` on reads) to 10 controller methods that had none —
+`BrandController`/`CategoryController`/`BranchController`'s list/get/create
+endpoints, `StockReservationController.reserve`, `CheckoutController.checkout`
+— two of which (`CategoryDto.from` reading `Category.parent`,
+`StockLocationDto.from` reading `StockLocation.branch`) turned out to touch
+a genuinely lazy association. **Both rules proven empirically** the same way
+session 4 proved the stock-write rule: temporarily reintroduced a real
+violation of each (removed `@Transactional` from a direct-call site;
+regated `confirmManual` back onto `PERM_PAYMENT_VIEW`) and confirmed the
+build fails with the exact violation named, then reverted. **Known,
+documented gap**: rule 1 only sees a *direct* `Dto.from(x)` call in a
+method's own bytecode — a method *reference* (`.map(BrandDto::from)`,
+several simple list endpoints in this codebase use this style) compiles to
+an `invokedynamic` site the call-graph check doesn't attribute back to the
+enclosing method, confirmed by testing `BrandController.list()` specifically.
+Every current method-reference call site still got `@Transactional` added by
+hand as defense in depth; see the test class's javadoc for the full note.
+
+**§1.5 Gap 5 — the password encoder.** `SecurityConfig.passwordEncoder` now
+returns `PasswordEncoderFactories.createDelegatingPasswordEncoder()` with
+`setDefaultPasswordEncoderForMatches(new BCryptPasswordEncoder())` explicitly
+set (required, not optional — without it, verifying any *existing* bare-BCrypt
+hash throws "no PasswordEncoder mapped for the id null", which would have
+locked out every account created before this fix, including the seeded
+bootstrap SUPER_ADMIN). **Live-verified** against `nairobi_beauty_hub_dev`'s
+real bootstrap admin account: logged in against its existing bare hash
+(`$2a$10$...`, no prefix) — worked; called `change-password` — new hash
+written as `{bcrypt}$2a$10$...`; logged in with the new password against the
+new prefixed hash — worked; old password now correctly rejected (401).
+
+**Migrations:** only one this session, `V11__payment_record_provider_reference_index.sql`.
+
+**Dev-DB test artifacts, `nairobi_beauty_hub_dev` only** (not `_test`, not
+production — no prod exists yet): the bootstrap SUPER_ADMIN's password was
+reset (to a known value, for login testing, since the original
+once-only-logged temp password from an earlier session was never recorded
+anywhere) and then changed again via a real `change-password` call as part
+of verifying the §1.5 fix — it is *not* whatever it was before this session,
+and the value isn't written here on purpose. A handful of test
+products/orders/payment records from the C1-C4 curl verification pass are
+also sitting in that DB (`C1 Verification Lotion` etc.) — harmless, same as
+every prior session's live-test leftovers, left in place rather than cleaned
+up.
+
+**Not done, and correctly out of scope for this session**: everything in
+Tier 2 (Boot 3.3.4→3.5.x, RestClient timeouts, `REQUIRES_NEW` on the counter
+generators, `@EntityGraph` for order reads, the exception taxonomy, actuator)
+and Tier 3. The plan explicitly sequences the Boot bump *after* the unit-test
+layer (done this session) so it has real tests validating it — that's the
+natural next infrastructure item, whenever this project's next session picks
+up Tier 2.
+
+## Deliberately not built yet
+
+Refresh tokens, password-reset flow, POS, inter-branch transfers (the
+two-leg IN_TRANSIT flow from the design doc §4.6 — `StockDocumentType.TRANSFER`
+exists in the schema but no endpoint posts one yet), image upload (endpoints
+accept an already-hosted URL only — no Cloudinary/R2 integration wired in),
+delivery fee calculation, TumaBoda dispatch integration, customer accounts/
+login (checkout is guest-only), notifications (order confirmation emails/SMS),
+promo codes, delivery zones.
+
+## Before continuing
+
+The design doc §8 lists 14 open questions; five block Phase 1 proper (payment
+provider, shared-vs-branch catalogue, cart reservation TTL, which branch
+fulfils an online order, negative-stock policy). This scaffold used the
+doc's own recommended defaults where one was given (one catalogue/per-branch
+stock, checkout-time reservation, hard-blocked negative stock) — confirm or
+override before building the e-commerce layer on top.

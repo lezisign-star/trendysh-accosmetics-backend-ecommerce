@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nairobi_beauty_hub_test}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        # §4 C5: lets OrderReadQueryCountTest assert an order read is O(1)
+        # queries, not O(n) in item count — a mechanical guard against the
+        # N+1 regressing back in, rather than relying on it being noticed by
+        # eye every session.
+        generate_statistics: true
+  flyway:
+    clean-disabled: false
+
+app:
+  mpesa:
+    # Known value for live/manual testing of the callback endpoint (§4 C1) —
+    # never used outside the test profile.
+    callback-secret: test-only-callback-secret-not-for-any-real-deployment
+
+logging:
+  level:
+    # generate_statistics above also auto-enables a per-session "Session
+    # Metrics" INFO dump on every session close — drowns out real test
+    # output. The counters OrderReadQueryCountTest reads come straight from
+    # the SessionFactory's Statistics object, not from this logger.
+    org.hibernate.engine.internal.StatisticalLoggingSessionEventListener: WARN

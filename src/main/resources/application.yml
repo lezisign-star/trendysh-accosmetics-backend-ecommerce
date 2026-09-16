@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: nairobi-beauty-hub-backend
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nairobi_beauty_hub}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          # §4 C5: batches multiple inserts/updates of the same entity type into
+          # one round trip instead of one-statement-per-row — cheap, unconditional
+          # win on any bulk write (e.g. StockPostingService posting a multi-line
+          # document), independent of the @EntityGraph fix for reads.
+          batch_size: 20
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+app:
+  jwt:
+    # DEV DEFAULT ONLY — override with a real random secret via JWT_SECRET before
+    # any non-local deployment. Must be >= 256 bits for HS256.
+    secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-before-any-real-deployment-32bytes}
+    access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:28800000} # 8h
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  bootstrap:
+    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:admin@nairobibeautyhub.co.ke}
+  stock:
+    reservation-sweep-interval-ms: ${RESERVATION_SWEEP_INTERVAL_MS:60000}
+  mpesa:
+    # UNSET PLACEHOLDERS — DarajaPaymentGateway refuses to call Safaricom until
+    # real sandbox credentials are set here. See that class's javadoc.
+    base-url: ${MPESA_BASE_URL:https://sandbox.safaricom.co.ke}
+    consumer-key: ${MPESA_CONSUMER_KEY:}
+    consumer-secret: ${MPESA_CONSUMER_SECRET:}
+    shortcode: ${MPESA_SHORTCODE:}
+    passkey: ${MPESA_PASSKEY:}
+    # MUST end in /<callback-secret>'s value below, e.g.
+    # https://api.example.com/api/v1/payments/mpesa/callback/<random-secret>
+    callback-url: ${MPESA_CALLBACK_URL:}
+    # §4 C1 fix — a high-entropy random value (e.g. `openssl rand -hex 32`),
+    # never committed, matched via PaymentController.isAuthenticCallback.
+    # Blank (the default) means the callback endpoint rejects every request —
+    # set this BEFORE the callback URL is ever registered with Safaricom.
+    callback-secret: ${MPESA_CALLBACK_SECRET:}
+
+server:
+  port: ${PORT:8081}
+
+logging:
+  level:
+    com.nbh.backend: DEBUG

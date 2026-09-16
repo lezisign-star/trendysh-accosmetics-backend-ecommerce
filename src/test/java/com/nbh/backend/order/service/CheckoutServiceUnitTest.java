@@ -1,0 +1,230 @@
+package com.nbh.backend.order.service;
+
+import com.nbh.backend.branch.entity.Branch;
+import com.nbh.backend.branch.entity.LocationType;
+import com.nbh.backend.branch.entity.StockLocation;
+import com.nbh.backend.branch.repository.BranchRepository;
+import com.nbh.backend.branch.repository.StockLocationRepository;
+import com.nbh.backend.cart.entity.Cart;
+import com.nbh.backend.cart.entity.CartItem;
+import com.nbh.backend.cart.repository.CartItemRepository;
+import com.nbh.backend.cart.repository.CartRepository;
+import com.nbh.backend.catalog.entity.Product;
+import com.nbh.backend.catalog.entity.ProductVariant;
+import com.nbh.backend.common.exception.ConfigurationException;
+import com.nbh.backend.order.dto.CheckoutRequest;
+import com.nbh.backend.order.entity.FulfilmentType;
+import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.payment.repository.PaymentRecordRepository;
+import com.nbh.backend.stock.entity.StockReservation;
+import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
+import com.nbh.backend.stock.service.StockReservationService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+/**
+ * §3.4-B: {@code CheckoutService.checkout}'s VAT/totals maths, mocked. This
+ * class had ZERO test coverage of any kind before this — money maths with no
+ * test, per the plan's framing. The rollback-on-partial-reservation-failure
+ * property itself (the actual transactional guarantee) is NOT re-proven
+ * here — that needs a real transaction and belongs to an integration test;
+ * this only pins that the exception propagates unchanged out of checkout().
+ */
+@ExtendWith(MockitoExtension.class)
+class CheckoutServiceUnitTest {
+
+    @Mock private CartRepository cartRepository;
+    @Mock private CartItemRepository cartItemRepository;
+    @Mock private BranchRepository branchRepository;
+    @Mock private StockLocationRepository locationRepository;
+    @Mock private CustomerOrderRepository orderRepository;
+    @Mock private PaymentRecordRepository paymentRecordRepository;
+    @Mock private StockReservationService reservationService;
+    @Mock private OrderNoGenerator orderNoGenerator;
+    @Mock private ApplicationEventPublisher eventPublisher;
+
+    private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
+    private CheckoutService checkoutService;
+
+    private static final String SESSION_ID = "session-under-test";
+    private Cart cart;
+    private Branch fulfilmentBranch;
+    private StockLocation salesFloor;
+
+    @BeforeEach
+    void setUp() {
+        checkoutService = new CheckoutService(cartRepository, cartItemRepository, branchRepository,
+                locationRepository, orderRepository, paymentRecordRepository, reservationService,
+                orderNoGenerator, clock, eventPublisher);
+
+        cart = new Cart();
+        cart.setId(UUID.randomUUID());
+        cart.setSessionId(SESSION_ID);
+        cart.setStatus(Cart.CartStatus.ACTIVE);
+        lenient().when(cartRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(cart));
+
+        fulfilmentBranch = new Branch();
+        fulfilmentBranch.setId(UUID.randomUUID());
+        fulfilmentBranch.setCode("BR-A");
+        fulfilmentBranch.setDefaultOnlineFulfilment(true);
+        lenient().when(branchRepository.findByIsDefaultOnlineFulfilmentTrue()).thenReturn(Optional.of(fulfilmentBranch));
+
+        salesFloor = new StockLocation();
+        salesFloor.setId(UUID.randomUUID());
+        salesFloor.setCode("BR-A/SALES_FLOOR");
+        lenient().when(locationRepository.findByBranchIdAndLocationType(fulfilmentBranch.getId(), LocationType.SALES_FLOOR))
+                .thenReturn(Optional.of(salesFloor));
+
+        lenient().when(orderNoGenerator.next()).thenReturn("SO-TEST-000001");
+        lenient().when(orderRepository.save(any())).thenAnswer(inv -> {
+            var order = inv.getArgument(0, com.nbh.backend.order.entity.CustomerOrder.class);
+            if (order.getId() == null) {
+                order.setId(UUID.randomUUID());
+            }
+            return order;
+        });
+        lenient().when(paymentRecordRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(reservationService.reserve(any(), any(), any(), any(), any(), any(), any()))
+                .thenAnswer(inv -> new StockReservation());
+    }
+
+    private CartItem cartItem(BigDecimal unitPrice, BigDecimal qty, BigDecimal vatRate, boolean vatExempt) {
+        Product product = new Product();
+        product.setId(UUID.randomUUID());
+
+        ProductVariant variant = new ProductVariant();
+        variant.setId(UUID.randomUUID());
+        variant.setProduct(product);
+        variant.setSku("SKU-" + UUID.randomUUID().toString().substring(0, 8));
+        variant.setVariantName("Test variant");
+        variant.setSellingPrice(unitPrice);
+        variant.setVatRate(vatRate);
+        variant.setVatExempt(vatExempt);
+
+        CartItem item = new CartItem();
+        item.setCart(cart);
+        item.setVariant(variant);
+        item.setQty(qty);
+        item.setUnitPriceSnapshot(unitPrice);
+        item.setProductNameSnapshot("Test product");
+        item.setVariantNameSnapshot("Test variant");
+        return item;
+    }
+
+    private CheckoutRequest request() {
+        return new CheckoutRequest("customer@example.com", "254700000000", FulfilmentType.BRANCH_PICKUP, null);
+    }
+
+    @Test
+    void vatIsExtractedFromAVatInclusivePriceNotAddedOnTop() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("1160.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var result = checkoutService.checkout(SESSION_ID, request());
+
+        assertThat(result.order().getVatTotal()).isEqualByComparingTo("160.00");
+        assertThat(result.order().getSubtotal()).isEqualByComparingTo("1160.00");
+        assertThat(result.order().getGrandTotal()).isEqualByComparingTo("1160.00");
+    }
+
+    @Test
+    void vatExemptLineContributesZeroVatButFullSubtotal() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("1000.00"), BigDecimal.ONE, new BigDecimal("0.1600"), true)));
+
+        var result = checkoutService.checkout(SESSION_ID, request());
+
+        assertThat(result.order().getVatTotal()).isEqualByComparingTo("0.00");
+        assertThat(result.order().getSubtotal()).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
+    void mixedCartSumsExemptAndStandardLinesCorrectly() {
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(
+                cartItem(new BigDecimal("1000.00"), BigDecimal.ONE, new BigDecimal("0.1600"), true),
+                cartItem(new BigDecimal("1160.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var result = checkoutService.checkout(SESSION_ID, request());
+
+        assertThat(result.order().getSubtotal()).isEqualByComparingTo("2160.00");
+        assertThat(result.order().getVatTotal()).isEqualByComparingTo("160.00");
+    }
+
+    @Test
+    void perLineRoundingIsAppliedPerLineNotOnTheSummedTotal() {
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(
+                cartItem(new BigDecimal("333.33"), BigDecimal.ONE, new BigDecimal("0.1600"), false),
+                cartItem(new BigDecimal("333.33"), BigDecimal.ONE, new BigDecimal("0.1600"), false),
+                cartItem(new BigDecimal("333.33"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var result = checkoutService.checkout(SESSION_ID, request());
+
+        // Each line: 333.33 * 0.16 / 1.16 = 45.9765... -> HALF_UP to 45.98.
+        // Summed per-line: 45.98 * 3 = 137.94, NOT round(999.99 * 0.16/1.16) computed on the total.
+        assertThat(result.order().getVatTotal()).isEqualByComparingTo("137.94");
+        assertThat(result.order().getSubtotal()).isEqualByComparingTo("999.99");
+    }
+
+    @Test
+    void emptyCartThrowsIllegalStateException() {
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot check out an empty cart");
+    }
+
+    @Test
+    void noDefaultFulfilmentBranchConfiguredThrows() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        when(branchRepository.findByIsDefaultOnlineFulfilmentTrue()).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("default online-fulfilment branch");
+    }
+
+    @Test
+    void aLineThatCannotBeReservedAbortsTheWholeCheckoutByPropagatingTheException() {
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(
+                cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false),
+                cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        when(reservationService.reserve(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new StockReservation())
+                .thenThrow(new InsufficientAvailabilityException("not enough stock"));
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
+                .isInstanceOf(InsufficientAvailabilityException.class)
+                .hasMessageContaining("not enough stock");
+    }
+
+    @Test
+    void deliveryFeeIsZeroAndGrandTotalEqualsSubtotal() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("750.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var result = checkoutService.checkout(SESSION_ID, request());
+
+        assertThat(result.order().getDeliveryFee()).isEqualByComparingTo("0");
+        assertThat(result.order().getGrandTotal()).isEqualByComparingTo(result.order().getSubtotal());
+    }
+}
