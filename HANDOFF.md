@@ -1,19 +1,26 @@
-# Nairobi Beauty Hub Backend — Handoff
+# Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
-**Status as of 2026-09-14 (session 8):** Phases 0-2 (stock core, staff auth/
-RBAC, cart/checkout/orders/payments) built and live-verified end-to-end
-against real Postgres. **Tier 1 of the session-7 improvement plan (items
-1-8: the four payment bugs, the Mockito unit-test layer, backend events, two
-new ArchUnit rules, the password-encoder fix) is now done and live-verified
-— see "Session 8" below.** Tier 2/3 of that plan (Boot 3.3.4→3.5.x, the
-exception taxonomy, RestClient timeouts, etc.) remain open and are the
-natural next work, alongside Phase 3+ feature work.
+**Status as of 2026-09-17 (session 9):** Phases 0-2 built and live-verified.
+The session-7 improvement plan's **Tier 1 (all 8 items) and most of Tier 2
+are now done** — C5/C6/C7/C8/C9 were completed in an untitled session between
+8 and 9 (not documented here at the time; verified against actual source in
+session 9 before trusting this file, per this project's own standing rule),
+and session 9 closed the Boot version bump (3.3.4→3.5.16), actuator/metrics,
+and a real regression found live during that work (see "Session 9" below).
+**Remaining Tier 2:** C10 (auth entry point), C12 (single availability
+definition), C14 (BigDecimal-typed stock request fields). **All of Tier 3**
+remains open (virtual threads, OAuth2 Resource Server, transactional
+outbox, `@Scheduled` multi-instance guard, Testcontainers).
 
 Full design rationale: `C:\Users\ADMIN\.claude\NairobiBeautyHub_Platform_Architecture.md`
 (read this first — it explains *why* every table/service below exists, with
 Odoo/ERPNext source citations). The full audit is
 `C:\Users\ADMIN\.claude\NairobiBeautyHub_Backend_Improvement_Plan.md` — still
-worth reading in full for Tier 2/3 and the reasoning behind Tier 1's fixes.
+worth reading for the remaining Tier 2/3 items and the reasoning behind every
+fix. **This backend is one half of the "Trendysh Accosmetic" project** — see
+the frontend's own `HANDOFF.md` at `J:\frontend\nairobi-beauty-hub-main` for
+the 2026-09-15 rebrand (business name, categories, colors, and a business-
+model change to delivery/fees that session 9 aligned this backend to).
 
 ## Founder decisions confirmed 2026-09-12 (closes architecture doc §8 Q1-Q5)
 
@@ -520,6 +527,100 @@ and Tier 3. The plan explicitly sequences the Boot bump *after* the unit-test
 layer (done this session) so it has real tests validating it — that's the
 natural next infrastructure item, whenever this project's next session picks
 up Tier 2.
+
+*(Editorial note added in session 9: C5/C6/C7/C8/C9 above were in fact
+completed at some point between this session and session 9 — visible in the
+actual source and confirmed live-working — but never got a HANDOFF.md entry.
+If you're reading this in a future session: **this file can be stale relative
+to the real code**; verify anything load-bearing against the actual source
+before trusting a "not done" claim, the same standing rule this project has
+always used for the plan/audit docs.)*
+
+## Session 9 — Boot 3.5.16 bump, actuator/metrics, delivery-model alignment
+
+Picked up after confirming (against actual source, not just this file) that
+C5/C6/C7/C8/C9 were already done. Verified live end-to-end on
+`nairobi_beauty_hub_dev`; full suite (46 tests, 11 classes) green throughout.
+
+**Delivery model aligned with the frontend's 2026-09-15 rebrand decision**
+(TumaBoda dropped entirely; the shop never charges/estimates a delivery fee —
+customer pays the courier directly, confirmed by phone/WhatsApp). New
+migration `V12__align_delivery_model_with_business_decision.sql`:
+`FulfilmentType.DELIVERY_TUMABODA` removed from the enum and the DB `CHECK`
+constraint (no existing rows used it — checked first); a new
+`CHECK (delivery_fee = 0)` constraint makes what was previously just
+`CheckoutService`'s convention a structural guarantee. **Live-verified**: a
+`DELIVERY_COURIER` checkout still works (`deliveryFee: 0` in the response);
+a `DELIVERY_TUMABODA` checkout is now correctly rejected.
+
+**§1.2 — Boot 3.3.4 → 3.5.16** (latest 3.5.x patch, verified against Maven
+Central's metadata; 3.5.x is supported through 2027-07-31, 4.0/4.1
+deliberately not chosen — see the plan's §1.2). Two real breakages surfaced
+by the bump, both confirmed via `javap` against the actually-resolved jars
+before fixing (not guessed from release notes):
+- **Spring Security 6.5.11**: `DaoAuthenticationProvider`'s no-arg
+  constructor + `setUserDetailsService(...)` are now `@Deprecated`
+  (confirmed via `javap -v`, byte-for-byte). Fixed:
+  `new DaoAuthenticationProvider(staffUserDetailsService)`.
+  `setPasswordEncoder(...)` is NOT deprecated — left as a setter.
+- **`org.springframework.boot.web.client.ClientHttpRequestFactories`/
+  `ClientHttpRequestFactorySettings`** (used by `DarajaPaymentGateway`'s §4
+  C8 timeout fix) are deprecated-for-removal, replaced by
+  `org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder`/
+  `ClientHttpRequestFactorySettings` (`.defaults()` instead of `.DEFAULTS`,
+  `ClientHttpRequestFactoryBuilder.detect().build(settings)` instead of
+  `ClientHttpRequestFactories.get(settings)`).
+
+**§1.4 — actuator + a real metric for F7.** Added
+`spring-boot-starter-actuator` + `micrometer-registry-prometheus`; exposed
+`health`/`info`/`metrics`/`prometheus` only (`/actuator/health` was already
+in `SecurityConfig`'s permit-list from session 3 — it 404'd the whole time
+because the dependency never existed until now). New
+`StockConsistencyMetricsScheduler` runs `StockBalanceRebuildService.check()`
+hourly (`app.stock.consistency-check-interval-ms`, default 3600000) plus
+once at boot, publishing the mismatch count as a Micrometer gauge
+(`nbh_stock_consistency_mismatches`) and `log.error`-ing detail on any
+non-zero reading. **Live-verified**: `/actuator/health` → real `{"status":
+"UP"}` (not a 404); `/actuator/metrics` → 403 without a token (deliberately
+gated — no real Prometheus scrape infra exists yet, revisit with a dedicated
+scrape credential/management port when it does); the gauge, read
+authenticated, correctly showed `0.0`.
+
+**A real bug found live, from the C7 refactor** (the exception-taxonomy work
+done in the untitled interim session): `GlobalExceptionHandler`'s new
+`@ExceptionHandler(Exception.class)` fallback is *more specific than nothing*
+but it shadows several of Spring's own default MVC exception mappings, since
+`@RestControllerAdvice` handler selection picks the closest matching
+`@ExceptionHandler` across ALL registered types — and a bare `Exception`
+handler is still a match when nothing more specific is registered for, e.g.,
+`HttpMessageNotReadableException`. Concretely: sending
+`"fulfilmentType": "DELIVERY_TUMABODA"` (a value the enum no longer has,
+found while testing the delivery-model change above) produced a raw 500
+"unexpected error" instead of Spring's normal 400. **Found by live testing,
+not by reasoning about the code** — exactly the standing lesson this project
+keeps re-learning. Fixed by adding three explicit, more-specific handlers
+ahead of the catch-all: `HttpMessageNotReadableException` → 400 (malformed/
+invalid body — the one that actually broke), `MethodArgumentTypeMismatchException`
+→ 400 (e.g. a non-UUID path segment), `HttpRequestMethodNotSupportedException`
+→ 405 (wrong HTTP verb). **Live-verified all three** post-fix: invalid enum →
+400, `GET /orders/not-a-real-uuid` → 400, `DELETE /checkout` → 405. This is
+not necessarily an exhaustive list of what a bare `Exception.class` handler
+can shadow — if a future session finds another standard Spring exception
+coming back as a raw 500, this is almost certainly why; add the specific
+handler rather than removing the fallback (which is still valuable for
+genuinely unexpected exceptions and their correlation-id logging).
+
+**Bootstrap admin password reset** on `nairobi_beauty_hub_dev` (the previous
+session's value was deliberately never recorded, per its own note) —
+new value shared out-of-band with the founder, not written here on purpose,
+same convention as every prior reset. `must_change_password` is set.
+
+**Not done this session, correctly deferred**: C10 (auth entry point/access-
+denied-handler consistency — 401 vs 403), C12 (single `AvailabilityService`
+definition — `CartService` and `StockReservationService` still compute
+availability two different ways, narrowed but not eliminated by the F9
+sweeper), C14 (stock request DTOs still use `String` + manual `BigDecimal`
+parsing rather than typed/validated fields). All of Tier 3.
 
 ## Deliberately not built yet
 

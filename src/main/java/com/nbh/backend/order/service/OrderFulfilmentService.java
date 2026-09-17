@@ -105,8 +105,9 @@ public class OrderFulfilmentService {
         order.setStatus(OrderStatus.DISPATCHED);
         order = orderRepository.save(order);
 
-        // §2: the designated TumaBoda dispatch seam — see OrderFulfilledEvent's
-        // javadoc. Published here (inside this @Transactional method), delivered
+        // §2: the designated seam for a staff/courier notification — see
+        // OrderFulfilledEvent's javadoc. Published here (inside this
+        // @Transactional method), delivered
         // AFTER_COMMIT: postingService.post above can still throw
         // InsufficientStockException if stock moved underneath, which would have
         // already rolled back everything before this line ever ran.

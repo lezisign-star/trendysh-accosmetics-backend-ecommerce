@@ -7,7 +7,14 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.4</version>
+        <!-- Tier 2 item 14 of the session-7 improvement plan: 3.3.x left OSS
+             support 2026-06-30 (verified against endoflife.date at the time
+             the plan was written). 3.5.x is supported through 2027-07-31;
+             4.0/4.1 were deliberately NOT chosen — see the plan's §1.2 for
+             why (4.0's window is short, 4.1 is a bigger migration this
+             codebase shouldn't absorb yet). 3.5.16 is the latest 3.5.x
+             patch as of this bump (verified against Maven Central). -->
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
@@ -38,6 +45,18 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <!-- Tier 2 item 13: health/info/metrics, and a gauge for the stock
+             consistency check (F7) so "we believe the ledger and cache
+             agree" becomes something actually monitored. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <dependency>

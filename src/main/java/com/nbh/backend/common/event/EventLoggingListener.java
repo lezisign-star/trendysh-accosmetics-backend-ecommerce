@@ -7,8 +7,9 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
  * §2: v1 listeners for all five NBH backend events — log-only, deliberately.
- * When a real consumer exists (order-confirmation email, a TumaBoda dispatch
- * call, a purchasing alert), that listener belongs in its own class in the
+ * When a real consumer exists (order-confirmation email, a staff notification
+ * to arrange a rider/vehicle manually, a purchasing alert), that listener
+ * belongs in its own class in the
  * relevant domain package, not bolted on here — this class is only the v1
  * seam proving the publish side works before there is anything real to wire.
  *

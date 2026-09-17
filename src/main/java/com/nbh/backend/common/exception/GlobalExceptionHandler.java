@@ -5,10 +5,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -115,6 +118,39 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Object> handleDataIntegrityViolation(DataIntegrityViolationException e) {
         log.error("409: unhandled data integrity violation", e);
         return body(HttpStatus.CONFLICT, "A conflicting record already exists — please retry");
+    }
+
+    /**
+     * A malformed or semantically-invalid request body — e.g. a JSON value
+     * that isn't one of the enum's remaining constants (found live: after
+     * V12 removed DELIVERY_TUMABODA from FulfilmentType, sending that value
+     * to /checkout produced a raw 500 instead of a 400, because it's a
+     * subtype of Exception and nothing more specific was registered for it
+     * — the new catch-all below was silently swallowing it). Spring's own
+     * default handling would map this correctly on its own if this
+     * @RestControllerAdvice didn't also register a bare Exception.class
+     * handler; adding the specific case here is the minimal fix without
+     * touching the broader fallback's behaviour for genuinely unexpected
+     * exceptions.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Object> handleMalformedRequestBody(HttpMessageNotReadableException e) {
+        log.warn("400: malformed request body: {}", e.getMessage());
+        return body(HttpStatus.BAD_REQUEST, "Malformed or invalid request body");
+    }
+
+    /** Same shadowing risk as above — a bad UUID/enum in a @PathVariable or @RequestParam (e.g. GET /orders/not-a-uuid). */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Object> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        log.warn("400: type mismatch on '{}': {}", e.getName(), e.getMessage());
+        return body(HttpStatus.BAD_REQUEST, "Invalid value for parameter '" + e.getName() + "'");
+    }
+
+    /** Same shadowing risk — e.g. a GET against a POST-only endpoint. Spring's own default is 405; keep it that way. */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Object> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        log.warn("405: {}", e.getMessage());
+        return body(HttpStatus.METHOD_NOT_ALLOWED, e.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

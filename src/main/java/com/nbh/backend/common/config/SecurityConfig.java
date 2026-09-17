@@ -75,8 +75,12 @@ public class SecurityConfig {
 
     @Bean
     public AuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(staffUserDetailsService);
+        // §1.5 Gap 4 fix (Boot 3.5.16 bump, Spring Security 6.5.11): the
+        // no-arg constructor + setUserDetailsService(...) pair is deprecated
+        // in favour of passing the UserDetailsService directly to the
+        // constructor — confirmed via javap against the actually-resolved
+        // 6.5.11 jar (setPasswordEncoder is NOT deprecated, left as a setter).
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(staffUserDetailsService);
         provider.setPasswordEncoder(passwordEncoder());
         return provider;
     }

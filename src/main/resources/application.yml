@@ -57,6 +57,19 @@ app:
 server:
   port: ${PORT:8081}
 
+# Tier 2 item 13: previously SecurityConfig permitted /actuator/health with no
+# actuator dependency at all — a 404 masquerading as a working health check.
+# Real now. health/info/metrics/prometheus only — never expose the full
+# actuator surface (env, beans, etc.) publicly.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
 logging:
   level:
     com.nbh.backend: DEBUG

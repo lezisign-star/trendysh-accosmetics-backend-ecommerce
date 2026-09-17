@@ -3,8 +3,8 @@ package com.nbh.backend.payment.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.ClientHttpRequestFactories;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequestFactory;
@@ -91,10 +91,14 @@ public class DarajaPaymentGateway {
                                  @Value("${app.mpesa.base-url:https://sandbox.safaricom.co.ke}") String baseUrl,
                                  Clock clock,
                                  ObjectMapper objectMapper) {
-        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
+        // §1.2/Boot 3.5.16 bump: org.springframework.boot.web.client.ClientHttpRequestFactories/
+        // ClientHttpRequestFactorySettings were deprecated-for-removal in favour
+        // of org.springframework.boot.http.client's ClientHttpRequestFactoryBuilder/
+        // Settings — confirmed via the actual 3.5.16 jar, not guessed.
+        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.defaults()
                 .withConnectTimeout(CONNECT_TIMEOUT)
                 .withReadTimeout(READ_TIMEOUT);
-        ClientHttpRequestFactory requestFactory = ClientHttpRequestFactories.get(settings);
+        ClientHttpRequestFactory requestFactory = ClientHttpRequestFactoryBuilder.detect().build(settings);
         this.restClient = restClientBuilder.baseUrl(baseUrl).requestFactory(requestFactory).build();
         this.clock = clock;
         this.objectMapper = objectMapper;
