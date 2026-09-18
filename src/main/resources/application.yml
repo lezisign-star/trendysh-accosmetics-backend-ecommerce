@@ -32,7 +32,10 @@ app:
     secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-before-any-real-deployment-32bytes}
     access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:28800000} # 8h
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+    # 5173 is Vite's own default; 5250 is this project's fixed dev-preview
+    # port (see the frontend's .claude/launch.json) — both are real local
+    # dev origins, not a guess.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5250}
   bootstrap:
     admin-email: ${BOOTSTRAP_ADMIN_EMAIL:admin@nairobibeautyhub.co.ke}
   stock:

@@ -142,7 +142,15 @@ public class ProductService {
         List<ProductVariantDto> variants = variantRepository.findByProductId(id).stream()
                 .map(ProductVariantDto::from)
                 .toList();
-        return ProductDto.from(product, variants);
+        return ProductDto.from(product, variants, primaryImageUrl(id));
+    }
+
+    private String primaryImageUrl(UUID productId) {
+        List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        return images.stream().filter(ProductImage::isPrimary).findFirst()
+                .or(images.stream()::findFirst)
+                .map(ProductImage::getUrl)
+                .orElse(null);
     }
 
     /**
@@ -161,7 +169,16 @@ public class ProductService {
                         v -> v.getProduct().getId(),
                         java.util.stream.Collectors.mapping(ProductVariantDto::from, java.util.stream.Collectors.toList())));
 
-        return page.map(p -> ProductDto.from(p, variantsByProduct.getOrDefault(p.getId(), List.of())));
+        Map<UUID, String> primaryImageByProduct = new java.util.HashMap<>();
+        for (ProductImage image : imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)) {
+            UUID pid = image.getProduct().getId();
+            if (!primaryImageByProduct.containsKey(pid) || image.isPrimary()) {
+                primaryImageByProduct.put(pid, image.getUrl());
+            }
+        }
+
+        return page.map(p -> ProductDto.from(p, variantsByProduct.getOrDefault(p.getId(), List.of()),
+                primaryImageByProduct.get(p.getId())));
     }
 
     /**
