@@ -856,6 +856,28 @@ integration readiness plan's Phase 2 onward (frontend real auth, then
 wiring) — Phase 1 was backend-only by design so Phase 2+ has a stable API
 surface to build against.
 
+## Session 11b — Phase 5 backend prerequisites (2026-09-18)
+
+Building the real admin product UI exposed backend gaps, closed here (full
+suite 50/50 green; each endpoint curl-verified against `nairobi_beauty_hub_dev`):
+- **Attributes API** — `GET/POST /api/v1/attributes`, `POST /attributes/{id}/values`
+  (no `ProductAttributeRepository` or controller existed at all before).
+- **Enriched staff `ProductDto`** — now carries `categoryName`, `brandName`,
+  `primaryImageUrl`; list and detail both batch-fetch images (no N+1).
+- **Product mutation endpoints** — `PATCH /products/{id}`, `POST /products/{id}/variants`,
+  `PATCH /products/{id}/variants/{variantId}`. The original API could only create a
+  product with its variants in one shot — there was no way to add a variant later,
+  which was the founder's explicit original requirement. SKU is not editable.
+- **CORS** default allow-list now includes port 5250 (the dev-preview port).
+
+**Still missing, found while doing this:** the public catalog API has no
+`inStock`/availability field (needed for storefront wiring, Phase 3.1); no
+product/category delete or category rename endpoints.
+
+**Environment gotcha:** launching `mvn spring-boot:run` through the harness's
+background mode repeatedly died shortly after a clean boot (no error in the
+log). Launch it detached instead: `nohup ./mvnw spring-boot:run > log 2>&1 < /dev/null & disown`.
+
 ## Deliberately not built yet
 
 Refresh tokens, password-reset flow, POS, inter-branch transfers (the
