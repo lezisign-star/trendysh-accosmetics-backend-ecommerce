@@ -878,6 +878,20 @@ product/category delete or category rename endpoints.
 background mode repeatedly died shortly after a clean boot (no error in the
 log). Launch it detached instead: `nohup ./mvnw spring-boot:run > log 2>&1 < /dev/null & disown`.
 
+## Session 11c — public catalogue availability (2026-09-18)
+
+`inStock` added to `CatalogVariantDto`, `CatalogProductSummaryDto` and
+`CatalogProductDetailDto` (browse, detail, related). Computed from sellable
+quantity (on-hand minus reserved) across **physical** locations via one
+batched `StockBalanceRepository.availabilityForVariants` query per page;
+strictly positive counts, a product is in stock if any variant is, and
+customers only ever see the boolean. Needed by the storefront (frontend Phase
+3.1). 2 new unit tests (`CatalogServiceInStockUnitTest`), suite 52/52 green,
+verified live against a product with one stocked and one unstocked variant.
+Note it counts stock across ALL branches' physical locations, matching the
+"one shared catalogue" decision; if branch-specific availability is ever
+wanted, this is the place to change.
+
 ## Deliberately not built yet
 
 Refresh tokens, password-reset flow, POS, inter-branch transfers (the
