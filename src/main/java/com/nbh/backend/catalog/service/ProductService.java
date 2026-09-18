@@ -5,6 +5,8 @@ import com.nbh.backend.catalog.dto.CatalogImageDto;
 import com.nbh.backend.catalog.dto.CreateProductRequest;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
+import com.nbh.backend.catalog.dto.UpdateProductRequest;
+import com.nbh.backend.catalog.dto.UpdateVariantRequest;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
 import jakarta.persistence.EntityNotFoundException;
@@ -93,6 +95,72 @@ public class ProductService {
                 .toList();
 
         return ProductDto.from(savedProduct, variantDtos);
+    }
+
+    /**
+     * Full-replace update of a product's own fields. Founder's explicit ask
+     * ("add a variant under a product") surfaced that this — and {@link
+     * #addVariant} below — didn't exist at all: the original API could only
+     * create a product with its initial variants in one shot, with no way
+     * to correct a typo or add a shade discovered after the fact.
+     */
+    @Transactional
+    public ProductDto updateProduct(UUID productId, UpdateProductRequest request) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+
+        product.setName(request.name());
+        product.setShortDescription(request.shortDescription());
+        product.setDescription(request.description());
+        product.setIngredients(request.ingredients());
+        product.setHowToUse(request.howToUse());
+        product.setBrand(request.brandId() != null
+                ? brandRepository.findById(request.brandId())
+                        .orElseThrow(() -> new EntityNotFoundException("No brand: " + request.brandId()))
+                : null);
+        product.setCategory(request.categoryId() != null
+                ? categoryRepository.findById(request.categoryId())
+                        .orElseThrow(() -> new EntityNotFoundException("No category: " + request.categoryId()))
+                : null);
+        product.setSubcategory(request.subcategoryId() != null
+                ? categoryRepository.findById(request.subcategoryId())
+                        .orElseThrow(() -> new EntityNotFoundException("No subcategory: " + request.subcategoryId()))
+                : null);
+
+        productRepository.save(product);
+        List<ProductVariantDto> variants = variantRepository.findByProductId(productId).stream()
+                .map(ProductVariantDto::from)
+                .toList();
+        return ProductDto.from(product, variants, primaryImageUrl(productId));
+    }
+
+    @Transactional
+    public ProductVariantDto addVariant(UUID productId, CreateProductRequest.CreateVariantRequest vr) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+        return createVariant(product, vr);
+    }
+
+    /** Partial update — {@code sku} isn't editable, see {@link UpdateVariantRequest}'s javadoc. */
+    @Transactional
+    public ProductVariantDto updateVariant(UUID productId, UUID variantId, UpdateVariantRequest request) {
+        ProductVariant variant = variantRepository.findById(variantId)
+                .orElseThrow(() -> new EntityNotFoundException("No variant: " + variantId));
+        if (!variant.getProduct().getId().equals(productId)) {
+            throw new EntityNotFoundException("No variant " + variantId + " on product " + productId);
+        }
+
+        if (request.variantName() != null) variant.setVariantName(request.variantName());
+        if (request.sellingPrice() != null) variant.setSellingPrice(new BigDecimal(request.sellingPrice()));
+        if (request.compareAtPrice() != null) variant.setCompareAtPrice(new BigDecimal(request.compareAtPrice()));
+        if (request.standardCost() != null) variant.setStandardCost(new BigDecimal(request.standardCost()));
+        if (request.uom() != null) variant.setUom(request.uom());
+        if (request.vatRate() != null) variant.setVatRate(new BigDecimal(request.vatRate()));
+        if (request.vatExempt() != null) variant.setVatExempt(request.vatExempt());
+        if (request.reorderLevel() != null) variant.setReorderLevel(new BigDecimal(request.reorderLevel()));
+        if (request.isActive() != null) variant.setActive(request.isActive());
+
+        return ProductVariantDto.from(variantRepository.save(variant));
     }
 
     private ProductVariantDto createVariant(Product product, CreateProductRequest.CreateVariantRequest vr) {
