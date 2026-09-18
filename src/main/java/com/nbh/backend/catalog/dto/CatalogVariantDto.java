@@ -15,6 +15,7 @@ public record CatalogVariantDto(
         BigDecimal sellingPrice,
         BigDecimal compareAtPrice,
         String uom,
+        boolean inStock,
         List<AttributeValueSummary> attributes
 ) {
     public record AttributeValueSummary(
@@ -25,7 +26,7 @@ public record CatalogVariantDto(
             String swatchHex
     ) {}
 
-    public static CatalogVariantDto from(ProductVariant v, List<VariantAttributeValue> attributeValues) {
+    public static CatalogVariantDto from(ProductVariant v, List<VariantAttributeValue> attributeValues, boolean inStock) {
         List<AttributeValueSummary> attrs = attributeValues.stream()
                 .filter(vav -> vav.getVariant().getId().equals(v.getId()))
                 .map(vav -> new AttributeValueSummary(
@@ -36,6 +37,6 @@ public record CatalogVariantDto(
                         vav.getAttributeValue().getSwatchHex()))
                 .toList();
         return new CatalogVariantDto(v.getId(), v.getSku(), v.getVariantName(), v.getSellingPrice(),
-                v.getCompareAtPrice(), v.getUom(), attrs);
+                v.getCompareAtPrice(), v.getUom(), inStock, attrs);
     }
 }

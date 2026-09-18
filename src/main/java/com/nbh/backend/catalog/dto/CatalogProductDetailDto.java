@@ -21,7 +21,8 @@ public record CatalogProductDetailDto(
         List<CatalogVariantDto> variants,
         double avgRating,
         long reviewCount,
-        BigDecimal unitsSold
+        BigDecimal unitsSold,
+        boolean inStock
 ) {
     public static CatalogProductDetailDto from(Product p, List<CatalogImageDto> images, List<CatalogVariantDto> variants,
                                                 double avgRating, long reviewCount, BigDecimal unitsSold) {
@@ -31,6 +32,7 @@ public record CatalogProductDetailDto(
                 p.getCategory() != null ? p.getCategory().getName() : null,
                 p.getSubcategory() != null ? p.getSubcategory().getName() : null,
                 p.getShortDescription(), p.getDescription(), p.getIngredients(), p.getHowToUse(),
-                images, variants, avgRating, reviewCount, unitsSold);
+                images, variants, avgRating, reviewCount, unitsSold,
+                variants.stream().anyMatch(CatalogVariantDto::inStock));
     }
 }

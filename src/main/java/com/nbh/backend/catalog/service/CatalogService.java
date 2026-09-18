@@ -3,6 +3,7 @@ package com.nbh.backend.catalog.service;
 import com.nbh.backend.catalog.dto.*;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
+import com.nbh.backend.stock.repository.StockBalanceRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -34,6 +35,7 @@ public class CatalogService {
     private final ProductSaleEventRepository saleEventRepository;
     private final ProductViewEventRepository viewEventRepository;
     private final CategoryRepository categoryRepository;
+    private final StockBalanceRepository balanceRepository;
     private final Clock clock;
 
     public CatalogService(ProductRepository productRepository,
@@ -44,6 +46,7 @@ public class CatalogService {
                            ProductSaleEventRepository saleEventRepository,
                            ProductViewEventRepository viewEventRepository,
                            CategoryRepository categoryRepository,
+                           StockBalanceRepository balanceRepository,
                            Clock clock) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
@@ -53,6 +56,7 @@ public class CatalogService {
         this.saleEventRepository = saleEventRepository;
         this.viewEventRepository = viewEventRepository;
         this.categoryRepository = categoryRepository;
+        this.balanceRepository = balanceRepository;
         this.clock = clock;
     }
 
@@ -68,15 +72,17 @@ public class CatalogService {
         Map<UUID, String> primaryImageByProduct = primaryImageByProduct(productIds);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByProduct = soldSummaries(productIds);
+        Set<UUID> inStockVariants = inStockVariantIds(variantsByProduct);
 
         return page.map(p -> {
-            List<BigDecimal> prices = variantsByProduct.getOrDefault(p.getId(), List.of()).stream()
-                    .map(ProductVariant::getSellingPrice).toList();
+            List<ProductVariant> variants = variantsByProduct.getOrDefault(p.getId(), List.of());
+            List<BigDecimal> prices = variants.stream().map(ProductVariant::getSellingPrice).toList();
             ProductReviewRepository.RatingSummary rating = ratingByProduct.get(p.getId());
             return CatalogProductSummaryDto.from(p, prices, primaryImageByProduct.get(p.getId()),
                     rating != null ? rating.getAvgRating() : 0.0,
                     rating != null ? rating.getReviewCount() : 0L,
-                    soldByProduct.getOrDefault(p.getId(), BigDecimal.ZERO));
+                    soldByProduct.getOrDefault(p.getId(), BigDecimal.ZERO),
+                    variants.stream().anyMatch(v -> inStockVariants.contains(v.getId())));
         });
     }
 
@@ -89,8 +95,9 @@ public class CatalogService {
         List<UUID> variantIds = variants.stream().map(ProductVariant::getId).toList();
         List<VariantAttributeValue> attributeValues = variantIds.isEmpty()
                 ? List.of() : variantAttributeValueRepository.findByVariantIdIn(variantIds);
+        Set<UUID> inStockVariants = inStockVariantIds(Map.of(product.getId(), variants));
         List<CatalogVariantDto> variantDtos = variants.stream()
-                .map(v -> CatalogVariantDto.from(v, attributeValues))
+                .map(v -> CatalogVariantDto.from(v, attributeValues, inStockVariants.contains(v.getId())))
                 .toList();
 
         List<CatalogImageDto> images = imageRepository.findByProductIdOrderBySortOrderAsc(product.getId()).stream()
@@ -126,15 +133,17 @@ public class CatalogService {
         Map<UUID, String> primaryImageByProduct = primaryImageByProduct(relatedIds);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(relatedIds);
         Map<UUID, BigDecimal> soldByProduct = soldSummaries(relatedIds);
+        Set<UUID> inStockVariants = inStockVariantIds(variantsByProduct);
 
         return related.stream().map(p -> {
-            List<BigDecimal> prices = variantsByProduct.getOrDefault(p.getId(), List.of()).stream()
-                    .map(ProductVariant::getSellingPrice).toList();
+            List<ProductVariant> variants = variantsByProduct.getOrDefault(p.getId(), List.of());
+            List<BigDecimal> prices = variants.stream().map(ProductVariant::getSellingPrice).toList();
             ProductReviewRepository.RatingSummary rating = ratingByProduct.get(p.getId());
             return CatalogProductSummaryDto.from(p, prices, primaryImageByProduct.get(p.getId()),
                     rating != null ? rating.getAvgRating() : 0.0,
                     rating != null ? rating.getReviewCount() : 0L,
-                    soldByProduct.getOrDefault(p.getId(), BigDecimal.ZERO));
+                    soldByProduct.getOrDefault(p.getId(), BigDecimal.ZERO),
+                    variants.stream().anyMatch(v -> inStockVariants.contains(v.getId())));
         }).toList();
     }
 
@@ -157,6 +166,23 @@ public class CatalogService {
         }
         event.setOccurredAt(Instant.now(clock));
         viewEventRepository.save(event);
+    }
+
+    /**
+     * Variants with sellable stock right now (on-hand minus reserved, across
+     * physical locations, strictly positive). One batched query for the whole
+     * page; the customer only ever sees the boolean, never the quantity.
+     */
+    private Set<UUID> inStockVariantIds(Map<UUID, List<ProductVariant>> variantsByProduct) {
+        List<UUID> variantIds = variantsByProduct.values().stream()
+                .flatMap(List::stream).map(ProductVariant::getId).toList();
+        if (variantIds.isEmpty()) {
+            return Set.of();
+        }
+        return balanceRepository.availabilityForVariants(variantIds).stream()
+                .filter(a -> a.getAvailable().signum() > 0)
+                .map(StockBalanceRepository.VariantAvailability::getVariantId)
+                .collect(Collectors.toSet());
     }
 
     private Map<UUID, List<ProductVariant>> groupVariantsByProduct(List<UUID> productIds) {

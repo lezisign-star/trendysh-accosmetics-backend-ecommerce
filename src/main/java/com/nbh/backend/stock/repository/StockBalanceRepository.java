@@ -94,6 +94,26 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
                                             @Param("q") String q,
                                             Pageable pageable);
 
+    /**
+     * Sellable quantity per variant (on-hand minus reserved, physical
+     * locations only) — backs the public catalogue's inStock flag without
+     * exposing the numbers themselves. Variants with no balance row at all
+     * simply don't appear in the result (treated as zero by callers).
+     */
+    @Query("""
+            SELECT b.variant.id AS variantId, SUM(b.onHandQty - b.reservedQty) AS available
+            FROM StockBalance b
+            JOIN b.location loc
+            WHERE loc.isInternal = true AND b.variant.id IN :variantIds
+            GROUP BY b.variant.id
+            """)
+    List<VariantAvailability> availabilityForVariants(@Param("variantIds") java.util.Collection<UUID> variantIds);
+
+    interface VariantAvailability {
+        UUID getVariantId();
+        java.math.BigDecimal getAvailable();
+    }
+
     /** The admin analytics dashboard's "low stock" tile — same eligibility as {@code browseInventory}'s filter. */
     @Query("""
             SELECT COUNT(b) FROM StockBalance b

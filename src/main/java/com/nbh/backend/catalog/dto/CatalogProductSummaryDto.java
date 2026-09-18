@@ -19,16 +19,19 @@ public record CatalogProductSummaryDto(
         BigDecimal maxPrice,
         double avgRating,
         long reviewCount,
-        BigDecimal unitsSold
+        BigDecimal unitsSold,
+        boolean inStock
 ) {
     public static CatalogProductSummaryDto from(Product p, List<BigDecimal> variantPrices, String primaryImageUrl,
-                                                 double avgRating, long reviewCount, BigDecimal unitsSold) {
+                                                 double avgRating, long reviewCount, BigDecimal unitsSold,
+                                                 boolean inStock) {
         BigDecimal min = variantPrices.stream().min(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
         BigDecimal max = variantPrices.stream().max(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
         return new CatalogProductSummaryDto(
                 p.getId(), p.getSlug(), p.getName(),
                 p.getBrand() != null ? p.getBrand().getName() : null,
                 p.getCategory() != null ? p.getCategory().getName() : null,
-                p.getShortDescription(), primaryImageUrl, min, max, avgRating, reviewCount, unitsSold);
+                p.getShortDescription(), primaryImageUrl, min, max, avgRating, reviewCount, unitsSold,
+                inStock);
     }
 }
