@@ -1,5 +1,7 @@
 package com.nbh.backend.catalog.controller;
 
+import com.nbh.backend.catalog.dto.AttachImageRequest;
+import com.nbh.backend.catalog.dto.CatalogImageDto;
 import com.nbh.backend.catalog.dto.CreateProductRequest;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.service.ProductService;
@@ -38,5 +40,29 @@ public class ProductController {
     @PostMapping
     public ProductDto create(@Valid @RequestBody CreateProductRequest request) {
         return productService.createProduct(request);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PostMapping("/{id}/publish")
+    public ProductDto publish(@PathVariable UUID id) {
+        return productService.setPublished(id, true);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PostMapping("/{id}/unpublish")
+    public ProductDto unpublish(@PathVariable UUID id) {
+        return productService.setPublished(id, false);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PostMapping("/{id}/images")
+    public CatalogImageDto attachImage(@PathVariable UUID id, @Valid @RequestBody AttachImageRequest request) {
+        return productService.attachImage(id, request);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @DeleteMapping("/{id}/images/{imageId}")
+    public void removeImage(@PathVariable UUID id, @PathVariable UUID imageId) {
+        productService.removeImage(id, imageId);
     }
 }

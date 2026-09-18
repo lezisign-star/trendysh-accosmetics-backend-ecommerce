@@ -53,6 +53,13 @@ app:
     # Blank (the default) means the callback endpoint rejects every request —
     # set this BEFORE the callback URL is ever registered with Safaricom.
     callback-secret: ${MPESA_CALLBACK_SECRET:}
+  cloudinary:
+    # UNSET PLACEHOLDERS — CloudinarySignatureService refuses to sign an
+    # upload until all three are set. Get these from the Cloudinary console
+    # once Trendysh has an account (free tier is enough to start).
+    cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+    api-key: ${CLOUDINARY_API_KEY:}
+    api-secret: ${CLOUDINARY_API_SECRET:}
 
 server:
   port: ${PORT:8081}

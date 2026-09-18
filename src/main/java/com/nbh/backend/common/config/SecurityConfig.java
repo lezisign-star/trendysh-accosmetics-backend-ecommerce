@@ -59,6 +59,12 @@ public class SecurityConfig {
                     "/api/v1/checkout/**",
                     "/api/v1/orders/track/**",
                     "/api/v1/payments/mpesa/callback/**",
+                    // Public storefront browse/search/reviews — read-only, only
+                    // ever returns published products (CatalogService's javadoc).
+                    // Review submission (POST /catalog/products/{id}/reviews) is
+                    // also here: it proves eligibility itself via order+phone,
+                    // the same way checkout is guest-only with no login to gate on.
+                    "/api/v1/catalog/**",
                     "/swagger-ui.html",
                     "/swagger-ui/**",
                     "/api-docs/**",

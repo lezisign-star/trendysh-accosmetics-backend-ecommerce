@@ -1,5 +1,7 @@
 package com.nbh.backend.catalog.service;
 
+import com.nbh.backend.catalog.dto.AttachImageRequest;
+import com.nbh.backend.catalog.dto.CatalogImageDto;
 import com.nbh.backend.catalog.dto.CreateProductRequest;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
@@ -11,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,6 +42,7 @@ public class ProductService {
     private final ProductAttributeValueRepository attributeValueRepository;
     private final VariantAttributeValueRepository variantAttributeValueRepository;
     private final VariantBarcodeRepository variantBarcodeRepository;
+    private final ProductImageRepository imageRepository;
 
     public ProductService(ProductRepository productRepository,
                            ProductVariantRepository variantRepository,
@@ -46,7 +50,8 @@ public class ProductService {
                            CategoryRepository categoryRepository,
                            ProductAttributeValueRepository attributeValueRepository,
                            VariantAttributeValueRepository variantAttributeValueRepository,
-                           VariantBarcodeRepository variantBarcodeRepository) {
+                           VariantBarcodeRepository variantBarcodeRepository,
+                           ProductImageRepository imageRepository) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
         this.brandRepository = brandRepository;
@@ -54,6 +59,7 @@ public class ProductService {
         this.attributeValueRepository = attributeValueRepository;
         this.variantAttributeValueRepository = variantAttributeValueRepository;
         this.variantBarcodeRepository = variantBarcodeRepository;
+        this.imageRepository = imageRepository;
     }
 
     @Transactional
@@ -156,6 +162,68 @@ public class ProductService {
                         java.util.stream.Collectors.mapping(ProductVariantDto::from, java.util.stream.Collectors.toList())));
 
         return page.map(p -> ProductDto.from(p, variantsByProduct.getOrDefault(p.getId(), List.of())));
+    }
+
+    /**
+     * Products are created unpublished (see {@link #createProduct}'s comment) —
+     * this is the explicit "go live" action staff take once photos/pricing are
+     * ready, matching what the architecture doc describes for the storefront.
+     */
+    @Transactional
+    public ProductDto setPublished(UUID productId, boolean published) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+        product.setPublished(published);
+        product.setPublishedAt(published ? Instant.now() : null);
+        productRepository.save(product);
+        List<ProductVariantDto> variants = variantRepository.findByProductId(productId).stream()
+                .map(ProductVariantDto::from)
+                .toList();
+        return ProductDto.from(product, variants);
+    }
+
+    @Transactional
+    public CatalogImageDto attachImage(UUID productId, AttachImageRequest request) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+
+        ProductImage image = new ProductImage();
+        image.setProduct(product);
+        if (request.variantId() != null) {
+            image.setVariant(variantRepository.findById(request.variantId())
+                    .orElseThrow(() -> new EntityNotFoundException("No variant: " + request.variantId())));
+        }
+        image.setUrl(request.url());
+        image.setThumbnailUrl(request.thumbnailUrl());
+        image.setAltText(request.altText());
+        image.setPrimary(request.isPrimary());
+        image.setWidth(request.width());
+        image.setHeight(request.height());
+        image.setByteSize(request.byteSize());
+        image.setSortOrder(imageRepository.findByProductIdOrderBySortOrderAsc(productId).size());
+
+        if (request.isPrimary()) {
+            // Only one primary image per product — demote any existing one rather
+            // than leaving two rows both claiming to be it.
+            imageRepository.findByProductIdOrderBySortOrderAsc(productId).forEach(existing -> {
+                if (existing.isPrimary()) {
+                    existing.setPrimary(false);
+                    imageRepository.save(existing);
+                }
+            });
+        }
+
+        return CatalogImageDto.from(imageRepository.save(image));
+    }
+
+    @Transactional
+    public void removeImage(UUID productId, UUID imageId) {
+        ProductImage image = imageRepository.findById(imageId)
+                .orElseThrow(() -> new EntityNotFoundException("No image: " + imageId));
+        if (!image.getProduct().getId().equals(productId)) {
+            throw new EntityNotFoundException("No image " + imageId + " on product " + productId);
+        }
+        imageRepository.delete(image);
     }
 
     private String generateUniqueSlug(String name) {

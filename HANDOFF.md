@@ -1,5 +1,14 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+**Status as of 2026-09-18 (session 10):** Phases 0-2 unchanged; session 10
+added the customer-facing catalogue read side (search/browse/related
+products/categories), Cloudinary signed image upload, verified-purchase
+reviews, and sales/view analytics events on top of the Phase-0 catalogue
+schema that already existed. See "Session 10" below for full detail,
+including two real bugs found live (a silently-dropping implicit INNER JOIN,
+and a null-parameter type-inference crash) that would not have been caught by
+compiling or unit tests alone.
+
 **Status as of 2026-09-17 (session 9):** Phases 0-2 built and live-verified.
 The session-7 improvement plan's **Tier 1 (all 8 items) and most of Tier 2
 are now done** — C5/C6/C7/C8/C9 were completed in an untitled session between
@@ -622,15 +631,140 @@ availability two different ways, narrowed but not eliminated by the F9
 sweeper), C14 (stock request DTOs still use `String` + manual `BigDecimal`
 parsing rather than typed/validated fields). All of Tier 3.
 
+## Session 10 — customer-facing catalogue, image upload, reviews, analytics
+
+Picked up on the founder's explicit ask to build out inventory management
+(product/variant/image/SKU detail, related products) and customer-facing
+browsing/search — separately from the earlier M-Pesa-vs-Co-op/Family-Bank-STK
+question, which was researched and closed first (see below). Full test suite
+(46 tests, 11 classes) stayed green throughout; every new endpoint was also
+live-verified against `nairobi_beauty_hub_dev` with real curl calls, the same
+standard every prior session has held itself to.
+
+**Co-op/Family Bank STK push — researched, not built.** Direct integration
+with either bank's own developer portal has no clear self-service path
+publicly documented (sandbox testing and credential generation, but no stated
+KYC/approval timeline). A payment aggregator (PayHero — already used on
+Jania Hub — or Tuma Payment Solutions) can trigger M-Pesa STK push straight
+into an *existing* Co-op/Family Bank paybill/till, self-service, "minutes not
+months," once Trendysh actually has one of those. Decision: don't build
+direct-to-bank integration; when real online payment is wanted, wire through
+PayHero the same way Jania Hub does. `PaymentMethodId.bankStk` on the
+frontend was relabelled generic "Bank STK push" (no bank named) to match —
+see the frontend's own HANDOFF for that change.
+
+**What was already there vs. what's new**: the attribute/variant/image/SKU
+schema (`V2__catalogue.sql`, session 0) and the staff-authenticated
+create/list/get product API (`ProductService`/`ProductController`, session 3)
+already existed and needed no redesign — the founder's "attribute-based,
+Odoo/ERPNext-style variants" request was already how this schema works.
+Session 10 added the pieces genuinely missing:
+
+- **`V13__product_reviews_and_analytics_events.sql`** — three new tables:
+  `product_review` (verified-purchase reviews, PENDING until staff moderate),
+  `product_sale_event` and `product_view_event` (append-only fact tables,
+  deliberately not extending `BaseEntity` — no `updated_at`, same posture as
+  `CustomerOrderItem`).
+- **The public storefront read API**, `CatalogController` at
+  `/api/v1/catalog/**` (added to `SecurityConfig`'s permit-list — no auth):
+  `GET /products` (search `q` + `category` slug + pagination),
+  `GET /products/{slug}` (full detail: images, variants with resolved
+  attribute values/swatches, rating aggregate, units sold),
+  `GET /products/{id}/related`, `GET /categories`,
+  `POST /products/{id}/view` (records a `ProductViewEvent` — the "clicks"
+  figure), `GET`/`POST /products/{id}/reviews`. Every read here only ever
+  returns published, non-deleted products — `CatalogService`'s javadoc
+  explains why this is a deliberately separate class from the staff-only
+  `ProductService`, not a reused one with an `if (isStaff)` branch.
+- **Verified-purchase reviews** (`ProductReviewService`) — since checkout is
+  guest-only, eligibility stands in for a customer login: the caller must
+  name a real order (`orderNo` + the `guestPhone` it was placed with) that
+  actually contains the product, in a status proving payment succeeded
+  (`PAID` or later — `DELIVERED` is modelled but not yet reachable, since
+  order status still only moves `PENDING_PAYMENT → PAID → DISPATCHED`, per
+  session 6's note). One review per order per product
+  (`UNIQUE (order_id, product_id)`). Staff moderate via
+  `AdminReviewController` (`/api/v1/admin/reviews/{id}/approve|reject`,
+  `PERM_PRODUCT_MANAGE` — no new permission needed). **Live-verified**: a
+  real guest order taken through checkout → manual payment confirmation →
+  review submitted → blocked correctly on wrong phone (404, vague on purpose
+  to avoid order-number enumeration) and on a second attempt with the same
+  order (409) → approved by staff → appears in the public reviews list and
+  the product detail's `avgRating`/`reviewCount`.
+- **Sales analytics** (`ProductAnalyticsListener`, its own class in the
+  catalog package per `EventLoggingListener`'s own javadoc convention) —
+  listens to the *existing* `PaymentConfirmedEvent` (not `OrderPlacedEvent`)
+  specifically so an abandoned/unpaid order never counts as a sale, and
+  writes one `ProductSaleEvent` per order line. Failures are caught and
+  logged, never rethrown — losing an analytics row must not turn an
+  already-successful payment confirmation into a 500. **Live-verified**: a
+  real manual payment confirmation produced exactly one sale event, reflected
+  immediately in the product detail's `unitsSold`.
+- **Cloudinary signed upload** (`CloudinarySignatureService` +
+  `UploadController` at `/api/v1/admin/uploads/cloudinary-signature`,
+  `PERM_PRODUCT_MANAGE`) — deliberately no Cloudinary SDK dependency; the
+  signing algorithm (sort params, SHA-1 the joined string + secret) is public
+  and small enough for a plain `MessageDigest`. The frontend asks this
+  endpoint for a signature, uploads straight to Cloudinary with it, then POSTs
+  the resulting `secure_url` to the new `POST /api/v1/products/{id}/images`
+  (staff-only) to attach it — Cloudinary credentials never reach the
+  frontend. New `app.cloudinary.*` env-var placeholders in `application.yml`,
+  same pattern as `app.mpesa.*`; **not yet live-testable** — no real
+  Cloudinary account exists for Trendysh yet, so only the "not configured"
+  error path was verified (correctly a clean `ConfigurationException`, not a
+  raw 500 — consistent with how `CheckoutService`'s missing-default-branch
+  case is handled).
+- **`ProductService.setPublished`** (`POST /products/{id}/publish|unpublish`)
+  — products are created unpublished (staff finish photos/pricing first); this
+  was the missing "go live" action, since nothing previously flipped that flag
+  after creation.
+
+**Two real bugs found live** (neither would have been caught by compiling or
+by the existing unit-test suite, since both only manifest against a real
+Postgres with real data):
+1. **An implicit JPQL path navigation through a nullable association silently
+   drops matching rows.** `ProductRepository.searchPublished`'s original form
+   wrote `p.subcategory.slug = :categorySlug` directly in the WHERE clause;
+   Hibernate compiles that as an INNER JOIN to `category` for the subcategory
+   path, which excludes every product whose `subcategory` is null — the
+   common case — even when its `category` matches and `categorySlug` is also
+   null (so neither OR-branch should even apply). Found live: a published
+   test product with a category set and no subcategory was invisible to
+   `GET /catalog/products` with zero filters. Fixed with explicit
+   `LEFT JOIN p.category c` / `LEFT JOIN p.subcategory sc` and comparing
+   against the joined aliases. **This is a bug class worth watching for
+   anywhere else in this codebase a nullable to-one association is navigated
+   directly inside a WHERE/SELECT clause rather than joined explicitly.**
+2. **A null bind parameter reused inside `LOWER(CONCAT(...))` crashes with a
+   PostgreSQL type-inference error**, not a Hibernate-level one — `function
+   lower(bytea) does not exist`. With `q` null, the JDBC driver can't infer a
+   type for that parameter from its position alone and defaults to `bytea`.
+   This broke *every* browse call with no search term, not just ones that
+   happened to search — found live because the "no filters" smoke test still
+   500'd after fix #1 above. Fixed by explicitly casting:
+   `LOWER(CONCAT('%', CAST(:q AS string), '%'))`. **Worth checking any other
+   optional-text-search JPQL query in this codebase for the same pattern.**
+
+**Not done this session, correctly deferred**: full-text search (current
+search is `ILIKE`-equivalent on name/short description — fine at hundreds of
+products, would need a `tsvector`/GIN index or trigram extension at real
+scale), a `DELIVERED` order-status transition (reviews are gated on `PAID` or
+later since `DELIVERED` is unreachable today), rating denormalisation onto
+`product` (computed live via `AVG`/`COUNT` on every read — fine at this
+volume, would need caching at scale), and wiring the frontend's admin product
+screens to any of this (frontend stays 100% mock/localStorage per the
+answered scoping question — that's its own follow-up).
+
 ## Deliberately not built yet
 
 Refresh tokens, password-reset flow, POS, inter-branch transfers (the
 two-leg IN_TRANSIT flow from the design doc §4.6 — `StockDocumentType.TRANSFER`
-exists in the schema but no endpoint posts one yet), image upload (endpoints
-accept an already-hosted URL only — no Cloudinary/R2 integration wired in),
-delivery fee calculation, TumaBoda dispatch integration, customer accounts/
-login (checkout is guest-only), notifications (order confirmation emails/SMS),
-promo codes, delivery zones.
+exists in the schema but no endpoint posts one yet), delivery fee calculation,
+TumaBoda dispatch integration, customer accounts/login (checkout is
+guest-only), notifications (order confirmation emails/SMS), promo codes,
+delivery zones, direct bank (Co-op/Family Bank) STK push integration
+(researched session 10 — not straightforward directly, planned via a payment
+aggregator like PayHero instead, once Trendysh has a paybill with the bank).
 
 ## Before continuing
 
