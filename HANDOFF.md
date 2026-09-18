@@ -1,5 +1,24 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+**Active multi-session plan:** `C:\Users\ADMIN\.claude\NairobiBeautyHub_Integration_Readiness_Plan.md`
+— a phased plan (backend gap-closing, then frontend auth/wiring/checkout/
+inventory-redesign) to connect the frontend and backend for real, written
+after a completeness tour of both repos found the real gaps (no staff order
+list endpoint, no analytics endpoints, frontend admin auth is fake, frontend
+product model doesn't match the backend's variant schema, etc.). **Read this
+before starting any "wire frontend to backend" work** — it has the correct
+dependency order and explains why, e.g., admin auth must be wired before any
+other admin screen can work at all. **Phase 1 (backend gap-closing) is now
+done** — see "Session 11" below. **Phase 2 (frontend real auth) is next.**
+
+**Status as of 2026-09-18 (session 11):** Phase 1 of the integration
+readiness plan complete — staff order list/search/cancel, a staff inventory
+browse endpoint, and admin analytics (revenue/order-counts/low-stock/top-
+sellers) all built, unit-tested, and live-verified end to end against
+`nairobi_beauty_hub_dev`. Full suite: 50 tests, all green. See "Session 11"
+below for the two more null-parameter/PostgreSQL type-inference bugs found
+live (same bug class as session 10, different shapes) and how each was fixed.
+
 **Status as of 2026-09-18 (session 10):** Phases 0-2 unchanged; session 10
 added the customer-facing catalogue read side (search/browse/related
 products/categories), Cloudinary signed image upload, verified-purchase
@@ -754,6 +773,83 @@ later since `DELIVERED` is unreachable today), rating denormalisation onto
 volume, would need caching at scale), and wiring the frontend's admin product
 screens to any of this (frontend stays 100% mock/localStorage per the
 answered scoping question — that's its own follow-up).
+
+## Session 11 — integration readiness Phase 1 (backend gap-closing)
+
+Picked up the plan at `C:\Users\ADMIN\.claude\NairobiBeautyHub_Integration_Readiness_Plan.md`
+right after it was written. Full suite: 50 tests (4 new, in a new
+`OrderFulfilmentServiceUnitTest`), all green; every new endpoint also
+live-verified against `nairobi_beauty_hub_dev` with real curl calls,
+including the negative cases (double-cancel, cancel-after-dispatch,
+unauthenticated access).
+
+**1.1 — Staff order list.** `GET /api/v1/orders` (paginated, optional
+`status` + `q` search across order number/email/phone — `CustomerOrder`
+doesn't capture a customer name today, so name search isn't possible yet;
+flagged in the plan, not fixed here, since it's a checkout-request schema
+change that belongs with Phase 4's checkout wiring, not this gap-closing
+pass). New `OrderSummaryDto` + `CustomerOrderRepository.search`, a
+constructor-expression query using `SIZE(o.items)` for the item count so
+listing orders is one query, not one-plus-N (the F12 pattern).
+
+**1.2 — Staff order cancellation.** The frontend's admin orders screen
+assumed a cancel action existed; it didn't — orders could only move forward
+(`PENDING_PAYMENT → PAID → DISPATCHED`). Added
+`OrderFulfilmentService.cancel` (only PENDING_PAYMENT/PAID are cancellable —
+anything DISPATCHED or later has physically left the building and needs a
+real return process, not a status flip), releasing any ACTIVE reservation
+and publishing a new `OrderCancelledEvent` through the existing event-log
+seam. `POST /api/v1/orders/{id}/cancel`, `PERM_ORDER_MANAGE_ALL`.
+**Live-verified**: cancelling a real PENDING_PAYMENT order → 200 CANCELLED;
+cancelling an already-DISPATCHED order → 422 with a clear reason; cancelling
+the same order twice → 422 the second time too.
+
+**1.3 — Staff inventory browse.** `GET /api/v1/stock/inventory`
+(`branchId`/`belowReorderOnly`/`q` filters, paginated) — `GET /stock/balance`
+required already knowing a variant or location ID; there was no way to just
+browse stock levels across the catalogue. New `InventoryLineDto` +
+`StockBalanceRepository.browseInventory`, restricted to internal (physical)
+locations only — a virtual location's balance (SUPPLIER, always negative;
+CUSTOMER, always positive) is the double-entry mechanism, not something a
+human should see in an inventory list.
+
+**1.4 — Admin analytics.** New top-level `analytics` package (deliberately
+not folded into `catalog` or `order` — it reads across both domains plus
+stock). `AnalyticsController` behind `PERM_ANALYTICS_VIEW` (defined since
+session 2, never checked anywhere until now):
+`GET /api/v1/admin/analytics/summary` (revenue, order count, orders-by-status,
+low-stock count) and `GET /api/v1/admin/analytics/top-products`. Revenue only
+counts orders whose payment actually succeeded (PAID or later) — same
+"confirmed, not merely placed" principle `ProductAnalyticsListener` already
+applies to per-product sale events.
+
+**Two more instances of session 10's null-parameter/PostgreSQL bug class,
+different shapes each time** — worth reading closely if writing another
+optional-filter JPQL query in this codebase:
+1. A null `Instant` parameter (`since`, for "orders since X") reused in a
+   plain `o.createdAt >= :since` comparison alongside an untyped
+   `:since IS NULL` check in the same statement failed PostgreSQL's
+   parameter type inference outright ("could not determine data type of
+   parameter") — this is a *different* failure from session 10's
+   `LOWER(CONCAT(...))` case, and critically, **the same `CAST(:since AS
+   timestamp)` fix that worked for the string case did NOT work here** —
+   it produced a new error, "cannot cast type bytea to timestamp without
+   time zone," because the JDBC driver had already bound the null parameter
+   as `bytea` before the SQL-level cast ever ran. Fixed differently:
+   removed the null case from the query entirely and pushed it to the
+   caller — `AnalyticsController` now defaults a missing `since` to
+   `Instant.EPOCH` ("since the beginning of time") before calling the
+   repository, so the query parameter is never null in the first place.
+   **This is probably the more robust fix in general** — worth applying
+   to future optional-date-filter queries instead of reaching for CAST.
+2. Same fix applied pre-emptively to `ProductSaleEventRepository.topSellers`
+   (same `since`-reused-in-comparison shape) before it ever broke in
+   production, since the pattern was now recognised on sight.
+
+**Not done this session, correctly deferred**: everything in the
+integration readiness plan's Phase 2 onward (frontend real auth, then
+wiring) — Phase 1 was backend-only by design so Phase 2+ has a stable API
+surface to build against.
 
 ## Deliberately not built yet
 

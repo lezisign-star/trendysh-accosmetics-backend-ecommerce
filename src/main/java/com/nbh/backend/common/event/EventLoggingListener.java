@@ -70,4 +70,9 @@ public class EventLoggingListener {
         log.warn("Low stock: {} at location {} dropped from {} to {} (reorder level {})",
                 event.sku(), event.locationId(), event.onHandBefore(), event.onHandAfter(), event.reorderLevel());
     }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderCancelled(OrderCancelledEvent event) {
+        log.info("Order cancelled: {} ({})", event.orderNo(), event.reason());
+    }
 }

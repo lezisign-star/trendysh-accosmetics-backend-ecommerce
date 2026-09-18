@@ -3,7 +3,9 @@ package com.nbh.backend.order.service;
 import com.nbh.backend.branch.entity.LocationType;
 import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.branch.repository.StockLocationRepository;
+import com.nbh.backend.common.event.OrderCancelledEvent;
 import com.nbh.backend.common.event.OrderFulfilledEvent;
+import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.OrderStatus;
@@ -11,13 +13,18 @@ import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
+import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockPostingService;
+import com.nbh.backend.stock.service.StockReservationService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * The step that actually closes the loop this whole platform was built for:
@@ -37,11 +44,16 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class OrderFulfilmentService {
 
+    /** Anything already DISPATCHED or later has physically left the building — cancel is a checkout-time-only escape hatch. */
+    private static final Set<OrderStatus> CANCELLABLE_STATUSES =
+            EnumSet.of(OrderStatus.PENDING_PAYMENT, OrderStatus.PAID);
+
     private final CustomerOrderRepository orderRepository;
     private final StockLocationRepository locationRepository;
     private final StockBalanceRepository balanceRepository;
     private final StockPostingService postingService;
     private final StockDocumentNoGenerator documentNoGenerator;
+    private final StockReservationService reservationService;
     private final ApplicationEventPublisher eventPublisher;
 
     public OrderFulfilmentService(CustomerOrderRepository orderRepository,
@@ -49,12 +61,14 @@ public class OrderFulfilmentService {
                                    StockBalanceRepository balanceRepository,
                                    StockPostingService postingService,
                                    StockDocumentNoGenerator documentNoGenerator,
+                                   StockReservationService reservationService,
                                    ApplicationEventPublisher eventPublisher) {
         this.orderRepository = orderRepository;
         this.locationRepository = locationRepository;
         this.balanceRepository = balanceRepository;
         this.postingService = postingService;
         this.documentNoGenerator = documentNoGenerator;
+        this.reservationService = reservationService;
         this.eventPublisher = eventPublisher;
     }
 
@@ -114,6 +128,38 @@ public class OrderFulfilmentService {
         eventPublisher.publishEvent(new OrderFulfilledEvent(
                 order.getId(), order.getOrderNo(), order.getFulfilmentBranch().getId(),
                 order.getFulfilmentType(), order.getDeliveryAddress()));
+
+        return order;
+    }
+
+    /**
+     * A staff-initiated cancellation — the frontend's admin orders screen
+     * assumes this action exists; it didn't until now. Deliberately narrower
+     * than a general "set status to X" endpoint: only PENDING_PAYMENT and
+     * PAID orders are cancellable (releases any active reservation back to
+     * available stock); anything DISPATCHED or later has physically left the
+     * building and needs a real return/refund process, not a status flip.
+     */
+    @Transactional
+    public CustomerOrder cancel(java.util.UUID orderId, String reason) {
+        CustomerOrder order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+        if (!CANCELLABLE_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException(
+                    "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot be cancelled");
+        }
+
+        for (CustomerOrderItem item : order.getItems()) {
+            if (item.getReservation() != null
+                    && item.getReservation().getStatus() == StockReservation.ReservationStatus.ACTIVE) {
+                reservationService.release(item.getReservation().getId());
+            }
+        }
+
+        order.setStatus(OrderStatus.CANCELLED);
+        order = orderRepository.save(order);
+
+        eventPublisher.publishEvent(new OrderCancelledEvent(order.getId(), order.getOrderNo(), reason));
 
         return order;
     }

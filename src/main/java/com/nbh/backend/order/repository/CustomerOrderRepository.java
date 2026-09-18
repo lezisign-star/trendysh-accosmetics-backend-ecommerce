@@ -1,9 +1,19 @@
 package com.nbh.backend.order.repository;
 
+import com.nbh.backend.order.dto.OrderSummaryDto;
 import com.nbh.backend.order.entity.CustomerOrder;
+import com.nbh.backend.order.entity.OrderStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,4 +35,62 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Override
     @EntityGraph(attributePaths = {"items", "items.variant", "fulfilmentBranch"})
     Optional<CustomerOrder> findById(UUID id);
+
+    /**
+     * Staff order-browse list — one query, no N+1 (F12 pattern): {@code
+     * SIZE(o.items)} is a correlated-count subquery, not a fetch of the
+     * items collection itself. {@code status}/{@code q} are optional; the
+     * {@code CAST(:q AS string)} is required for the same reason
+     * {@code ProductRepository.searchPublished} needed it — a null bind
+     * parameter reused inside LOWER/LIKE otherwise defaults to bytea on
+     * PostgreSQL and crashes every unfiltered call, not just filtered ones
+     * (found live in session 10; same fix applied here pre-emptively).
+     */
+    @Query("""
+            SELECT NEW com.nbh.backend.order.dto.OrderSummaryDto(
+                o.id, o.orderNo, o.status, o.guestEmail, o.guestPhone,
+                SIZE(o.items), o.grandTotal, o.createdAt)
+            FROM CustomerOrder o
+            WHERE (:status IS NULL OR o.status = :status)
+              AND (:q IS NULL
+                   OR LOWER(o.orderNo) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR o.guestPhone LIKE CONCAT('%', CAST(:q AS string), '%'))
+            ORDER BY o.createdAt DESC
+            """)
+    Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q, Pageable pageable);
+
+    /**
+     * Revenue = grand total of orders whose payment actually succeeded
+     * (PAID or later) — a PENDING_PAYMENT/CANCELLED/PAYMENT_FAILED/EXPIRED
+     * order must never count, same "confirmed, not merely placed" principle
+     * {@code ProductAnalyticsListener} uses for per-product sale events.
+     * {@code since} is REQUIRED here (never null) — callers pass {@code
+     * Instant.EPOCH} for "all time". Found live: unlike the {@code q}/LIKE
+     * case above, a null {@code Instant} parameter used in a plain {@code
+     * >=} comparison fails PostgreSQL's parameter type inference outright
+     * ("could not determine data type of parameter"), and wrapping it in an
+     * explicit {@code CAST(:since AS timestamp)} doesn't fix it either — the
+     * driver had already bound the null as {@code bytea} before the cast
+     * runs, so casting bytea to timestamp is itself a Postgres error. Rather
+     * than fight the driver further, the null case is pushed to the caller
+     * (a real, always-bindable {@code Instant} value) instead of the query.
+     */
+    @Query("""
+            SELECT COALESCE(SUM(o.grandTotal), 0) FROM CustomerOrder o
+            WHERE o.status IN :statuses AND o.createdAt >= :since
+            """)
+    BigDecimal totalRevenue(@Param("statuses") Collection<OrderStatus> statuses, @Param("since") Instant since);
+
+    @Query("""
+            SELECT o.status AS status, COUNT(o) AS count FROM CustomerOrder o
+            WHERE o.createdAt >= :since
+            GROUP BY o.status
+            """)
+    List<StatusCount> countByStatus(@Param("since") Instant since);
+
+    interface StatusCount {
+        OrderStatus getStatus();
+        long getCount();
+    }
 }

@@ -6,6 +6,7 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.common.exception.ConfigurationException;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.stock.dto.AdjustStockRequest;
+import com.nbh.backend.stock.dto.InventoryLineDto;
 import com.nbh.backend.stock.dto.ReceiveStockRequest;
 import com.nbh.backend.stock.dto.StockBalanceDto;
 import com.nbh.backend.stock.entity.*;
@@ -15,6 +16,9 @@ import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.staff.service.StaffBranchAccessService;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
@@ -155,6 +159,20 @@ public class StockController {
             return balanceRepository.findByLocationId(locationId).stream().map(StockBalanceDto::from).toList();
         }
         throw new IllegalArgumentException("Provide at least one of variantId or locationId");
+    }
+
+    /**
+     * The staff-facing "browse stock levels across the catalogue" list the
+     * completeness tour found missing — see {@code StockBalanceRepository.browseInventory}'s
+     * javadoc. Read-only, same permission as {@code balance()} above.
+     */
+    @PreAuthorize("hasAuthority('PERM_STOCK_VIEW')")
+    @GetMapping("/inventory")
+    public Page<InventoryLineDto> inventory(@RequestParam(required = false) UUID branchId,
+                                             @RequestParam(defaultValue = "false") boolean belowReorderOnly,
+                                             @RequestParam(required = false) String q,
+                                             @PageableDefault(size = 20) Pageable pageable) {
+        return balanceRepository.browseInventory(branchId, belowReorderOnly, q, pageable);
     }
 
     private StockLocation findLocationOrThrow(UUID id) {

@@ -1,11 +1,16 @@
 package com.nbh.backend.order.controller;
 
 import com.nbh.backend.order.dto.OrderDto;
+import com.nbh.backend.order.dto.OrderSummaryDto;
 import com.nbh.backend.order.entity.CustomerOrder;
+import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.order.service.OrderFulfilmentService;
 import com.nbh.backend.staff.entity.StaffUser;
 import jakarta.persistence.EntityNotFoundException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +26,22 @@ public class OrderController {
     public OrderController(CustomerOrderRepository orderRepository, OrderFulfilmentService fulfilmentService) {
         this.orderRepository = orderRepository;
         this.fulfilmentService = fulfilmentService;
+    }
+
+    /**
+     * Staff order browse — paginated, optional status filter and free-text
+     * search (order number, email, or phone — {@code CustomerOrder} doesn't
+     * capture a customer name today, so name search isn't possible yet; see
+     * the integration readiness plan for that gap). {@code Transactional}
+     * not needed here — {@code CustomerOrderRepository.search} returns an
+     * already-built DTO projection, no lazy access happens in this method.
+     */
+    @PreAuthorize("hasAuthority('PERM_ORDER_VIEW') or hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @GetMapping
+    public Page<OrderSummaryDto> list(@RequestParam(required = false) OrderStatus status,
+                                       @RequestParam(required = false) String q,
+                                       @PageableDefault(size = 20) Pageable pageable) {
+        return orderRepository.search(status, q, pageable);
     }
 
     /**
@@ -61,4 +82,15 @@ public class OrderController {
     public OrderDto fulfil(@PathVariable java.util.UUID id, @AuthenticationPrincipal StaffUser staff) {
         return OrderDto.from(fulfilmentService.fulfil(id, staff.getId()));
     }
+
+    /** See {@code OrderFulfilmentService.cancel}'s javadoc for exactly which statuses this accepts. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/cancel")
+    @Transactional
+    public OrderDto cancel(@PathVariable java.util.UUID id, @RequestBody(required = false) CancelOrderRequest request) {
+        String reason = request != null ? request.reason() : null;
+        return OrderDto.from(fulfilmentService.cancel(id, reason));
+    }
+
+    public record CancelOrderRequest(String reason) {}
 }

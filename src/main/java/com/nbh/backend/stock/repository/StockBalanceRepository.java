@@ -1,7 +1,10 @@
 package com.nbh.backend.stock.repository;
 
+import com.nbh.backend.stock.dto.InventoryLineDto;
 import com.nbh.backend.stock.entity.StockBalance;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -55,4 +58,48 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
         ON CONFLICT (variant_id, location_id) DO NOTHING
         """, nativeQuery = true)
     void insertZeroIfAbsent(@Param("variantId") UUID variantId, @Param("locationId") UUID locationId);
+
+    /**
+     * The staff-facing "browse stock levels" list the completeness tour found
+     * missing — {@code GET /stock/balance} requires already knowing a variant
+     * or location ID. Internal (physical) locations only — a virtual
+     * location's balance (SUPPLIER, always negative; CUSTOMER, always
+     * positive) is the double-entry mechanism, not an inventory figure a
+     * human should browse. Same {@code CAST(:q AS string)} null-parameter fix
+     * as {@code ProductRepository.searchPublished} for the same reason.
+     */
+    @Query("""
+            SELECT NEW com.nbh.backend.stock.dto.InventoryLineDto(
+                v.id, v.sku, v.variantName, p.name,
+                loc.id, loc.code, br.id, br.name,
+                b.onHandQty, b.reservedQty, (b.onHandQty - b.reservedQty),
+                v.reorderLevel,
+                CASE WHEN v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel THEN true ELSE false END)
+            FROM StockBalance b
+            JOIN b.variant v
+            JOIN v.product p
+            JOIN b.location loc
+            JOIN loc.branch br
+            WHERE loc.isInternal = true
+              AND (:branchId IS NULL OR br.id = :branchId)
+              AND (:belowReorderOnly = false
+                   OR (v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel))
+              AND (:q IS NULL
+                   OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+            ORDER BY p.name ASC, v.sku ASC
+            """)
+    Page<InventoryLineDto> browseInventory(@Param("branchId") UUID branchId,
+                                            @Param("belowReorderOnly") boolean belowReorderOnly,
+                                            @Param("q") String q,
+                                            Pageable pageable);
+
+    /** The admin analytics dashboard's "low stock" tile — same eligibility as {@code browseInventory}'s filter. */
+    @Query("""
+            SELECT COUNT(b) FROM StockBalance b
+            JOIN b.variant v
+            JOIN b.location loc
+            WHERE loc.isInternal = true AND v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel
+            """)
+    long countBelowReorderLevel();
 }
