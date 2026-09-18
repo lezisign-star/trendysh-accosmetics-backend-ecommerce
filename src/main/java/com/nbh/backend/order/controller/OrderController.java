@@ -1,5 +1,6 @@
 package com.nbh.backend.order.controller;
 
+import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.dto.AdminOrderDetailDto;
 import com.nbh.backend.order.dto.OrderDto;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
@@ -46,7 +47,8 @@ public class OrderController {
     public Page<OrderSummaryDto> list(@RequestParam(required = false) OrderStatus status,
                                        @RequestParam(required = false) String q,
                                        @PageableDefault(size = 20) Pageable pageable) {
-        return orderRepository.search(status, q, pageable);
+        String term = (q == null || q.isBlank()) ? null : q.trim();
+        return orderRepository.search(status, term, PhoneNumbers.searchFragment(term), pageable);
     }
 
     /**

@@ -15,6 +15,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -75,6 +76,18 @@ public class ProductController {
     @PostMapping("/{id}/unpublish")
     public ProductDto unpublish(@PathVariable UUID id) {
         return productService.setPublished(id, false);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @GetMapping("/{id}/images")
+    public List<CatalogImageDto> listImages(@PathVariable UUID id) {
+        return productService.listImages(id);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PutMapping("/{id}/images/{imageId}/primary")
+    public CatalogImageDto setPrimaryImage(@PathVariable UUID id, @PathVariable UUID imageId) {
+        return productService.setPrimaryImage(id, imageId);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")

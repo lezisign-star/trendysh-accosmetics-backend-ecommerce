@@ -7,6 +7,7 @@ import com.nbh.backend.catalog.entity.ProductReview;
 import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductReviewRepository;
 import com.nbh.backend.common.exception.ConflictException;
+import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.order.entity.CustomerOrder;
@@ -61,7 +62,7 @@ public class ProductReviewService {
                 .orElseThrow(() -> new NotFoundException("No product: " + productId));
 
         CustomerOrder order = orderRepository.findByOrderNo(request.orderNo().trim())
-                .filter(o -> o.getGuestPhone().equals(request.phone().trim()))
+                .filter(o -> PhoneNumbers.sameNumber(o.getGuestPhone(), request.phone()))
                 .orElseThrow(() -> new NotFoundException("No matching order found for that order number and phone"));
 
         if (!ELIGIBLE_STATUSES.contains(order.getStatus())) {

@@ -50,17 +50,19 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
      */
     @Query("""
             SELECT NEW com.nbh.backend.order.dto.OrderSummaryDto(
-                o.id, o.orderNo, o.status, o.guestEmail, o.guestPhone,
+                o.id, o.orderNo, o.status, o.customerName, o.guestEmail, o.guestPhone,
                 SIZE(o.items), o.grandTotal, o.createdAt)
             FROM CustomerOrder o
             WHERE (:status IS NULL OR o.status = :status)
               AND (:q IS NULL
                    OR LOWER(o.orderNo) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(o.customerName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
-                   OR o.guestPhone LIKE CONCAT('%', CAST(:q AS string), '%'))
+                   OR o.guestPhone LIKE CONCAT('%', CAST(:phoneQ AS string), '%'))
             ORDER BY o.createdAt DESC
             """)
-    Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q, Pageable pageable);
+    Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q,
+                                  @Param("phoneQ") String phoneQ, Pageable pageable);
 
     /**
      * Revenue = grand total of orders whose payment actually succeeded

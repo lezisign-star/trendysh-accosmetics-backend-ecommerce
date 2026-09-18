@@ -118,11 +118,27 @@ public class CartService {
     }
 
     private Cart findOrCreateCart(String sessionId) {
-        return cartRepository.findBySessionId(sessionId).orElseGet(() -> {
+        return cartRepository.findBySessionId(sessionId).map(this::reactivateIfClosed).orElseGet(() -> {
             Cart cart = new Cart();
             cart.setSessionId(sessionId);
             return cartRepository.save(cart);
         });
+    }
+
+    /**
+     * session_id is unique, so a browser that checked out and then keeps
+     * shopping under the same session can't get a second cart row. A closed
+     * (CONVERTED/ABANDONED) cart is therefore emptied and reopened — its lines
+     * already live on as order items, so nothing is lost, and the customer
+     * never sees last order's items reappear in a new basket.
+     */
+    private Cart reactivateIfClosed(Cart cart) {
+        if (cart.getStatus() == Cart.CartStatus.ACTIVE) {
+            return cart;
+        }
+        cartItemRepository.deleteAll(cartItemRepository.findByCartId(cart.getId()));
+        cart.setStatus(Cart.CartStatus.ACTIVE);
+        return cartRepository.save(cart);
     }
 
     private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty) {

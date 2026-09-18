@@ -11,8 +11,11 @@ import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.common.event.OrderPlacedEvent;
 import com.nbh.backend.common.exception.ConfigurationException;
+import com.nbh.backend.common.exception.ConflictException;
+import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
+import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.dto.CheckoutRequest;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
@@ -85,8 +88,11 @@ public class CheckoutService {
 
     @Transactional
     public CheckoutResult checkout(String sessionId, CheckoutRequest request) {
-        Cart cart = cartRepository.findBySessionId(sessionId)
+        Cart cart = cartRepository.findWithLockBySessionId(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("No cart for this session"));
+        if (cart.getStatus() != Cart.CartStatus.ACTIVE) {
+            throw new ConflictException("This basket has already been checked out");
+        }
         List<CartItem> cartItems = cartItemRepository.findByCartId(cart.getId());
         if (cartItems.isEmpty()) {
             throw new IllegalStateException("Cannot check out an empty cart");
@@ -105,11 +111,14 @@ public class CheckoutService {
 
         CustomerOrder order = new CustomerOrder();
         order.setOrderNo(orderNoGenerator.next());
+        order.setCustomerName(request.customerName().trim());
         order.setGuestEmail(request.guestEmail());
-        order.setGuestPhone(request.guestPhone());
+        order.setGuestPhone(PhoneNumbers.normalize(request.guestPhone()));
         order.setFulfilmentBranch(fulfilmentBranch);
         order.setFulfilmentType(request.fulfilmentType());
         order.setDeliveryAddress(request.deliveryAddress());
+        // Pickup has no courier leg, so a stray method on a pickup order is dropped, not stored.
+        order.setDeliveryMethod(request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER ? request.deliveryMethod() : null);
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(BigDecimal.ZERO);
         order.setVatTotal(BigDecimal.ZERO);

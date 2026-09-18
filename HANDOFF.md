@@ -913,9 +913,71 @@ Needed by the real admin orders screen (frontend Phase 3.2/3.3). Suite 54/54.
   dispatched through the UI; analytics revenue and top-seller counts moved
   accordingly.
 
-**Still missing:** checkout doesn't capture a customer *name* (only
-email/phone), so the order list can't show or search names — a checkout
-schema change, planned with frontend Phase 4.
+*(The customer-name gap noted here was closed in session 12.)*
+
+## Session 12 — storefront checkout support (frontend Phase 4) (2026-09-19)
+
+Everything the real storefront cart/checkout/tracking needed. Suite 63/63
+(+9 tests: `CartServiceUnitTest` ×3, `PhoneNumbersTest` ×3, three new cases in
+`CheckoutServiceUnitTest`).
+- **V14 migration**: `customer_order.customer_name` (VARCHAR 200) and
+  `delivery_method` (`BODA`/`VEHICLE`, CHECK-constrained). Both nullable —
+  older orders have neither, and pickup has no delivery method.
+  `CheckoutRequest` now requires `customerName` (@NotBlank, ≤200) and takes an
+  optional `deliveryMethod`; the method is dropped for `BRANCH_PICKUP`. The name
+  is trimmed. Email stays **required** (founder decision: tracking is order no. +
+  email).
+- **Admin surfaces**: `OrderSummaryDto` / `AdminOrderDetailDto` carry
+  `customerName` (+ `deliveryMethod` on detail); order search now also matches
+  the customer name.
+- **Phone numbers are normalised** (`common/util/PhoneNumbers`): stored as
+  `2547XXXXXXXX` (also the form the M-PESA API wants). Found because review
+  eligibility compared the phone by exact string, so "0720 000 111" at checkout
+  and "0720000111" on the review form would not match. Reviews now compare
+  normalised (old rows stored raw still match). Admin phone search uses a
+  fragment (`searchFragment`: leading 0 dropped) so "0720…" finds "254720…".
+- **Cart safety fixes**:
+  - `session_id` is unique, so a CONVERTED cart used to be re-used as-is under
+    the same session (old lines reappearing, and a second checkout could
+    duplicate the order). `CartService` now empties and reopens a closed cart;
+    checkout takes a **pessimistic row lock** on the cart and refuses a cart that
+    is not ACTIVE with **409** ("already checked out") — a double-submit can no
+    longer create two orders/holds.
+  - `CartItemDto` now exposes `productId` + `productSlug`; `findByCartId`
+    fetches variant+product in one query (entity graph).
+- `OrderItemDto` now includes `productName`/`variantName` so confirmation and
+  guest tracking can show real names instead of SKUs.
+- **Known, not fixed:** two *simultaneous* first requests for a brand-new cart
+  session can both try to create the row (unique violation → 409). The frontend
+  serialises adds to avoid it; a server-side `INSERT … ON CONFLICT` would make
+  it airtight. The add-to-cart availability check compares the requested qty,
+  not existing-line + requested (checkout's reservation is the real guard).
+- **Product gallery (added later the same day, suite now 70/70, +7 tests in
+  `ProductImageGalleryUnitTest`)**: several images per product with exactly one
+  primary. `GET /products/{id}/images` (staff; cover first),
+  `PUT /products/{id}/images/{imageId}/primary`. `attachImage`: a product's first
+  image is *always* primary; a new primary demotes the old; sort order is
+  max+1 (removals leave gaps). `removeImage` promotes the next image when the
+  primary is removed, so a gallery never has images but no cover (the storefront
+  list shows only the cover). Both reject an image that belongs to another product.
+- Live-verified against the dev DB: add/merge, refusal above availability,
+  validation errors (blank name, bad method), checkout, double-checkout 409,
+  reusable empty cart afterwards, track with right/wrong email, stored row
+  (name, normalised phone, method), admin search by name / phone fragment /
+  order no.
+
+## Next session — start here (backend)
+
+Phases 1-6 of the integration plan are done. **Session 12's work is uncommitted**
+(last commit `2e7545e`); review `git status`, commit with **no AI attribution**,
+push. Suite: 70/70 (recreate `nairobi_beauty_hub_test` first; dev DB is
+`nairobi_beauty_hub_dev`, password `janet-marketing`; V14 is the latest migration).
+Open backend items: `INSERT … ON CONFLICT` for concurrent first cart requests;
+add-to-cart availability ignores the existing line qty (checkout's reservation is
+the real guard); no product delete / category rename endpoints; real Cloudinary
+upload untested (no account); backend has no public deployment yet (blocks the
+deployed staging frontend). Backlog 7-9 in the plan (customer accounts, visit
+analytics, promo banners) is next after deployment.
 
 ## Deliberately not built yet
 

@@ -27,6 +27,9 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "order_no", nullable = false, unique = true, length = 40)
     private String orderNo;
 
+    @Column(name = "customer_name", length = 200)
+    private String customerName;
+
     @Column(name = "guest_email", nullable = false, length = 255)
     private String guestEmail;
 
@@ -59,6 +62,10 @@ public class CustomerOrder extends BaseEntity {
 
     @Column(name = "delivery_address", columnDefinition = "TEXT")
     private String deliveryAddress;
+
+    /** BODA or VEHICLE for DELIVERY_COURIER orders; null for pickup and for orders that pre-date V14. */
+    @Column(name = "delivery_method", length = 20)
+    private String deliveryMethod;
 
     @Column(name = "placed_at")
     private Instant placedAt;

@@ -8,6 +8,8 @@ import java.util.UUID;
 public record CartItemDto(
         UUID id,
         UUID variantId,
+        UUID productId,
+        String productSlug,
         String sku,
         String productName,
         String variantName,
@@ -17,7 +19,9 @@ public record CartItemDto(
 ) {
     public static CartItemDto from(CartItem item) {
         return new CartItemDto(
-                item.getId(), item.getVariant().getId(), item.getVariant().getSku(),
+                item.getId(), item.getVariant().getId(),
+                item.getVariant().getProduct().getId(), item.getVariant().getProduct().getSlug(),
+                item.getVariant().getSku(),
                 item.getProductNameSnapshot(), item.getVariantNameSnapshot(),
                 item.getQty(), item.getUnitPriceSnapshot(), item.getLineTotal());
     }

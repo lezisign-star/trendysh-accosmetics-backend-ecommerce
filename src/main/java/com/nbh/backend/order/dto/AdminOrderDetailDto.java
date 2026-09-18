@@ -21,6 +21,8 @@ public record AdminOrderDetailDto(
         String orderNo,
         OrderStatus status,
         String fulfilmentType,
+        String deliveryMethod,
+        String customerName,
         String guestEmail,
         String guestPhone,
         String deliveryAddress,
@@ -52,7 +54,7 @@ public record AdminOrderDetailDto(
     public static AdminOrderDetailDto from(CustomerOrder o, List<PaymentRecord> payments) {
         return new AdminOrderDetailDto(
                 o.getId(), o.getOrderNo(), o.getStatus(), o.getFulfilmentType().name(),
-                o.getGuestEmail(), o.getGuestPhone(), o.getDeliveryAddress(),
+                o.getDeliveryMethod(), o.getCustomerName(), o.getGuestEmail(), o.getGuestPhone(), o.getDeliveryAddress(),
                 o.getSubtotal(), o.getVatTotal(), o.getDeliveryFee(), o.getGrandTotal(),
                 o.getCreatedAt(), o.getPlacedAt(),
                 o.getItems().stream().map(Line::from).toList(),

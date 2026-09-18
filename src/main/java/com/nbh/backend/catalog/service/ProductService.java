@@ -267,10 +267,23 @@ public class ProductService {
         return ProductDto.from(product, variants);
     }
 
+    /** A product's gallery as staff see it: the primary image first, the rest in the order they were added. */
+    @Transactional(readOnly = true)
+    public List<CatalogImageDto> listImages(UUID productId) {
+        if (!productRepository.existsById(productId)) {
+            throw new EntityNotFoundException("No product: " + productId);
+        }
+        return imageRepository.findByProductIdOrderBySortOrderAsc(productId).stream()
+                .sorted(java.util.Comparator.comparing((ProductImage i) -> !i.isPrimary()))
+                .map(CatalogImageDto::from)
+                .toList();
+    }
+
     @Transactional
     public CatalogImageDto attachImage(UUID productId, AttachImageRequest request) {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+        List<ProductImage> existing = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
 
         ProductImage image = new ProductImage();
         image.setProduct(product);
@@ -281,34 +294,62 @@ public class ProductService {
         image.setUrl(request.url());
         image.setThumbnailUrl(request.thumbnailUrl());
         image.setAltText(request.altText());
-        image.setPrimary(request.isPrimary());
         image.setWidth(request.width());
         image.setHeight(request.height());
         image.setByteSize(request.byteSize());
-        image.setSortOrder(imageRepository.findByProductIdOrderBySortOrderAsc(productId).size());
+        // Append after the current last image (max + 1, not size: removals leave gaps).
+        image.setSortOrder(existing.stream().mapToInt(ProductImage::getSortOrder).max().orElse(-1) + 1);
 
-        if (request.isPrimary()) {
-            // Only one primary image per product — demote any existing one rather
-            // than leaving two rows both claiming to be it.
-            imageRepository.findByProductIdOrderBySortOrderAsc(productId).forEach(existing -> {
-                if (existing.isPrimary()) {
-                    existing.setPrimary(false);
-                    imageRepository.save(existing);
-                }
-            });
+        // A product's first image is always its primary one, whatever the request says;
+        // otherwise the storefront list would show no photo although the gallery has one.
+        boolean makePrimary = request.isPrimary() || existing.isEmpty();
+        if (makePrimary) {
+            demoteAll(existing);
         }
+        image.setPrimary(makePrimary);
 
         return CatalogImageDto.from(imageRepository.save(image));
     }
 
+    /** Makes an existing image the product's primary one; the previous primary is demoted. */
+    @Transactional
+    public CatalogImageDto setPrimaryImage(UUID productId, UUID imageId) {
+        List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        ProductImage target = images.stream()
+                .filter(i -> i.getId().equals(imageId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException("No image " + imageId + " on product " + productId));
+        demoteAll(images);
+        target.setPrimary(true);
+        return CatalogImageDto.from(imageRepository.save(target));
+    }
+
     @Transactional
     public void removeImage(UUID productId, UUID imageId) {
-        ProductImage image = imageRepository.findById(imageId)
-                .orElseThrow(() -> new EntityNotFoundException("No image: " + imageId));
-        if (!image.getProduct().getId().equals(productId)) {
-            throw new EntityNotFoundException("No image " + imageId + " on product " + productId);
+        List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        ProductImage removed = images.stream()
+                .filter(i -> i.getId().equals(imageId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException("No image " + imageId + " on product " + productId));
+        imageRepository.delete(removed);
+
+        // Removing the primary must not leave a gallery with no primary: promote the next one.
+        if (removed.isPrimary()) {
+            images.stream()
+                    .filter(i -> !i.getId().equals(imageId))
+                    .findFirst()
+                    .ifPresent(next -> {
+                        next.setPrimary(true);
+                        imageRepository.save(next);
+                    });
         }
-        imageRepository.delete(image);
+    }
+
+    private void demoteAll(List<ProductImage> images) {
+        images.stream().filter(ProductImage::isPrimary).forEach(i -> {
+            i.setPrimary(false);
+            imageRepository.save(i);
+        });
     }
 
     private String generateUniqueSlug(String name) {

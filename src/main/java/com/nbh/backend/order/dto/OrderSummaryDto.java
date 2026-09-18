@@ -19,6 +19,7 @@ public record OrderSummaryDto(
         UUID id,
         String orderNo,
         OrderStatus status,
+        String customerName,
         String guestEmail,
         String guestPhone,
         long itemCount,

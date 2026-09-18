@@ -78,7 +78,7 @@ class CheckoutServiceUnitTest {
         cart.setId(UUID.randomUUID());
         cart.setSessionId(SESSION_ID);
         cart.setStatus(Cart.CartStatus.ACTIVE);
-        lenient().when(cartRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(cart));
+        lenient().when(cartRepository.findWithLockBySessionId(SESSION_ID)).thenReturn(Optional.of(cart));
 
         fulfilmentBranch = new Branch();
         fulfilmentBranch.setId(UUID.randomUUID());
@@ -129,7 +129,41 @@ class CheckoutServiceUnitTest {
     }
 
     private CheckoutRequest request() {
-        return new CheckoutRequest("customer@example.com", "254700000000", FulfilmentType.BRANCH_PICKUP, null);
+        return new CheckoutRequest("Test Customer", "customer@example.com", "254700000000", FulfilmentType.BRANCH_PICKUP, null, null);
+    }
+
+    @Test
+    void customerNameIsTrimmedAndStoredAndDeliveryMethodKeptForCourierOrders() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var request = new CheckoutRequest("  Njeri Nails Studio  ", "n@example.com", "0720 000 111",
+                FulfilmentType.DELIVERY_COURIER, "Riverside Court, Kilimani, Nairobi", "BODA");
+        var order = checkoutService.checkout(SESSION_ID, request).order();
+
+        assertThat(order.getCustomerName()).isEqualTo("Njeri Nails Studio");
+        assertThat(order.getGuestPhone()).isEqualTo("254720000111");
+        assertThat(order.getDeliveryMethod()).isEqualTo("BODA");
+    }
+
+    @Test
+    void checkingOutAnAlreadyConvertedBasketIsRefusedNotDuplicated() {
+        cart.setStatus(Cart.CartStatus.CONVERTED);
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
+                .isInstanceOf(com.nbh.backend.common.exception.ConflictException.class);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void deliveryMethodIsDroppedForPickupOrders() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var request = new CheckoutRequest("Test Customer", "n@example.com", "254700000000",
+                FulfilmentType.BRANCH_PICKUP, null, "VEHICLE");
+
+        assertThat(checkoutService.checkout(SESSION_ID, request).order().getDeliveryMethod()).isNull();
     }
 
     @Test
