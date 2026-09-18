@@ -105,6 +105,28 @@ class PaymentServiceUnitTest {
     }
 
     @Test
+    void manualConfirmationRecordsTheMethodTheCustomerActuallyUsed() {
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, orderWithItems());
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        PaymentRecord result = paymentService.confirmSuccess(
+                payment.getId(), "BANK-REF", "{}", PaymentRecord.PaymentMethod.BANK);
+
+        assertThat(result.getMethod()).isEqualTo(PaymentRecord.PaymentMethod.BANK);
+        assertThat(result.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.SUCCESS);
+    }
+
+    @Test
+    void confirmationWithoutAMethodKeepsTheRecordsOwnMethod() {
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, orderWithItems());
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        PaymentRecord result = paymentService.confirmSuccess(payment.getId(), "REF", "{}", null);
+
+        assertThat(result.getMethod()).isEqualTo(PaymentRecord.PaymentMethod.MPESA);
+    }
+
+    @Test
     void confirmSuccessSkipsItemsWithNoReservation() {
         CustomerOrder order = orderWithItems((StockReservation) null);
         PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.PENDING, order);

@@ -32,8 +32,10 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @EntityGraph(attributePaths = {"items", "items.variant", "fulfilmentBranch"})
     Optional<CustomerOrder> findByOrderNo(String orderNo);
 
+    // items.variant.product: the staff detail view names each line's product;
+    // fetching it here keeps that in the one query instead of one per line.
     @Override
-    @EntityGraph(attributePaths = {"items", "items.variant", "fulfilmentBranch"})
+    @EntityGraph(attributePaths = {"items", "items.variant", "items.variant.product", "fulfilmentBranch"})
     Optional<CustomerOrder> findById(UUID id);
 
     /**

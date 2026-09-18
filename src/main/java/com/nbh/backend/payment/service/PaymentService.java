@@ -49,6 +49,18 @@ public class PaymentService {
 
     @Transactional
     public PaymentRecord confirmSuccess(UUID paymentRecordId, String providerReference, String rawResponse) {
+        return confirmSuccess(paymentRecordId, providerReference, rawResponse, null);
+    }
+
+    /**
+     * {@code actualMethod} lets staff record how the customer really paid
+     * when confirming by hand — checkout always creates the record as MPESA,
+     * but under the pay-after-we-call flow it may turn out to be bank or cash.
+     * Null keeps whatever the record already says (the Daraja callback path).
+     */
+    @Transactional
+    public PaymentRecord confirmSuccess(UUID paymentRecordId, String providerReference, String rawResponse,
+                                         PaymentRecord.PaymentMethod actualMethod) {
         // §4 C2 fix: lock the row before reading its status — see
         // PaymentRecordRepository.lockById's javadoc for the race this closes.
         PaymentRecord payment = paymentRecordRepository.lockById(paymentRecordId)
@@ -63,6 +75,9 @@ public class PaymentService {
         }
 
         payment.setStatus(PaymentRecord.PaymentStatus.SUCCESS);
+        if (actualMethod != null) {
+            payment.setMethod(actualMethod);
+        }
         payment.setProviderReference(providerReference);
         payment.setRawResponse(rawResponse);
         paymentRecordRepository.save(payment);

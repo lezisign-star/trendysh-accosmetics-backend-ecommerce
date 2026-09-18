@@ -219,7 +219,7 @@ public class PaymentController {
         Map<String, String> note = new LinkedHashMap<>();
         note.put("type", "manual_staff_confirmation");
         note.put("notes", request.notes());
-        paymentService.confirmSuccess(paymentRecordId, request.reference(), toJson(note));
+        paymentService.confirmSuccess(paymentRecordId, request.reference(), toJson(note), request.method());
     }
 
     @PreAuthorize("hasAnyAuthority('PERM_PAYMENT_MANAGE','PERM_ORDER_MANAGE_ALL')")
@@ -240,7 +240,8 @@ public class PaymentController {
         }
     }
 
-    public record ManualConfirmRequest(String reference, String notes) {}
+    /** {@code method} optional: how the customer actually paid (MPESA/BANK/CASH); omitted keeps the record's own. */
+    public record ManualConfirmRequest(String reference, String notes, PaymentRecord.PaymentMethod method) {}
 
     public record ManualFailRequest(String reason) {}
 }

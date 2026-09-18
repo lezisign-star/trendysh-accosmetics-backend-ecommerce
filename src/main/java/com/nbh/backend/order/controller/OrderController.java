@@ -1,6 +1,8 @@
 package com.nbh.backend.order.controller;
 
+import com.nbh.backend.order.dto.AdminOrderDetailDto;
 import com.nbh.backend.order.dto.OrderDto;
+import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.order.dto.OrderSummaryDto;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.OrderStatus;
@@ -22,10 +24,13 @@ public class OrderController {
 
     private final CustomerOrderRepository orderRepository;
     private final OrderFulfilmentService fulfilmentService;
+    private final PaymentRecordRepository paymentRecordRepository;
 
-    public OrderController(CustomerOrderRepository orderRepository, OrderFulfilmentService fulfilmentService) {
+    public OrderController(CustomerOrderRepository orderRepository, OrderFulfilmentService fulfilmentService,
+                            PaymentRecordRepository paymentRecordRepository) {
         this.orderRepository = orderRepository;
         this.fulfilmentService = fulfilmentService;
+        this.paymentRecordRepository = paymentRecordRepository;
     }
 
     /**
@@ -59,13 +64,14 @@ public class OrderController {
         return OrderDto.from(order);
     }
 
+    /** Staff detail view — see {@link AdminOrderDetailDto} for why this isn't the shared {@link OrderDto}. */
     @PreAuthorize("hasAuthority('PERM_ORDER_VIEW') or hasAuthority('PERM_ORDER_MANAGE_ALL')")
     @GetMapping("/{id}")
     @Transactional(readOnly = true)
-    public OrderDto get(@PathVariable java.util.UUID id) {
-        return orderRepository.findById(id)
-                .map(OrderDto::from)
+    public AdminOrderDetailDto get(@PathVariable java.util.UUID id) {
+        CustomerOrder order = orderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + id));
+        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id));
     }
 
     /**

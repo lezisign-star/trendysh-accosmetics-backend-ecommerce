@@ -892,6 +892,31 @@ Note it counts stock across ALL branches' physical locations, matching the
 "one shared catalogue" decision; if branch-specific availability is ever
 wanted, this is the place to change.
 
+## Session 11d — staff order detail + recording how a customer paid (2026-09-18)
+
+Needed by the real admin orders screen (frontend Phase 3.2/3.3). Suite 54/54.
+- **`GET /api/v1/orders/{id}` now returns `AdminOrderDetailDto`** (was the
+  shared `OrderDto`): guest email/phone, delivery address, created/placed
+  timestamps, line items with **product and variant names**, and the
+  **payment records** (staff need the payment id to confirm it). `OrderDto`
+  is unchanged — it still backs guest tracking and the checkout response and
+  deliberately doesn't expose payment ids. `CustomerOrderRepository.findById`'s
+  entity graph now also fetches `items.variant.product`, so naming lines costs
+  no extra queries (asserted in `OrderReadQueryCountTest`).
+- **`confirm-manual` accepts an optional `method`** (`MPESA`/`BANK`/`CASH`).
+  Checkout always creates the payment record as MPESA, but under the
+  pay-after-we-call flow the customer may pay by bank or cash; without this
+  the record would say MPESA forever. `PaymentService.confirmSuccess` gained a
+  4-arg overload (the 3-arg one, used by the Daraja callback, is unchanged and
+  delegates with `null`). 2 new unit tests.
+- Live-verified: real order taken PENDING_PAYMENT → confirm (BANK, reference) →
+  dispatched through the UI; analytics revenue and top-seller counts moved
+  accordingly.
+
+**Still missing:** checkout doesn't capture a customer *name* (only
+email/phone), so the order list can't show or search names — a checkout
+schema change, planned with frontend Phase 4.
+
 ## Deliberately not built yet
 
 Refresh tokens, password-reset flow, POS, inter-branch transfers (the

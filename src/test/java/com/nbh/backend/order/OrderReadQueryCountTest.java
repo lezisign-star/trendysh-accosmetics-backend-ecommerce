@@ -6,6 +6,7 @@ import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.order.dto.AdminOrderDetailDto;
 import com.nbh.backend.order.dto.OrderDto;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
@@ -107,6 +108,19 @@ class OrderReadQueryCountTest {
         assertThat(queryCount)
                 .as("reading a 3-item order should take a small, flat number of queries — "
                         + "N+1 would show roughly 1 (order+items) + 3 (one per variant) = 4+")
+                .isLessThanOrEqualTo(2);
+
+        // The staff detail view additionally names each line's product; that
+        // must ride the same entity graph, not add one query per line.
+        entityManager.clear();
+        statistics.clear();
+        CustomerOrder refetched = orderRepository.findById(orderId).orElseThrow();
+        AdminOrderDetailDto detail = AdminOrderDetailDto.from(refetched, java.util.List.of());
+
+        assertThat(detail.items()).extracting(AdminOrderDetailDto.Line::productName)
+                .containsExactlyInAnyOrder("Query Count Product 0", "Query Count Product 1", "Query Count Product 2");
+        assertThat(statistics.getPrepareStatementCount())
+                .as("naming each line's product must not add a query per line")
                 .isLessThanOrEqualTo(2);
     }
 }
