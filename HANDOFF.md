@@ -8,8 +8,13 @@ list endpoint, no analytics endpoints, frontend admin auth is fake, frontend
 product model doesn't match the backend's variant schema, etc.). **Read this
 before starting any "wire frontend to backend" work** — it has the correct
 dependency order and explains why, e.g., admin auth must be wired before any
-other admin screen can work at all. **Phase 1 (backend gap-closing) is now
-done** — see "Session 11" below. **Phase 2 (frontend real auth) is next.**
+other admin screen can work at all. **Phase 1 (backend gap-closing) and
+Phase 2 (frontend real auth) are both done** — see "Session 11" below.
+Phase 3 is next. The plan doc also now has a **Backlog section (items 7-9)**
+added 2026-09-18 at the founder's explicit request — customer accounts/order
+tracking, site-wide visit/traffic analytics, and admin-managed promo
+banners with linked products. None of those are started; they're
+deliberately sequenced AFTER Phases 1-6, not next.
 
 **Status as of 2026-09-18 (session 11):** Phase 1 of the integration
 readiness plan complete — staff order list/search/cancel, a staff inventory
