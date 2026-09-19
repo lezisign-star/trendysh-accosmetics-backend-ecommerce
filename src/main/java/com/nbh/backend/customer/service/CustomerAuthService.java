@@ -17,6 +17,7 @@ import com.nbh.backend.customer.entity.CustomerEmailToken.Purpose;
 import com.nbh.backend.customer.repository.CustomerAccountRepository;
 import com.nbh.backend.customer.repository.CustomerEmailTokenRepository;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.staff.repository.StaffUserRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -62,6 +63,7 @@ public class CustomerAuthService {
     private final CustomerAccountRepository accounts;
     private final CustomerEmailTokenRepository tokens;
     private final CustomerOrderRepository orders;
+    private final StaffUserRepository staffUsers;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final LoginThrottle throttle;
@@ -76,6 +78,7 @@ public class CustomerAuthService {
     public CustomerAuthService(CustomerAccountRepository accounts,
                                 CustomerEmailTokenRepository tokens,
                                 CustomerOrderRepository orders,
+                                StaffUserRepository staffUsers,
                                 PasswordEncoder passwordEncoder,
                                 JwtService jwtService,
                                 LoginThrottle throttle,
@@ -86,6 +89,7 @@ public class CustomerAuthService {
         this.accounts = accounts;
         this.tokens = tokens;
         this.orders = orders;
+        this.staffUsers = staffUsers;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.throttle = throttle;
@@ -99,7 +103,9 @@ public class CustomerAuthService {
     @Transactional
     public SessionResult register(String email, String password, String fullName, String phone) {
         String normalized = normalizeEmail(email);
-        if (accounts.existsByEmailIgnoreCase(normalized)) {
+        // Staff and shoppers share one sign-in page (staff are checked first), so a shopper account
+        // on a staff email could never be signed into. Same message as a duplicate: no staff-email probing.
+        if (accounts.existsByEmailIgnoreCase(normalized) || staffUsers.existsByEmailIgnoreCase(normalized)) {
             throw new ConflictException("An account with that email already exists — try signing in instead");
         }
         CustomerAccount account = new CustomerAccount();
