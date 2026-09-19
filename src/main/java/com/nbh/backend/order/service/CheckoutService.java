@@ -88,6 +88,13 @@ public class CheckoutService {
 
     @Transactional
     public CheckoutResult checkout(String sessionId, CheckoutRequest request) {
+        return checkout(sessionId, request, null);
+    }
+
+    /** {@code customer} is the signed-in shopper, or null for a guest checkout. */
+    @Transactional
+    public CheckoutResult checkout(String sessionId, CheckoutRequest request,
+                                    com.nbh.backend.customer.entity.CustomerAccount customer) {
         Cart cart = cartRepository.findWithLockBySessionId(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("No cart for this session"));
         if (cart.getStatus() != Cart.CartStatus.ACTIVE) {
@@ -111,6 +118,7 @@ public class CheckoutService {
 
         CustomerOrder order = new CustomerOrder();
         order.setOrderNo(orderNoGenerator.next());
+        order.setCustomerAccount(customer);
         order.setCustomerName(request.customerName().trim());
         order.setGuestEmail(request.guestEmail());
         order.setGuestPhone(PhoneNumbers.normalize(request.guestPhone()));

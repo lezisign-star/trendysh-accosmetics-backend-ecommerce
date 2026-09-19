@@ -27,6 +27,11 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "order_no", nullable = false, unique = true, length = 40)
     private String orderNo;
 
+    /** Null for guest orders. Set when placed while signed in, or when an account's verified email adopts earlier guest orders. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_account_id")
+    private com.nbh.backend.customer.entity.CustomerAccount customerAccount;
+
     @Column(name = "customer_name", length = 200)
     private String customerName;
 

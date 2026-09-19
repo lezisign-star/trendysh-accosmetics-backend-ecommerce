@@ -7,6 +7,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -63,6 +64,28 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
             """)
     Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q,
                                   @Param("phoneQ") String phoneQ, Pageable pageable);
+
+    /** A signed-in customer's own orders, newest first. Lightweight projection — no line items are loaded. */
+    @Query("""
+            SELECT NEW com.nbh.backend.customer.dto.CustomerDtos$MyOrderDto(
+                o.orderNo, o.status, SIZE(o.items), o.grandTotal, o.createdAt)
+            FROM CustomerOrder o
+            WHERE o.customerAccount.id = :accountId
+            ORDER BY o.createdAt DESC
+            """)
+    List<com.nbh.backend.customer.dto.CustomerDtos.MyOrderDto> findMine(@Param("accountId") UUID accountId);
+
+    /**
+     * Adopts earlier guest orders placed with this email. Only ever called once the
+     * account's email is verified — see CustomerAuthService.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE CustomerOrder o SET o.customerAccount = :account
+            WHERE LOWER(o.guestEmail) = LOWER(:email) AND o.customerAccount IS NULL
+            """)
+    int attachGuestOrders(@Param("account") com.nbh.backend.customer.entity.CustomerAccount account,
+                          @Param("email") String email);
 
     /**
      * Revenue = grand total of orders whose payment actually succeeded

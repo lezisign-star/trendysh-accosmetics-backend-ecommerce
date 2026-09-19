@@ -16,13 +16,15 @@ public record OrderDto(
         BigDecimal vatTotal,
         BigDecimal deliveryFee,
         BigDecimal grandTotal,
-        List<OrderItemDto> items
+        List<OrderItemDto> items,
+        java.time.Instant createdAt
 ) {
     public static OrderDto from(CustomerOrder order) {
         return new OrderDto(
                 order.getId(), order.getOrderNo(), order.getStatus().name(), order.getFulfilmentType().name(),
                 order.getFulfilmentBranch().getId(), order.getSubtotal(), order.getVatTotal(),
                 order.getDeliveryFee(), order.getGrandTotal(),
-                order.getItems().stream().map(OrderItemDto::from).toList());
+                order.getItems().stream().map(OrderItemDto::from).toList(),
+                order.getCreatedAt());
     }
 }

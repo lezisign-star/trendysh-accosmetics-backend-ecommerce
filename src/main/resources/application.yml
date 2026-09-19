@@ -31,6 +31,13 @@ app:
     # any non-local deployment. Must be >= 256 bits for HS256.
     secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-before-any-real-deployment-32bytes}
     access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:28800000} # 8h
+  # Where the storefront lives — used to build the links in verification / reset emails.
+  frontend-url: ${FRONTEND_URL:http://localhost:5250}
+  mail:
+    # Unset = emails are only logged (dev). Set BREVO_API_KEY + MAIL_FROM_EMAIL to send for real.
+    brevo-api-key: ${BREVO_API_KEY:}
+    from-email: ${MAIL_FROM_EMAIL:}
+    from-name: ${MAIL_FROM_NAME:Trendysh Accosmetic}
   cors:
     # 5173 is Vite's own default; 5250 is this project's fixed dev-preview
     # port (see the frontend's .claude/launch.json) — both are real local

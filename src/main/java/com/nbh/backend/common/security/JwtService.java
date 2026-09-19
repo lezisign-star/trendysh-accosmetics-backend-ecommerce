@@ -1,5 +1,6 @@
 package com.nbh.backend.common.security;
 
+import com.nbh.backend.customer.entity.CustomerAccount;
 import com.nbh.backend.staff.entity.StaffUser;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -33,6 +34,8 @@ public class JwtService {
     /** Must match application.yml's dev default exactly — this is the value being guarded against. */
     private static final String DEV_DEFAULT_SECRET =
             "dev-only-insecure-secret-change-me-before-any-real-deployment-32bytes";
+    public static final String KIND_STAFF = "STAFF";
+    public static final String KIND_CUSTOMER = "CUSTOMER";
     private static final List<String> SAFE_PROFILES = List.of("dev", "test", "default");
 
     @Value("${app.jwt.secret}")
@@ -80,6 +83,14 @@ public class JwtService {
     public String generateAccessToken(UserDetails userDetails) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("type", "access");
+        // Which kind of principal this token belongs to. JwtAuthFilter uses it to pick the
+        // right account table, so a customer email can never resolve to a staff account.
+        // Tokens issued before this claim existed have none and are treated as staff.
+        claims.put("kind", userDetails instanceof CustomerAccount ? KIND_CUSTOMER : KIND_STAFF);
+
+        if (userDetails instanceof CustomerAccount customer) {
+            claims.put("userId", customer.getId().toString());
+        }
 
         if (userDetails instanceof StaffUser staff) {
             claims.put("userId", staff.getId().toString());
@@ -103,6 +114,12 @@ public class JwtService {
                 .expiration(Date.from(now.plusMillis(accessTokenExpirationMs)))
                 .signWith(getSigningKey())
                 .compact();
+    }
+
+    /** STAFF for tokens with no claim (issued before customer accounts existed). */
+    public String extractKind(String token) {
+        String kind = extractClaim(token, claims -> claims.get("kind", String.class));
+        return kind == null ? KIND_STAFF : kind;
     }
 
     public String extractUsername(String token) {

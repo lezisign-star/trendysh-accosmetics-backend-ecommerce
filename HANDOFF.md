@@ -966,6 +966,41 @@ Everything the real storefront cart/checkout/tracking needed. Suite 63/63
   (name, normalised phone, method), admin search by name / phone fragment /
   order no.
 
+## Session 13 — customer accounts, backend (backlog item 7) (2026-09-19)
+
+Suite: the 70 from session 12 + 9 new (`LoginThrottleTest` 3, `CustomerAccountsIntegrationTest` 6).
+Migration **V15** (`customer_account`, `customer_email_token`, `customer_order.customer_account_id`).
+- **Separate from staff.** `customer/` package; `CustomerAccount` implements
+  `UserDetails` with the single authority `ROLE_CUSTOMER`. JWTs now carry
+  `kind` = STAFF/CUSTOMER (missing = STAFF, so old tokens still work) and
+  `JwtAuthFilter` loads the matching table, so a customer email can never resolve
+  to a staff account. `CustomerAccountLoader` is deliberately not a
+  `UserDetailsService` bean. The filter also rejects disabled accounts now.
+- **SecurityConfig:** `/api/v1/auth/**` is no longer wholesale public — only
+  `/auth/login` is (me/change-password need a staff token). Public customer paths:
+  register, login, verify-email, forgot-password, reset-password. `/api/v1/customer/**`
+  needs `ROLE_CUSTOMER`; and **`anyRequest` now refuses `ROLE_CUSTOMER`**, so a
+  forgotten-unprotected endpoint can't leak to shoppers.
+- **Endpoints** (`/api/v1/customer/auth`): register, login, verify-email,
+  forgot-password, reset-password, resend-verification, GET/PATCH me,
+  change-password; `/api/v1/customer/orders` (mine) and `/{orderNo}` (404 for
+  anyone else's). Passwords 8-72 chars (BCrypt's limit). Sign-in failures are
+  generic; unknown emails do a dummy hash check; `LoginThrottle` locks an email
+  for 15 min after 5 failures (in-memory, single-instance — 429).
+- **Guest orders join an account only after email verification** (or a completed
+  password reset — both prove mailbox control). Linking on registration alone
+  would let anyone read a stranger's past orders. `CustomerOrderRepository.attachGuestOrders`.
+  Orders placed while signed in attach immediately (`CheckoutController` reads the
+  optional Bearer principal).
+- **Email:** new `common/email` — `EmailSender`, `LoggingEmailSender` (default:
+  the link is only logged — dev) and `BrevoEmailSender` (when `BREVO_API_KEY` +
+  `MAIL_FROM_EMAIL` are set; **untested against the live API**, no key available).
+  Sent AFTER COMMIT via `CustomerEmailRequestedEvent`. Config: `app.frontend-url`
+  (`FRONTEND_URL`, for the links), `app.mail.*`. Tokens: 32 random bytes, only the
+  SHA-256 stored, single use, verify 48h / reset 1h, 2-minute resend cooldown.
+- `OrderDto` gained `createdAt`.
+- **Before deploying:** set `BREVO_API_KEY`, `MAIL_FROM_EMAIL`, `FRONTEND_URL`, a real `JWT_SECRET`.
+
 ## Next session — start here (backend)
 
 Phases 1-6 of the integration plan are done. **Session 12's work is uncommitted**

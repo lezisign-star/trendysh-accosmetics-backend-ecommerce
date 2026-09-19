@@ -20,6 +20,8 @@ import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
+import com.nbh.backend.customer.entity.CustomerAccount;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -53,7 +55,16 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
-                    "/api/v1/auth/**",
+                    // Only the login itself is public; /auth/me and /auth/change-password are
+                    // staff-only and need a token (they read the staff principal).
+                    "/api/v1/auth/login",
+                    // Customer sign-up / sign-in / emailed-link flows. Everything else under
+                    // /api/v1/customer/** needs a customer token (rule just below).
+                    "/api/v1/customer/auth/register",
+                    "/api/v1/customer/auth/login",
+                    "/api/v1/customer/auth/verify-email",
+                    "/api/v1/customer/auth/forgot-password",
+                    "/api/v1/customer/auth/reset-password",
                     "/api/v1/cart/**",
                     "/api/v1/checkout",
                     "/api/v1/checkout/**",
@@ -71,7 +82,12 @@ public class SecurityConfig {
                     "/actuator/health"
                 ).permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .anyRequest().authenticated()
+                .requestMatchers("/api/v1/customer/**").hasAuthority(CustomerAccount.AUTHORITY)
+                // Defence in depth: staff endpoints already demand a PERM_* authority via
+                // @PreAuthorize, but a shopper's token must never reach anything else that
+                // is merely "authenticated" — including endpoints added later and forgotten.
+                .anyRequest().access(new WebExpressionAuthorizationManager(
+                        "isAuthenticated() and !hasAuthority('" + CustomerAccount.AUTHORITY + "')"))
             )
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
@@ -120,7 +136,11 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList(allowedOriginsRaw.split(",")));
+        // Browsers send Origin without a trailing slash or padding, so tolerate both in the env value.
+        configuration.setAllowedOrigins(Arrays.stream(allowedOriginsRaw.split(","))
+                .map(o -> o.trim().replaceAll("/+$", ""))
+                .filter(o -> !o.isEmpty())
+                .toList());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
