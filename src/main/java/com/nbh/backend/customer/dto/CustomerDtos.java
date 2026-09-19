@@ -46,6 +46,9 @@ public final class CustomerDtos {
 
     public record AuthResponse(String accessToken, ProfileDto profile) {}
 
+    /** What the service hands the controller: the JSON body plus the refresh value that goes in the httpOnly cookie, never in the body. */
+    public record SessionResult(AuthResponse auth, String refreshToken) {}
+
     /** Result of following an emailed link: whether the address is now verified and how many earlier guest orders joined the account. */
     public record VerifyResult(boolean emailVerified, int ordersLinked) {}
 

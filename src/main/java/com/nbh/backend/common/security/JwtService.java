@@ -44,6 +44,10 @@ public class JwtService {
     @Value("${app.jwt.access-token-expiration-ms}")
     private long accessTokenExpirationMs;
 
+    /** Shoppers stay signed in through the refresh cookie, so their access token can be short-lived. */
+    @Value("${app.jwt.customer-access-token-expiration-ms:900000}")
+    private long customerAccessTokenExpirationMs;
+
     private final Environment environment;
 
     public JwtService(Environment environment) {
@@ -107,11 +111,12 @@ public class JwtService {
         }
 
         Instant now = Instant.now();
+        long ttlMs = userDetails instanceof CustomerAccount ? customerAccessTokenExpirationMs : accessTokenExpirationMs;
         return Jwts.builder()
                 .claims(claims)
                 .subject(userDetails.getUsername())
                 .issuedAt(Date.from(now))
-                .expiration(Date.from(now.plusMillis(accessTokenExpirationMs)))
+                .expiration(Date.from(now.plusMillis(ttlMs)))
                 .signWith(getSigningKey())
                 .compact();
     }

@@ -30,7 +30,17 @@ app:
     # DEV DEFAULT ONLY — override with a real random secret via JWT_SECRET before
     # any non-local deployment. Must be >= 256 bits for HS256.
     secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-before-any-real-deployment-32bytes}
-    access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:28800000} # 8h
+    access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:28800000} # 8h (staff)
+    customer-access-token-expiration-ms: ${JWT_CUSTOMER_ACCESS_TOKEN_EXPIRATION_MS:900000} # 15 min (shoppers)
+  auth:
+    # Shopper sign-in = the short access token above + a rotating refresh token in an httpOnly cookie.
+    refresh-token-days: ${REFRESH_TOKEN_DAYS:30}
+    refresh-cookie-name: ${REFRESH_COOKIE_NAME:trendysh_rt}
+    # Secure needs https (Chrome also accepts it on localhost). None is required while the
+    # storefront and API sit on different sites (Render vs Railway); switch to Lax once they
+    # share a registrable domain, e.g. api.trendyshaccosmetic.com.
+    cookie-secure: ${COOKIE_SECURE:true}
+    cookie-same-site: ${COOKIE_SAME_SITE:None}
   # Where the storefront lives — used to build the links in verification / reset emails.
   frontend-url: ${FRONTEND_URL:http://localhost:5250}
   mail:

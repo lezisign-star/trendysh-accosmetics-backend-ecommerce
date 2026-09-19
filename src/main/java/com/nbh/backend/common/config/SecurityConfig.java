@@ -62,6 +62,8 @@ public class SecurityConfig {
                     // /api/v1/customer/** needs a customer token (rule just below).
                     "/api/v1/customer/auth/register",
                     "/api/v1/customer/auth/login",
+                    "/api/v1/customer/auth/refresh",
+                    "/api/v1/customer/auth/logout",
                     "/api/v1/customer/auth/verify-email",
                     "/api/v1/customer/auth/forgot-password",
                     "/api/v1/customer/auth/reset-password",

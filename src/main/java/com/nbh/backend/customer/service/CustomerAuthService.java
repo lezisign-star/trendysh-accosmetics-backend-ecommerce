@@ -8,6 +8,7 @@ import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.common.security.JwtService;
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.customer.dto.CustomerDtos.AuthResponse;
+import com.nbh.backend.customer.dto.CustomerDtos.SessionResult;
 import com.nbh.backend.customer.dto.CustomerDtos.ProfileDto;
 import com.nbh.backend.customer.dto.CustomerDtos.VerifyResult;
 import com.nbh.backend.customer.entity.CustomerAccount;
@@ -64,6 +65,7 @@ public class CustomerAuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final LoginThrottle throttle;
+    private final CustomerRefreshTokenService refreshTokens;
     private final ApplicationEventPublisher events;
     private final Clock clock;
     private final String frontendUrl;
@@ -77,6 +79,7 @@ public class CustomerAuthService {
                                 PasswordEncoder passwordEncoder,
                                 JwtService jwtService,
                                 LoginThrottle throttle,
+                                CustomerRefreshTokenService refreshTokens,
                                 ApplicationEventPublisher events,
                                 Clock clock,
                                 @Value("${app.frontend-url:http://localhost:5250}") String frontendUrl) {
@@ -86,6 +89,7 @@ public class CustomerAuthService {
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.throttle = throttle;
+        this.refreshTokens = refreshTokens;
         this.events = events;
         this.clock = clock;
         this.frontendUrl = frontendUrl.replaceAll("/+$", "");
@@ -93,7 +97,7 @@ public class CustomerAuthService {
     }
 
     @Transactional
-    public AuthResponse register(String email, String password, String fullName, String phone) {
+    public SessionResult register(String email, String password, String fullName, String phone) {
         String normalized = normalizeEmail(email);
         if (accounts.existsByEmailIgnoreCase(normalized)) {
             throw new ConflictException("An account with that email already exists — try signing in instead");
@@ -107,11 +111,11 @@ public class CustomerAuthService {
         account = accounts.save(account);
 
         sendVerificationEmail(account);
-        return authResponse(account);
+        return newSession(account);
     }
 
     @Transactional
-    public AuthResponse login(String email, String password) {
+    public SessionResult login(String email, String password) {
         String normalized = normalizeEmail(email);
         throttle.checkAllowed(normalized);
 
@@ -128,7 +132,7 @@ public class CustomerAuthService {
 
         throttle.reset(normalized);
         account.setLastLoginAt(Instant.now(clock));
-        return authResponse(accounts.save(account));
+        return newSession(accounts.save(account));
     }
 
     @Transactional(readOnly = true)
@@ -145,13 +149,28 @@ public class CustomerAuthService {
     }
 
     @Transactional
-    public void changePassword(UUID accountId, String currentPassword, String newPassword) {
+    public SessionResult changePassword(UUID accountId, String currentPassword, String newPassword) {
         CustomerAccount account = load(accountId);
         if (!passwordEncoder.matches(currentPassword, account.getPassword())) {
             throw new BadCredentialsException("Current password is incorrect");
         }
         account.setPassword(passwordEncoder.encode(newPassword));
         accounts.save(account);
+        // Every other device signs in again; this one gets a fresh session so the shopper isn't bounced.
+        refreshTokens.endAllSessions(accountId);
+        return newSession(account);
+    }
+
+    /** Trades the refresh cookie for a new access token and the next cookie value. */
+    @Transactional(noRollbackFor = BadCredentialsException.class)
+    public SessionResult refresh(String rawRefreshToken) {
+        CustomerRefreshTokenService.Rotated rotated = refreshTokens.rotate(rawRefreshToken);
+        return new SessionResult(authResponse(rotated.account()), rotated.refreshToken());
+    }
+
+    @Transactional
+    public void logout(String rawRefreshToken) {
+        refreshTokens.endSession(rawRefreshToken);
     }
 
     /** Follows the emailed verification link. Repeating it after success is harmless. */
@@ -217,6 +236,7 @@ public class CustomerAuthService {
         // Receiving the link proves control of the mailbox, same as the verification link.
         markVerifiedAndLinkOrders(account);
         throttle.reset(account.getEmail());
+        refreshTokens.endAllSessions(account.getId());
     }
 
     // ---- internals
@@ -271,6 +291,10 @@ public class CustomerAuthService {
         return accounts.findById(accountId).orElseThrow(() -> new NotFoundException("No such account"));
     }
 
+    private SessionResult newSession(CustomerAccount account) {
+        return new SessionResult(authResponse(account), refreshTokens.startSession(account));
+    }
+
     private AuthResponse authResponse(CustomerAccount account) {
         return new AuthResponse(jwtService.generateAccessToken(account), toProfile(account));
     }
@@ -293,7 +317,7 @@ public class CustomerAuthService {
         return space > 0 ? name.substring(0, space) : name;
     }
 
-    static String hash(String raw) {
+    public static String hash(String raw) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);
