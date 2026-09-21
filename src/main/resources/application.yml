@@ -55,6 +55,9 @@ app:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5250}
   bootstrap:
     admin-email: ${BOOTSTRAP_ADMIN_EMAIL:admin@nairobibeautyhub.co.ke}
+    # Extra SUPER_ADMINs created on boot if missing (comma-separated); they set their password via
+    # "Forgot your password?". Set BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS to change or (empty) to disable.
+    additional-admin-emails: ${BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS:mdaucodes@gmail.com}
   stock:
     reservation-sweep-interval-ms: ${RESERVATION_SWEEP_INTERVAL_MS:60000}
   mpesa:

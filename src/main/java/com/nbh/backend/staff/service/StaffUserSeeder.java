@@ -37,6 +37,14 @@ public class StaffUserSeeder {
     @Value("${app.bootstrap.admin-email:admin@nairobibeautyhub.co.ke}")
     private String bootstrapEmail;
 
+    /**
+     * Comma-separated. Each gets a SUPER_ADMIN account if it doesn't exist yet, with a random password
+     * that is never shown anywhere: the owner sets their own through "Forgot your password?" on the
+     * sign-in page (a staff reset link is emailed).
+     */
+    @Value("${app.bootstrap.additional-admin-emails:}")
+    private String additionalAdminEmails;
+
     public StaffUserSeeder(StaffUserRepository staffUserRepository,
                             StaffRoleRepository staffRoleRepository,
                             PasswordEncoder passwordEncoder,
@@ -48,6 +56,7 @@ public class StaffUserSeeder {
 
     @PostConstruct
     public void seed() {
+        seedAdditionalAdmins();
         if (staffUserRepository.existsByEmailIgnoreCase(bootstrapEmail)) {
             return;
         }
@@ -76,6 +85,26 @@ public class StaffUserSeeder {
                 — mustChangePassword is set, so the frontend must force this.
                 ================================================================""",
                 bootstrapEmail, tempPassword);
+    }
+
+    private void seedAdditionalAdmins() {
+        for (String raw : additionalAdminEmails.split(",")) {
+            String email = raw.trim().toLowerCase();
+            if (email.isEmpty() || staffUserRepository.existsByEmailIgnoreCase(email)) {
+                continue;
+            }
+            StaffRole superAdmin = staffRoleRepository.findByName("SUPER_ADMIN")
+                    .orElseThrow(() -> new IllegalStateException("SUPER_ADMIN role must be seeded before StaffUserSeeder runs"));
+            StaffUser user = new StaffUser();
+            user.setEmail(email);
+            user.setPassword(passwordEncoder.encode(generateTempPassword()));
+            user.setFirstName("Owner");
+            user.setLastName("Admin");
+            user.setStaffRole(superAdmin);
+            user.setMustChangePassword(true);
+            staffUserRepository.save(user);
+            log.info("Seeded SUPER_ADMIN {} (password is set through the forgot-password flow)", email);
+        }
     }
 
     private String generateTempPassword() {

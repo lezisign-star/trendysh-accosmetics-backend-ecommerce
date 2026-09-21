@@ -18,6 +18,7 @@ import com.nbh.backend.customer.repository.CustomerAccountRepository;
 import com.nbh.backend.customer.repository.CustomerEmailTokenRepository;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.staff.repository.StaffUserRepository;
+import com.nbh.backend.staff.service.StaffPasswordResetService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -64,6 +65,7 @@ public class CustomerAuthService {
     private final CustomerEmailTokenRepository tokens;
     private final CustomerOrderRepository orders;
     private final StaffUserRepository staffUsers;
+    private final StaffPasswordResetService staffReset;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final LoginThrottle throttle;
@@ -79,6 +81,7 @@ public class CustomerAuthService {
                                 CustomerEmailTokenRepository tokens,
                                 CustomerOrderRepository orders,
                                 StaffUserRepository staffUsers,
+                                StaffPasswordResetService staffReset,
                                 PasswordEncoder passwordEncoder,
                                 JwtService jwtService,
                                 LoginThrottle throttle,
@@ -90,6 +93,7 @@ public class CustomerAuthService {
         this.tokens = tokens;
         this.orders = orders;
         this.staffUsers = staffUsers;
+        this.staffReset = staffReset;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.throttle = throttle;
@@ -214,6 +218,10 @@ public class CustomerAuthService {
     /** Always succeeds from the caller's side — never reveals whether the email has an account. */
     @Transactional
     public void forgotPassword(String email) {
+        // Staff share this page; a staff email gets a staff reset link and the shopper flow stops here.
+        if (staffReset.requestReset(email)) {
+            return;
+        }
         accounts.findByEmailIgnoreCase(normalizeEmail(email))
                 .filter(CustomerAccount::isEnabled)
                 .filter(account -> !inCooldown(account, Purpose.RESET_PASSWORD))
@@ -230,6 +238,9 @@ public class CustomerAuthService {
 
     @Transactional
     public void resetPassword(String rawToken, String newPassword) {
+        if (staffReset.tryReset(rawToken, newPassword)) {
+            return;
+        }
         CustomerEmailToken token = tokens.findByTokenHash(hash(rawToken))
                 .filter(t -> t.getPurpose() == Purpose.RESET_PASSWORD)
                 .filter(t -> t.getUsedAt() == null && !isExpired(t))
