@@ -5,6 +5,7 @@ import com.nbh.backend.catalog.entity.Product;
 import java.util.List;
 import java.util.UUID;
 
+/** A product as staff see it: everything the editor needs, including the full text fields and per-variant stock. */
 public record ProductDto(
         UUID id,
         String slug,
@@ -13,9 +14,14 @@ public record ProductDto(
         String brandName,
         UUID categoryId,
         String categoryName,
+        UUID subcategoryId,
+        String subcategoryName,
         String shortDescription,
         String description,
+        String ingredients,
+        String howToUse,
         boolean isPublished,
+        boolean deleted,
         String primaryImageUrl,
         List<ProductVariantDto> variants
 ) {
@@ -30,6 +36,9 @@ public record ProductDto(
                 p.getBrand() != null ? p.getBrand().getName() : null,
                 p.getCategory() != null ? p.getCategory().getId() : null,
                 p.getCategory() != null ? p.getCategory().getName() : null,
-                p.getShortDescription(), p.getDescription(), p.isPublished(), primaryImageUrl, variants);
+                p.getSubcategory() != null ? p.getSubcategory().getId() : null,
+                p.getSubcategory() != null ? p.getSubcategory().getName() : null,
+                p.getShortDescription(), p.getDescription(), p.getIngredients(), p.getHowToUse(),
+                p.isPublished(), p.isDeleted(), primaryImageUrl, variants);
     }
 }

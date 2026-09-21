@@ -12,7 +12,10 @@ public record CatalogProductSummaryDto(
         String slug,
         String name,
         String brandName,
+        UUID categoryId,
         String categoryName,
+        UUID subcategoryId,
+        String subcategoryName,
         String shortDescription,
         String primaryImageUrl,
         BigDecimal minPrice,
@@ -30,7 +33,10 @@ public record CatalogProductSummaryDto(
         return new CatalogProductSummaryDto(
                 p.getId(), p.getSlug(), p.getName(),
                 p.getBrand() != null ? p.getBrand().getName() : null,
+                p.getCategory() != null ? p.getCategory().getId() : null,
                 p.getCategory() != null ? p.getCategory().getName() : null,
+                p.getSubcategory() != null ? p.getSubcategory().getId() : null,
+                p.getSubcategory() != null ? p.getSubcategory().getName() : null,
                 p.getShortDescription(), primaryImageUrl, min, max, avgRating, reviewCount, unitsSold,
                 inStock);
     }

@@ -16,6 +16,8 @@ import com.nbh.backend.order.dto.CheckoutRequest;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
+import com.nbh.backend.payment.service.BankPaymentSettings;
+import com.nbh.backend.payment.service.PaymentReferenceGenerator;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
 import com.nbh.backend.stock.service.StockReservationService;
@@ -72,7 +74,7 @@ class CheckoutServiceUnitTest {
     void setUp() {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository, branchRepository,
                 locationRepository, orderRepository, paymentRecordRepository, reservationService,
-                orderNoGenerator, clock, eventPublisher);
+                orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK));
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -103,6 +105,46 @@ class CheckoutServiceUnitTest {
         lenient().when(paymentRecordRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(reservationService.reserve(any(), any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> new StockReservation());
+    }
+
+    private static final BankPaymentSettings.CollectionMode BANK = BankPaymentSettings.CollectionMode.BANK;
+
+    private static BankPaymentSettings bankSettings(BankPaymentSettings.CollectionMode mode) {
+        return new BankPaymentSettings(mode, 45, "Co-op Bank", "400200", "<ref>",
+                "Trendysh Accosmetic", "01100123456789", "Nairobi", "");
+    }
+
+    @Test
+    void bankCheckoutGivesTheOrderAValidReferenceAndAPaymentWindowMatchingTheStockHold() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var payment = checkoutService.checkout(SESSION_ID, request()).paymentRecord();
+
+        assertThat(payment.getProvider()).isEqualTo("BANK");
+        assertThat(payment.getMethod()).isEqualTo(com.nbh.backend.payment.entity.PaymentRecord.PaymentMethod.BANK);
+        assertThat(new PaymentReferenceGenerator().normaliseAndValidate(payment.getPaymentReference()))
+                .isEqualTo(payment.getPaymentReference());
+        assertThat(payment.getExpiresAt()).isEqualTo(Instant.parse("2026-01-01T00:45:00Z"));
+        verify(reservationService).reserve(any(), any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(Instant.parse("2026-01-01T00:45:00Z")));
+    }
+
+    @Test
+    void mpesaModeKeepsTheDarajaRecordAndTheShortFifteenMinuteHold() {
+        checkoutService = new CheckoutService(cartRepository, cartItemRepository, branchRepository,
+                locationRepository, orderRepository, paymentRecordRepository, reservationService,
+                orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
+                bankSettings(BankPaymentSettings.CollectionMode.MPESA));
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var payment = checkoutService.checkout(SESSION_ID, request()).paymentRecord();
+
+        assertThat(payment.getProvider()).isEqualTo("DARAJA");
+        assertThat(payment.getPaymentReference()).isNull();
+        verify(reservationService).reserve(any(), any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(Instant.parse("2026-01-01T00:15:00Z")));
     }
 
     private CartItem cartItem(BigDecimal unitPrice, BigDecimal qty, BigDecimal vatRate, boolean vatExempt) {

@@ -3,15 +3,24 @@ package com.nbh.backend.catalog.controller;
 import com.nbh.backend.catalog.dto.CategoryDto;
 import com.nbh.backend.catalog.entity.Category;
 import com.nbh.backend.catalog.repository.CategoryRepository;
+import com.nbh.backend.common.exception.ConflictException;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Two levels only: top-level categories and their subcategories (a subcategory cannot have children).
+ * One category holds many subcategories; products are filed under a category and, optionally, one of
+ * its subcategories.
+ */
 @RestController
 @RequestMapping("/api/v1/categories")
 public class CategoryController {
@@ -25,22 +34,100 @@ public class CategoryController {
     @GetMapping
     @Transactional(readOnly = true)
     public List<CategoryDto> list() {
-        return categoryRepository.findAll().stream().map(CategoryDto::from).toList();
+        Map<UUID, Long> direct = new HashMap<>();
+        for (Object[] row : categoryRepository.liveProductCountsByCategory()) {
+            direct.merge((UUID) row[0], (Long) row[1], Long::sum);
+        }
+        Map<UUID, Long> viaSubcategory = new HashMap<>();
+        for (Object[] row : categoryRepository.liveProductCountsBySubcategory()) {
+            viaSubcategory.merge((UUID) row[0], (Long) row[1], Long::sum);
+        }
+        return categoryRepository.findAll().stream()
+                .sorted(Comparator.comparingInt(Category::getSortOrder).thenComparing(Category::getName, String.CASE_INSENSITIVE_ORDER))
+                .map(c -> CategoryDto.from(c, direct.getOrDefault(c.getId(), 0L) + viaSubcategory.getOrDefault(c.getId(), 0L)))
+                .toList();
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
     @PostMapping
     @Transactional
     public CategoryDto create(@RequestBody CreateCategoryRequest request) {
+        String name = cleanName(request.name());
         Category category = new Category();
-        category.setName(request.name());
-        category.setSlug(request.name().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-"));
+        category.setName(name);
+        category.setSlug(uniqueSlug(name, null));
         if (request.parentId() != null) {
-            category.setParent(categoryRepository.findById(request.parentId())
-                    .orElseThrow(() -> new EntityNotFoundException("No category: " + request.parentId())));
+            Category parent = categoryRepository.findById(request.parentId())
+                    .orElseThrow(() -> new EntityNotFoundException("No category: " + request.parentId()));
+            if (parent.getParent() != null) {
+                throw new IllegalArgumentException("Subcategories can't have their own subcategories — pick a top-level category as the parent");
+            }
+            category.setParent(parent);
         }
         return CategoryDto.from(categoryRepository.save(category));
     }
 
+    /** Partial update: only non-null fields change. Re-parenting is deliberately not supported. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PatchMapping("/{id}")
+    @Transactional
+    public CategoryDto update(@PathVariable UUID id, @RequestBody UpdateCategoryRequest request) {
+        Category category = categoryRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("No category: " + id));
+        if (request.name() != null) {
+            String name = cleanName(request.name());
+            if (!name.equals(category.getName())) {
+                category.setName(name);
+                category.setSlug(uniqueSlug(name, category.getId()));
+            }
+        }
+        if (request.sortOrder() != null) category.setSortOrder(request.sortOrder());
+        if (request.imageUrl() != null) category.setImageUrl(request.imageUrl().isBlank() ? null : request.imageUrl().trim());
+        if (request.isPublished() != null) category.setPublished(request.isPublished());
+        return CategoryDto.from(categoryRepository.save(category));
+    }
+
+    /** Only an empty category can go: no subcategories and no products (deleted ones count too). */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @DeleteMapping("/{id}")
+    @Transactional
+    public void delete(@PathVariable UUID id) {
+        Category category = categoryRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("No category: " + id));
+        long children = categoryRepository.countByParentId(id);
+        if (children > 0) {
+            throw new ConflictException("\"" + category.getName() + "\" still has " + children
+                    + (children == 1 ? " subcategory" : " subcategories") + " — delete or move them first");
+        }
+        long products = categoryRepository.countProductsReferencing(id);
+        if (products > 0) {
+            throw new ConflictException("\"" + category.getName() + "\" still has " + products
+                    + (products == 1 ? " product" : " products") + " — move them to another category first");
+        }
+        categoryRepository.delete(category);
+    }
+
+    private static String cleanName(String raw) {
+        String name = raw == null ? "" : raw.trim().replaceAll("\\s+", " ");
+        if (name.isEmpty()) throw new IllegalArgumentException("A category needs a name");
+        if (name.length() > 150) throw new IllegalArgumentException("That name is too long (150 characters at most)");
+        return name;
+    }
+
+    /** name-based slug, suffixed -2, -3… when another category already has it. */
+    private String uniqueSlug(String name, UUID selfId) {
+        String base = name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("(^-+|-+$)", "");
+        if (base.isEmpty()) base = "category";
+        String slug = base;
+        int n = 2;
+        while (true) {
+            var existing = categoryRepository.findBySlug(slug);
+            if (existing.isEmpty() || existing.get().getId().equals(selfId)) return slug;
+            slug = base + "-" + n++;
+        }
+    }
+
     public record CreateCategoryRequest(String name, UUID parentId) {}
+
+    public record UpdateCategoryRequest(String name, Integer sortOrder, String imageUrl, Boolean isPublished) {}
 }

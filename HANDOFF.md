@@ -1,5 +1,47 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+> **IMPORTANT: the Co-op Bank (or Family Bank) integration is NOT DONE.** It is untested and no real credentials exist. Everything below is bank-agnostic scaffolding confirmed manually by staff. There is no bank IPN endpoint, no reconciliation job and no bank API client. Do not describe bank payments as automatically verified until the real bank integration is built and tested against the bank's sandbox.
+
+## BANK PAYMENTS — step 3 built (2026-09-21, UNCOMMITTED, suite 122/122)
+Customer "I've paid" claims + staff queues + bank credits (V20: `payment_claim`, `bank_credit`,
+append-only, nothing deleted). Public `POST /payments/pay/{orderNo}/claim?ref=` (max 3 pending per
+payment, duplicate code = 409) records a claim, extends stock hold + window 12h, NEVER confirms.
+Staff `/api/v1/admin/payments/*` (PERM_PAYMENT_MANAGE or ORDER_MANAGE_ALL): awaiting, claims
+(approve => `confirmSuccess`, reject needs reason), credits (record, allocate to order, ignore
+with reason). `BankCreditService.record` is THE entry point the bank IPN + reconciliation job
+must call (idempotent on bank_txn_id; auto-match only on valid reference AND exact amount; a
+credit for an already-paid order is left UNMATCHED, never silently matched).
+NEXT: bank IPN endpoint (needs bank creds), reconciliation job, underpay/overpay/late-pay
+(PAYMENT_REVIEW), SMS, refunds, screenshot upload on claims.
+
+
+## BANK PAYMENT COLLECTION — step 1 built (2026-09-21, UNCOMMITTED, suite 109/109)
+
+Client wants payment by BANK (Co-op/Family), not Daraja. Design = per-order
+reference + bank credit notification + reconciliation (see the design in the
+2026-09-21 session). **Step 1 (this) is shippable with zero bank integration:**
+checkout creates a `BANK` PaymentRecord with a `payment_reference` (V19) and a
+payment window; the customer's `/pay/{orderNo}?ref=` page shows paybill/bank
+details; staff confirm with the existing `confirm-manual` until the bank IPN
+exists. Built: `PaymentReferenceGenerator` (7 chars, vowel-free, check digit),
+`BankPaymentSettings` (`app.payments.*`, `app.bank.*` env vars),
+`PaymentInstructionsService` + public `GET /api/v1/payments/pay/{orderNo}?ref=`,
+`CheckoutResponseDto.paymentInstructions`. `PAYMENT_COLLECTION_MODE=MPESA`
+restores the old Daraja path (15-min hold). Window default 45 min
+(`PAYMENT_WINDOW_MINUTES`); stock hold and payment window are the same instant.
+Set `BANK_NAME`, `BANK_PAYBILL_NUMBER`, `BANK_PAYBILL_ACCOUNT_TEMPLATE`
+(uses `<ref>`, NOT `#{ref}`: Spring parses `#{...}` as SpEL and fails startup —
+found live), `BANK_ACCOUNT_NAME/NUMBER/BRANCH`, `SUPPORT_WHATSAPP` on Railway.
+Blank paybill hides that tab; blank account hides the transfer tab.
+**Not built yet (in order):** status polling is done client-side already;
+NEXT = proof-of-payment claims + admin queues (`/admin/payments`), bank IPN
+endpoint (needs bank credentials), reconciliation job, underpay/overpay/late-pay
+handling (`PAYMENT_REVIEW` status), SMS, refunds. Everything must stay
+append-only and eTIMS-compatible (every payment recorded, nothing deleted).
+Local test DB: `DB_URL=jdbc:postgresql://localhost:5432/nairobi_beauty_hub_test
+DB_PASSWORD=janet-marketing` (a dev DB `nairobi_beauty_hub` does not exist).
+
+
 **Active multi-session plan:** `C:\Users\ADMIN\.claude\NairobiBeautyHub_Integration_Readiness_Plan.md`
 — a phased plan (backend gap-closing, then frontend auth/wiring/checkout/
 inventory-redesign) to connect the frontend and backend for real, written

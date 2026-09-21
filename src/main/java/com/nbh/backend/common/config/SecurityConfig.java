@@ -72,6 +72,8 @@ public class SecurityConfig {
                     "/api/v1/checkout/**",
                     "/api/v1/orders/track/**",
                     "/api/v1/payments/mpesa/callback/**",
+                    // Customer's bank pay page: authorised by order number + payment reference.
+                    "/api/v1/payments/pay/**",
                     // Public storefront browse/search/reviews — read-only, only
                     // ever returns published products (CatalogService's javadoc).
                     // Review submission (POST /catalog/products/{id}/reviews) is

@@ -21,6 +21,8 @@ import com.nbh.backend.order.dto.CheckoutRequest;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
+import com.nbh.backend.payment.service.BankPaymentSettings;
+import com.nbh.backend.payment.service.PaymentReferenceGenerator;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.service.StockReservationService;
 import jakarta.persistence.EntityNotFoundException;
@@ -51,7 +53,9 @@ import java.util.List;
 @Service
 public class CheckoutService {
 
-    private static final long RESERVATION_TTL_MINUTES = 15;
+    /** M-Pesa STK push: the customer answers a phone prompt within seconds. */
+    private static final long MPESA_RESERVATION_TTL_MINUTES = 15;
+    private static final int REFERENCE_ATTEMPTS = 5;
 
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
@@ -63,6 +67,8 @@ public class CheckoutService {
     private final OrderNoGenerator orderNoGenerator;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
+    private final PaymentReferenceGenerator referenceGenerator;
+    private final BankPaymentSettings paymentSettings;
 
     public CheckoutService(CartRepository cartRepository,
                             CartItemRepository cartItemRepository,
@@ -73,7 +79,9 @@ public class CheckoutService {
                             StockReservationService reservationService,
                             OrderNoGenerator orderNoGenerator,
                             Clock clock,
-                            ApplicationEventPublisher eventPublisher) {
+                            ApplicationEventPublisher eventPublisher,
+                            PaymentReferenceGenerator referenceGenerator,
+                            BankPaymentSettings paymentSettings) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.branchRepository = branchRepository;
@@ -84,6 +92,8 @@ public class CheckoutService {
         this.orderNoGenerator = orderNoGenerator;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
+        this.referenceGenerator = referenceGenerator;
+        this.paymentSettings = paymentSettings;
     }
 
     @Transactional
@@ -136,7 +146,11 @@ public class CheckoutService {
 
         BigDecimal subtotal = BigDecimal.ZERO;
         BigDecimal vatTotal = BigDecimal.ZERO;
-        Instant expiresAt = Instant.now(clock).plusSeconds(RESERVATION_TTL_MINUTES * 60);
+        // The stock hold and the payment window are the same instant, always. A bank
+        // transfer takes far longer than answering an STK prompt, so its window is longer.
+        Instant expiresAt = Instant.now(clock).plus(paymentSettings.bankMode()
+                ? paymentSettings.paymentWindow()
+                : java.time.Duration.ofMinutes(MPESA_RESERVATION_TTL_MINUTES));
 
         for (CartItem cartItem : cartItems) {
             // Reserving here — not at add-to-cart — is the exact "hold starts at
@@ -178,8 +192,15 @@ public class CheckoutService {
 
         PaymentRecord paymentRecord = new PaymentRecord();
         paymentRecord.setOrder(order);
-        paymentRecord.setProvider("DARAJA");
-        paymentRecord.setMethod(PaymentRecord.PaymentMethod.MPESA);
+        if (paymentSettings.bankMode()) {
+            paymentRecord.setProvider("BANK");
+            paymentRecord.setMethod(PaymentRecord.PaymentMethod.BANK);
+            paymentRecord.setPaymentReference(uniqueReference());
+            paymentRecord.setExpiresAt(expiresAt);
+        } else {
+            paymentRecord.setProvider("DARAJA");
+            paymentRecord.setMethod(PaymentRecord.PaymentMethod.MPESA);
+        }
         paymentRecord.setAmount(order.getGrandTotal());
         paymentRecord.setStatus(PaymentRecord.PaymentStatus.INITIATED);
         paymentRecord = paymentRecordRepository.save(paymentRecord);
@@ -194,6 +215,17 @@ public class CheckoutService {
                 order.getGrandTotal(), cartItems.size()));
 
         return new CheckoutResult(order, paymentRecord);
+    }
+
+    /** 30^6 combinations makes a clash rare; the unique index is the real guard, this just avoids a 500 on the odd hit. */
+    private String uniqueReference() {
+        for (int attempt = 0; attempt < REFERENCE_ATTEMPTS; attempt++) {
+            String candidate = referenceGenerator.generate();
+            if (paymentRecordRepository.findByPaymentReference(candidate).isEmpty()) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Could not generate a unique payment reference");
     }
 
     public record CheckoutResult(CustomerOrder order, PaymentRecord paymentRecord) {}

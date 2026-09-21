@@ -5,6 +5,11 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import java.math.BigDecimal;
 import java.util.UUID;
 
+/**
+ * {@code availableQty} is what can be sold right now (on hand minus reserved, across physical
+ * locations). It is filled in by the admin list/detail endpoints and null elsewhere (e.g. right
+ * after creating a variant, where it is simply zero).
+ */
 public record ProductVariantDto(
         UUID id,
         String sku,
@@ -16,11 +21,17 @@ public record ProductVariantDto(
         BigDecimal vatRate,
         boolean vatExempt,
         BigDecimal reorderLevel,
-        boolean isActive
+        boolean isActive,
+        BigDecimal availableQty
 ) {
     public static ProductVariantDto from(ProductVariant v) {
+        return from(v, null);
+    }
+
+    public static ProductVariantDto from(ProductVariant v, BigDecimal availableQty) {
         return new ProductVariantDto(
                 v.getId(), v.getSku(), v.getVariantName(), v.getSellingPrice(), v.getCompareAtPrice(),
-                v.getStandardCost(), v.getUom(), v.getVatRate(), v.isVatExempt(), v.getReorderLevel(), v.isActive());
+                v.getStandardCost(), v.getUom(), v.getVatRate(), v.isVatExempt(), v.getReorderLevel(), v.isActive(),
+                availableQty);
     }
 }

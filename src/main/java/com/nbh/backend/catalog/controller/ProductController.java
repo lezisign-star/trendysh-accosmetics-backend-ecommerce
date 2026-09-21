@@ -8,13 +8,18 @@ import com.nbh.backend.catalog.dto.ProductVariantDto;
 import com.nbh.backend.catalog.dto.UpdateProductRequest;
 import com.nbh.backend.catalog.dto.UpdateVariantRequest;
 import com.nbh.backend.catalog.service.ProductService;
+import com.nbh.backend.staff.entity.StaffUser;
+import com.nbh.backend.stock.service.VariantStockService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
@@ -23,15 +28,22 @@ import java.util.UUID;
 public class ProductController {
 
     private final ProductService productService;
+    private final VariantStockService variantStockService;
 
-    public ProductController(ProductService productService) {
+    public ProductController(ProductService productService, VariantStockService variantStockService) {
         this.productService = productService;
+        this.variantStockService = variantStockService;
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_VIEW') or hasAuthority('PERM_PRODUCT_MANAGE')")
     @GetMapping
-    public Page<ProductDto> list(@PageableDefault(size = 20) Pageable pageable) {
-        return productService.listProducts(pageable);
+    public Page<ProductDto> list(@RequestParam(required = false) String q,
+                                  @RequestParam(required = false) UUID categoryId,
+                                  @RequestParam(required = false) Boolean published,
+                                  @RequestParam(required = false) String stock,
+                                  @RequestParam(defaultValue = "false") boolean deleted,
+                                  @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return productService.listProducts(q, categoryId, published, stock, deleted, pageable);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_VIEW') or hasAuthority('PERM_PRODUCT_MANAGE')")
@@ -101,4 +113,31 @@ public class ProductController {
     public void removeImage(@PathVariable UUID id, @PathVariable UUID imageId) {
         productService.removeImage(id, imageId);
     }
+
+    /** Soft delete — reversible via {@code /restore}; history (orders, stock movements) is untouched. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @DeleteMapping("/{id}")
+    public ProductDto delete(@PathVariable UUID id) {
+        return productService.softDelete(id);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PostMapping("/{id}/restore")
+    public ProductDto restore(@PathVariable UUID id) {
+        return productService.restore(id);
+    }
+
+    /**
+     * Sets a variant's sellable stock to {@code quantity}; the difference is posted to the stock ledger
+     * (see {@link VariantStockService}).
+     */
+    @PreAuthorize("hasAuthority('PERM_STOCK_ADJUST')")
+    @PutMapping("/{id}/variants/{variantId}/stock")
+    public VariantStockService.Result setStock(@PathVariable UUID id, @PathVariable UUID variantId,
+                                                @Valid @RequestBody SetStockRequest request,
+                                                @AuthenticationPrincipal StaffUser staff) {
+        return variantStockService.setAvailable(id, variantId, request.quantity(), request.unitCost(), staff);
+    }
+
+    public record SetStockRequest(@jakarta.validation.constraints.NotNull BigDecimal quantity, BigDecimal unitCost) {}
 }

@@ -9,6 +9,7 @@ import com.nbh.backend.catalog.dto.UpdateProductRequest;
 import com.nbh.backend.catalog.dto.UpdateVariantRequest;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
+import com.nbh.backend.stock.repository.StockBalanceRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +19,8 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -45,6 +48,7 @@ public class ProductService {
     private final VariantAttributeValueRepository variantAttributeValueRepository;
     private final VariantBarcodeRepository variantBarcodeRepository;
     private final ProductImageRepository imageRepository;
+    private final StockBalanceRepository balanceRepository;
 
     public ProductService(ProductRepository productRepository,
                            ProductVariantRepository variantRepository,
@@ -53,7 +57,8 @@ public class ProductService {
                            ProductAttributeValueRepository attributeValueRepository,
                            VariantAttributeValueRepository variantAttributeValueRepository,
                            VariantBarcodeRepository variantBarcodeRepository,
-                           ProductImageRepository imageRepository) {
+                           ProductImageRepository imageRepository,
+                           StockBalanceRepository balanceRepository) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
         this.brandRepository = brandRepository;
@@ -62,6 +67,7 @@ public class ProductService {
         this.variantAttributeValueRepository = variantAttributeValueRepository;
         this.variantBarcodeRepository = variantBarcodeRepository;
         this.imageRepository = imageRepository;
+        this.balanceRepository = balanceRepository;
     }
 
     @Transactional
@@ -79,14 +85,7 @@ public class ProductService {
             product.setBrand(brandRepository.findById(request.brandId())
                     .orElseThrow(() -> new EntityNotFoundException("No brand: " + request.brandId())));
         }
-        if (request.categoryId() != null) {
-            product.setCategory(categoryRepository.findById(request.categoryId())
-                    .orElseThrow(() -> new EntityNotFoundException("No category: " + request.categoryId())));
-        }
-        if (request.subcategoryId() != null) {
-            product.setSubcategory(categoryRepository.findById(request.subcategoryId())
-                    .orElseThrow(() -> new EntityNotFoundException("No subcategory: " + request.subcategoryId())));
-        }
+        applyCategories(product, request.categoryId(), request.subcategoryId());
 
         Product savedProduct = productRepository.save(product);
 
@@ -118,20 +117,61 @@ public class ProductService {
                 ? brandRepository.findById(request.brandId())
                         .orElseThrow(() -> new EntityNotFoundException("No brand: " + request.brandId()))
                 : null);
-        product.setCategory(request.categoryId() != null
-                ? categoryRepository.findById(request.categoryId())
-                        .orElseThrow(() -> new EntityNotFoundException("No category: " + request.categoryId()))
-                : null);
-        product.setSubcategory(request.subcategoryId() != null
-                ? categoryRepository.findById(request.subcategoryId())
-                        .orElseThrow(() -> new EntityNotFoundException("No subcategory: " + request.subcategoryId()))
-                : null);
+        applyCategories(product, request.categoryId(), request.subcategoryId());
 
         productRepository.save(product);
-        List<ProductVariantDto> variants = variantRepository.findByProductId(productId).stream()
-                .map(ProductVariantDto::from)
+        return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));
+    }
+
+    /**
+     * Sets a product's category and subcategory together and keeps them consistent: a subcategory must
+     * be a child of the category. Picking only a subcategory files the product under that subcategory's
+     * parent; a category alone is fine; neither clears both.
+     */
+    private void applyCategories(Product product, UUID categoryId, UUID subcategoryId) {
+        Category category = categoryId != null
+                ? categoryRepository.findById(categoryId)
+                        .orElseThrow(() -> new EntityNotFoundException("No category: " + categoryId))
+                : null;
+        Category subcategory = subcategoryId != null
+                ? categoryRepository.findById(subcategoryId)
+                        .orElseThrow(() -> new EntityNotFoundException("No subcategory: " + subcategoryId))
+                : null;
+        if (subcategory != null) {
+            Category parent = subcategory.getParent();
+            if (parent == null) {
+                throw new IllegalArgumentException("\"" + subcategory.getName() + "\" is a top-level category, not a subcategory");
+            }
+            if (category == null) {
+                category = parent;
+            } else if (!parent.getId().equals(category.getId())) {
+                throw new IllegalArgumentException(
+                        "\"" + subcategory.getName() + "\" is not a subcategory of \"" + category.getName() + "\"");
+            }
+        }
+        if (category != null && category.getParent() != null) {
+            throw new IllegalArgumentException("\"" + category.getName() + "\" is a subcategory - choose it as the subcategory instead");
+        }
+        product.setCategory(category);
+        product.setSubcategory(subcategory);
+    }
+
+    /** A product's variants with their sellable stock filled in. */
+    private List<ProductVariantDto> variantDtos(UUID productId) {
+        List<ProductVariant> variants = variantRepository.findByProductId(productId);
+        Map<UUID, BigDecimal> available = availability(variants.stream().map(ProductVariant::getId).toList());
+        return variants.stream()
+                .map(v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)))
                 .toList();
-        return ProductDto.from(product, variants, primaryImageUrl(productId));
+    }
+
+    private Map<UUID, BigDecimal> availability(Collection<UUID> variantIds) {
+        Map<UUID, BigDecimal> result = new HashMap<>();
+        if (variantIds.isEmpty()) return result;
+        for (StockBalanceRepository.VariantAvailability a : balanceRepository.availabilityForVariants(variantIds)) {
+            result.put(a.getVariantId(), a.getAvailable());
+        }
+        return result;
     }
 
     @Transactional
@@ -207,10 +247,7 @@ public class ProductService {
     public ProductDto getProduct(UUID id) {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + id));
-        List<ProductVariantDto> variants = variantRepository.findByProductId(id).stream()
-                .map(ProductVariantDto::from)
-                .toList();
-        return ProductDto.from(product, variants, primaryImageUrl(id));
+        return ProductDto.from(product, variantDtos(id), primaryImageUrl(id));
     }
 
     private String primaryImageUrl(UUID productId) {
@@ -228,16 +265,27 @@ public class ProductService {
      * with variants for the whole page batch-fetched in a single query.
      */
     @Transactional(readOnly = true)
-    public org.springframework.data.domain.Page<ProductDto> listProducts(org.springframework.data.domain.Pageable pageable) {
-        var page = productRepository.findAll(pageable);
+    public org.springframework.data.domain.Page<ProductDto> listProducts(
+            String q, UUID categoryId, Boolean published, String stock, boolean deleted,
+            org.springframework.data.domain.Pageable pageable) {
+        String stockFilter = stock == null || stock.isBlank() ? null : stock.trim().toUpperCase(Locale.ROOT);
+        if (stockFilter != null && !stockFilter.equals("IN") && !stockFilter.equals("OUT")) {
+            throw new IllegalArgumentException("stock must be IN or OUT");
+        }
+        String query = q == null || q.isBlank() ? null : q.trim();
+        var page = productRepository.searchAdmin(query, categoryId, published, stockFilter, deleted, pageable);
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
 
-        Map<UUID, List<ProductVariantDto>> variantsByProduct = variantRepository.findByProductIdIn(productIds).stream()
+        List<ProductVariant> allVariants = variantRepository.findByProductIdIn(productIds);
+        Map<UUID, BigDecimal> available = availability(allVariants.stream().map(ProductVariant::getId).toList());
+        Map<UUID, List<ProductVariantDto>> variantsByProduct = allVariants.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         v -> v.getProduct().getId(),
-                        java.util.stream.Collectors.mapping(ProductVariantDto::from, java.util.stream.Collectors.toList())));
+                        java.util.stream.Collectors.mapping(
+                                v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)),
+                                java.util.stream.Collectors.toList())));
 
-        Map<UUID, String> primaryImageByProduct = new java.util.HashMap<>();
+        Map<UUID, String> primaryImageByProduct = new HashMap<>();
         for (ProductImage image : imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)) {
             UUID pid = image.getProduct().getId();
             if (!primaryImageByProduct.containsKey(pid) || image.isPrimary()) {
@@ -247,6 +295,31 @@ public class ProductService {
 
         return page.map(p -> ProductDto.from(p, variantsByProduct.getOrDefault(p.getId(), List.of()),
                 primaryImageByProduct.get(p.getId())));
+    }
+
+    /**
+     * Soft delete: the product leaves the storefront and the default staff list but keeps its history
+     * (orders and stock movements still point at its variants). It is also unpublished so a restore
+     * never silently republishes it.
+     */
+    @Transactional
+    public ProductDto softDelete(UUID productId) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+        product.setDeleted(true);
+        product.setPublished(false);
+        product.setPublishedAt(null);
+        productRepository.save(product);
+        return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));
+    }
+
+    @Transactional
+    public ProductDto restore(UUID productId) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+        product.setDeleted(false);
+        productRepository.save(product);
+        return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));
     }
 
     /**
@@ -261,10 +334,7 @@ public class ProductService {
         product.setPublished(published);
         product.setPublishedAt(published ? Instant.now() : null);
         productRepository.save(product);
-        List<ProductVariantDto> variants = variantRepository.findByProductId(productId).stream()
-                .map(ProductVariantDto::from)
-                .toList();
-        return ProductDto.from(product, variants);
+        return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));
     }
 
     /** A product's gallery as staff see it: the primary image first, the rest in the order they were added. */

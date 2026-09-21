@@ -60,6 +60,24 @@ app:
     additional-admin-emails: ${BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS:mdaucodes@gmail.com}
   stock:
     reservation-sweep-interval-ms: ${RESERVATION_SWEEP_INTERVAL_MS:60000}
+  payments:
+    # BANK: the customer pays the bank quoting a per-order reference (pay page at
+    # /pay/{orderNo}); MPESA: Daraja STK push. Only BANK confirms via staff today.
+    collection-mode: ${PAYMENT_COLLECTION_MODE:BANK}
+    # How long the stock is held and the reference stays payable (bank transfers are slow).
+    window-minutes: ${PAYMENT_WINDOW_MINUTES:45}
+  bank:
+    # Shown on the customer's pay page. Blank paybill-number hides the Paybill tab;
+    # blank account-number hides the bank-transfer tab. Set to the client's real details.
+    name: ${BANK_NAME:}
+    paybill-number: ${BANK_PAYBILL_NUMBER:}
+    # What the customer types as the paybill "account"; <ref> is replaced by the order's
+    # payment reference, e.g. 01100123456#<ref> when the bank needs a fixed account prefix.
+    paybill-account-template: ${BANK_PAYBILL_ACCOUNT_TEMPLATE:<ref>}
+    account-name: ${BANK_ACCOUNT_NAME:}
+    account-number: ${BANK_ACCOUNT_NUMBER:}
+    account-branch: ${BANK_ACCOUNT_BRANCH:}
+    support-whatsapp: ${SUPPORT_WHATSAPP:}
   mpesa:
     # UNSET PLACEHOLDERS — DarajaPaymentGateway refuses to call Safaricom until
     # real sandbox credentials are set here. See that class's javadoc.

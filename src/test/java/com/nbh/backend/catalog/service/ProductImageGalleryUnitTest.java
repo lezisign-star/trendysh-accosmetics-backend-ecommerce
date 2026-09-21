@@ -40,6 +40,7 @@ class ProductImageGalleryUnitTest {
     @Mock private VariantAttributeValueRepository variantAttributeValueRepository;
     @Mock private VariantBarcodeRepository variantBarcodeRepository;
     @Mock private ProductImageRepository imageRepository;
+    @Mock private com.nbh.backend.stock.repository.StockBalanceRepository balanceRepository;
 
     private ProductService service;
     private Product product;
@@ -48,7 +49,8 @@ class ProductImageGalleryUnitTest {
     @BeforeEach
     void setUp() {
         service = new ProductService(productRepository, variantRepository, brandRepository, categoryRepository,
-                attributeValueRepository, variantAttributeValueRepository, variantBarcodeRepository, imageRepository);
+                attributeValueRepository, variantAttributeValueRepository, variantBarcodeRepository, imageRepository,
+                balanceRepository);
 
         product = new Product();
         product.setId(UUID.randomUUID());

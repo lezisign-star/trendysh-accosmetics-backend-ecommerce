@@ -24,6 +24,16 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
      */
     Optional<PaymentRecord> findByProviderReference(String providerReference);
 
+    /** Staff "awaiting payment" queue: bank orders not yet paid, oldest first (order fetched, no N+1). */
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"order"})
+    @Query("select p from PaymentRecord p where p.paymentReference is not null "
+            + "and p.status in (com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.INITIATED, "
+            + "com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.PENDING) order by p.createdAt asc")
+    List<PaymentRecord> findAwaitingBankPayments();
+
+    /** Bank collection: the customer-quoted reference (V19), backed by a unique index. */
+    Optional<PaymentRecord> findByPaymentReference(String paymentReference);
+
     /**
      * §4 C2 fix: confirmSuccess/markFailed used an unlocked findById, so a
      * Daraja callback retry racing a staff manual-confirm (or a manual-fail

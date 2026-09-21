@@ -48,6 +48,38 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             """)
     Page<Product> searchPublished(@Param("q") String q, @Param("categorySlug") String categorySlug, Pageable pageable);
 
+    /**
+     * Staff product list: every optional filter short-circuits when null. {@code q} also matches a
+     * variant SKU. {@code stock} is IN (something sellable) or OUT (nothing sellable); the same
+     * sellable definition as the public catalogue (on hand minus reserved, physical locations).
+     * Same {@code CAST(... AS string)} null-parameter fix as {@link #searchPublished}.
+     */
+    @Query("""
+            SELECT p FROM Product p
+            LEFT JOIN p.category c
+            LEFT JOIN p.subcategory sc
+            WHERE p.deleted = :deleted
+              AND (:q IS NULL
+                   OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR EXISTS (SELECT 1 FROM ProductVariant v
+                              WHERE v.product = p AND LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))))
+              AND (:categoryId IS NULL OR c.id = :categoryId OR sc.id = :categoryId)
+              AND (:published IS NULL OR p.isPublished = :published)
+              AND (:stock IS NULL
+                   OR (CAST(:stock AS string) = 'IN' AND EXISTS (
+                            SELECT 1 FROM StockBalance b JOIN b.location loc
+                            WHERE b.variant.product = p AND loc.isInternal = true AND (b.onHandQty - b.reservedQty) > 0))
+                   OR (CAST(:stock AS string) = 'OUT' AND NOT EXISTS (
+                            SELECT 1 FROM StockBalance b JOIN b.location loc
+                            WHERE b.variant.product = p AND loc.isInternal = true AND (b.onHandQty - b.reservedQty) > 0)))
+            """)
+    Page<Product> searchAdmin(@Param("q") String q,
+                               @Param("categoryId") UUID categoryId,
+                               @Param("published") Boolean published,
+                               @Param("stock") String stock,
+                               @Param("deleted") boolean deleted,
+                               Pageable pageable);
+
     /** Same category or subcategory as the given product, excluding itself — the "related products" rail. */
     @Query("""
             SELECT p FROM Product p

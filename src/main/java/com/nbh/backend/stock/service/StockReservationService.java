@@ -128,6 +128,29 @@ public class StockReservationService {
     }
 
     /**
+     * Pushes an ACTIVE, time-limited hold's expiry out to {@code newExpiresAt}
+     * (never earlier). Used when a customer says they've paid but staff haven't
+     * yet verified it: the items must not be released from under a real payment.
+     * Locks the reservation row like every other mutation, so it cannot race the
+     * expiry sweeper. A hold that already lapsed is left alone and reported
+     * false: the caller must not pretend it is still reserved.
+     */
+    @Transactional
+    public boolean extendHold(UUID reservationId, Instant newExpiresAt) {
+        StockReservation reservation = reservationRepository.lockById(reservationId)
+                .orElseThrow(() -> new NotFoundException("No such reservation: " + reservationId));
+        if (reservation.getStatus() != StockReservation.ReservationStatus.ACTIVE) {
+            return false;
+        }
+        Instant current = reservation.getExpiresAt();
+        if (current != null && current.isBefore(newExpiresAt)) {
+            reservation.setExpiresAt(newExpiresAt);
+            reservationRepository.save(reservation);
+        }
+        return true;
+    }
+
+    /**
      * Checkout lifecycle step (architecture doc §4.5's reservation table):
      * "Payment confirmed -> ONLINE_ORDER, expires_at = NULL". A cart hold is
      * time-limited (15 min, so an abandoned checkout doesn't starve real

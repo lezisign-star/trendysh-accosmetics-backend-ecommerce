@@ -56,6 +56,14 @@ public class PaymentRecord extends BaseEntity {
     @Column(name = "idempotency_key", unique = true, length = 100)
     private String idempotencyKey;
 
+    /** Bank collection: the short code the customer quotes when paying (V19); null for M-Pesa/cash. */
+    @Column(name = "payment_reference", unique = true, length = 20)
+    private String paymentReference;
+
+    /** Bank collection: end of the payment window, the same instant the stock hold lapses. */
+    @Column(name = "expires_at")
+    private java.time.Instant expiresAt;
+
     public enum PaymentMethod { MPESA, CARD, CASH, BANK }
 
     public enum PaymentStatus { INITIATED, PENDING, SUCCESS, FAILED, REVERSED }
