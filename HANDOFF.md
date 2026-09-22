@@ -1,5 +1,64 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## READ THIS FIRST (2026-09-22) — corrects stale status further down, and scopes the next feature
+
+**Deploy is DONE, not a blocker anymore.** Despite what older sections below still say: the backend
+is live on Railway (`trendysh-accosmetics-backend-ecommerce-production.up.railway.app`, Dockerfile
+build, `DATABASE_URL` auto-converted, repo now at `lezisign-star/trendysh-accosmetics-backend-
+ecommerce`), and the frontend's `staging` build points at it via a committed `.env.production`. The
+six launch categories are seeded (V16). Don't re-do this work or treat it as open.
+
+**Also shipped since the "START HERE" sections below were written** (all pushed to `main`, tests
+green each time): CORS/CRLF/origin fixes for the deploy; shopper sessions hardened (15-min access
+token + rotating httpOnly refresh cookie, V17); a single `/login` page for staff and shoppers
+(staff checked first, forced password change on first login, `/admin/login` now redirects); staff
+password reset via the same forgot-password flow, plus an `mdaucodes@gmail.com` SUPER_ADMIN seeded
+on boot (V18); a full product-editor API — category/subcategory hierarchy with consistency rules,
+admin search/filters, a "set stock quantity" endpoint that posts through the real stock ledger
+(`VariantStockService`), soft delete/restore, category rename/delete with product-count guards.
+Frontend got a matching admin product/category UI (Quick + Full edit panels, list/grid, mobile-
+first) and real customer-facing category → subcategory browsing (shop sidebar tree, breadcrumbs,
+subcategory-first related products) — see the frontend HANDOFF for that side.
+
+**Two real gaps found live, not yet fixed (found while documenting the actual order journey
+2026-09-22):**
+1. `OrderFulfilmentService.fulfil` jumps a `PAID` order straight to `DISPATCHED` — `PICKING` and
+   `READY` are never set by anything, and **`DELIVERED` is never set by any endpoint at all.** The
+   customer-facing tracker (`OrderProgress.tsx`) shows a 6-step bar including those steps, so today
+   it visually jumps from "Payment confirmed" to "On its way" and then gets stuck forever, even
+   after a real delivery. Needs either real PICKING/READY/DELIVERED admin actions, or the tracker UI
+   simplified to match what the backend actually does — a product decision, not just a bug fix.
+2. No inventory/low-stock dashboard in the admin UI. The backend already has one (`GET
+   /stock/inventory`, `belowReorderOnly` filter) and the Overview page shows a "Low stock items"
+   count tile, but nothing lets staff click it through to a list — stock is only visible/editable
+   one product at a time via the product editor.
+
+**Next scoped feature (not started): merchandising/promos.** Full spec, schema, endpoints and build
+order written up after founder decisions were collected: `C:\Users\ADMIN\.claude\
+NairobiBeautyHub_Merchandising_Promo_Plan.md` — Flash Deals (per-product deal price + countdown),
+New Arrivals and Popular rails (manual flags, Popular falls back to real sales ranking), and a
+site-wide percent-off campaign shown as one compact banner. Read that file before starting it; this
+paragraph is a pointer, not the spec.
+
+**Ongoing elsewhere in this file below:** another session is mid-way through Co-op Bank payment
+work (INS receiver, claims, bank credits) — uncommitted as of 2026-09-21/22. Don't assume it's done
+or tested against a real bank; its own sections say so explicitly. Leave those files/sections alone
+unless you're continuing that specific work.
+
+---
+
+## CO-OP INS RECEIVER (2026-09-21, UNCOMMITTED) — built from the bank's PUBLIC spec, NEVER tested against the real bank
+`POST /api/v1/payments/coop/ins` (`com.nbh.backend.payment.coop.*`): Basic-auth check (`COOP_INS_USERNAME/PASSWORD`,
+blank = reject everything), records CREDIT events for `COOP_INS_ACCOUNT_NUMBER` via `BankCreditService.record(...,
+IPN, autoMatch)`. **`COOP_INS_AUTO_MATCH` defaults to false**: credits are recorded for staff to allocate on
+`/admin/payments`; turn on only after verifying against the real bank (INS has only a shared Basic credential, no
+signature). Reference is searched in Narration + CustMemoLine1-3 (bank has not said which). Ack body shape is an
+assumption. NOT built: AccountTransactions reconciliation (needs OAuth creds + sandbox), SafaricomSTKPush (see
+Coop-STK-Push-Configuration-Guide.pdf in Downloads: ~30% chance of production access in 6 weeks; do not depend on it).
+Suite on a FRESH DB: 139/140; the 1 failure is the known stale
+`CustomerAccountsIntegrationTest.aShopperWhoRegistersWithAStaffEmailStillCannotBecomeStaff` (not from this work).
+
+
 > **IMPORTANT: the Co-op Bank (or Family Bank) integration is NOT DONE.** It is untested and no real credentials exist. Everything below is bank-agnostic scaffolding confirmed manually by staff. There is no bank IPN endpoint, no reconciliation job and no bank API client. Do not describe bank payments as automatically verified until the real bank integration is built and tested against the bank's sandbox.
 
 ## BANK PAYMENTS — step 3 built (2026-09-21, UNCOMMITTED, suite 122/122)
