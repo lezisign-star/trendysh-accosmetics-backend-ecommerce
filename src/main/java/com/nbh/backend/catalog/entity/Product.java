@@ -60,6 +60,14 @@ public class Product extends BaseEntity {
     @Column(nullable = false)
     private boolean deleted = false;
 
+    /** Manual merchandising pin — staff-controlled, no automatic ranking involved on its own. */
+    @Column(name = "is_popular", nullable = false)
+    private boolean isPopular = false;
+
+    /** Manual flag, no auto-expiry by design (founder decision 2026-09-22) — staff turn it off themselves. */
+    @Column(name = "is_new_arrival", nullable = false)
+    private boolean isNewArrival = false;
+
     @Column(length = 200)
     private String seoTitle;
 

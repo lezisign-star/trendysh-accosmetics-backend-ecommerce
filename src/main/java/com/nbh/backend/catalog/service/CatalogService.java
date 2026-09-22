@@ -36,6 +36,8 @@ public class CatalogService {
     private final ProductViewEventRepository viewEventRepository;
     private final CategoryRepository categoryRepository;
     private final StockBalanceRepository balanceRepository;
+    private final EffectivePriceResolver priceResolver;
+    private final PromoCampaignService promoCampaignService;
     private final Clock clock;
 
     public CatalogService(ProductRepository productRepository,
@@ -47,6 +49,8 @@ public class CatalogService {
                            ProductViewEventRepository viewEventRepository,
                            CategoryRepository categoryRepository,
                            StockBalanceRepository balanceRepository,
+                           EffectivePriceResolver priceResolver,
+                           PromoCampaignService promoCampaignService,
                            Clock clock) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
@@ -57,12 +61,16 @@ public class CatalogService {
         this.viewEventRepository = viewEventRepository;
         this.categoryRepository = categoryRepository;
         this.balanceRepository = balanceRepository;
+        this.priceResolver = priceResolver;
+        this.promoCampaignService = promoCampaignService;
         this.clock = clock;
     }
 
     @Transactional(readOnly = true)
-    public Page<CatalogProductSummaryDto> browse(String q, String categorySlug, Pageable pageable) {
-        Page<Product> page = productRepository.searchPublished(blankToNull(q), blankToNull(categorySlug), pageable);
+    public Page<CatalogProductSummaryDto> browse(String q, String categorySlug, Boolean deal, Boolean popular,
+                                                  Boolean newArrival, Pageable pageable) {
+        Page<Product> page = productRepository.searchPublished(blankToNull(q), blankToNull(categorySlug),
+                deal, popular, newArrival, pageable);
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
         if (productIds.isEmpty()) {
             return org.springframework.data.domain.Page.empty(pageable);
@@ -73,10 +81,12 @@ public class CatalogService {
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByProduct = soldSummaries(productIds);
         Set<UUID> inStockVariants = inStockVariantIds(variantsByProduct);
+        PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         return page.map(p -> {
             List<ProductVariant> variants = variantsByProduct.getOrDefault(p.getId(), List.of());
-            List<BigDecimal> prices = variants.stream().map(ProductVariant::getSellingPrice).toList();
+            List<EffectivePriceResolver.EffectivePrice> prices = variants.stream()
+                    .map(v -> priceResolver.resolve(v, activeCampaign)).toList();
             ProductReviewRepository.RatingSummary rating = ratingByProduct.get(p.getId());
             return CatalogProductSummaryDto.from(p, prices, primaryImageByProduct.get(p.getId()),
                     rating != null ? rating.getAvgRating() : 0.0,
@@ -96,8 +106,10 @@ public class CatalogService {
         List<VariantAttributeValue> attributeValues = variantIds.isEmpty()
                 ? List.of() : variantAttributeValueRepository.findByVariantIdIn(variantIds);
         Set<UUID> inStockVariants = inStockVariantIds(Map.of(product.getId(), variants));
+        PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
         List<CatalogVariantDto> variantDtos = variants.stream()
-                .map(v -> CatalogVariantDto.from(v, attributeValues, inStockVariants.contains(v.getId())))
+                .map(v -> CatalogVariantDto.from(v, attributeValues, inStockVariants.contains(v.getId()),
+                        priceResolver.resolve(v, activeCampaign)))
                 .toList();
 
         List<CatalogImageDto> images = imageRepository.findByProductIdOrderBySortOrderAsc(product.getId()).stream()
@@ -134,10 +146,12 @@ public class CatalogService {
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(relatedIds);
         Map<UUID, BigDecimal> soldByProduct = soldSummaries(relatedIds);
         Set<UUID> inStockVariants = inStockVariantIds(variantsByProduct);
+        PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         return related.stream().map(p -> {
             List<ProductVariant> variants = variantsByProduct.getOrDefault(p.getId(), List.of());
-            List<BigDecimal> prices = variants.stream().map(ProductVariant::getSellingPrice).toList();
+            List<EffectivePriceResolver.EffectivePrice> prices = variants.stream()
+                    .map(v -> priceResolver.resolve(v, activeCampaign)).toList();
             ProductReviewRepository.RatingSummary rating = ratingByProduct.get(p.getId());
             return CatalogProductSummaryDto.from(p, prices, primaryImageByProduct.get(p.getId()),
                     rating != null ? rating.getAvgRating() : 0.0,

@@ -13,6 +13,8 @@ import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.catalog.service.EffectivePriceResolver;
+import com.nbh.backend.catalog.service.PromoCampaignService;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -41,19 +43,25 @@ public class CartService {
     private final BranchRepository branchRepository;
     private final StockLocationRepository locationRepository;
     private final StockBalanceRepository balanceRepository;
+    private final EffectivePriceResolver priceResolver;
+    private final PromoCampaignService promoCampaignService;
 
     public CartService(CartRepository cartRepository,
                         CartItemRepository cartItemRepository,
                         ProductVariantRepository variantRepository,
                         BranchRepository branchRepository,
                         StockLocationRepository locationRepository,
-                        StockBalanceRepository balanceRepository) {
+                        StockBalanceRepository balanceRepository,
+                        EffectivePriceResolver priceResolver,
+                        PromoCampaignService promoCampaignService) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.variantRepository = variantRepository;
         this.branchRepository = branchRepository;
         this.locationRepository = locationRepository;
         this.balanceRepository = balanceRepository;
+        this.priceResolver = priceResolver;
+        this.promoCampaignService = promoCampaignService;
     }
 
     @Transactional
@@ -82,7 +90,10 @@ public class CartService {
                     return newItem;
                 });
         item.setQty(item.getQty().add(qty));
-        item.setUnitPriceSnapshot(variant.getSellingPrice());
+        // The real, server-computed price — a variant's own deal, else an active site-wide campaign, else
+        // the plain selling price (see EffectivePriceResolver). This snapshot is what checkout later
+        // trusts without re-resolving, so it must be right here, not just at display time.
+        item.setUnitPriceSnapshot(priceResolver.resolve(variant, promoCampaignService.getActiveOrNull()).effectivePrice());
         item.setProductNameSnapshot(variant.getProduct().getName());
         item.setVariantNameSnapshot(variant.getVariantName());
         cartItemRepository.save(item);

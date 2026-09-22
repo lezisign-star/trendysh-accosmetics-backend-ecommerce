@@ -22,6 +22,8 @@ public record ProductDto(
         String howToUse,
         boolean isPublished,
         boolean deleted,
+        boolean isPopular,
+        boolean isNewArrival,
         String primaryImageUrl,
         List<ProductVariantDto> variants
 ) {
@@ -39,6 +41,6 @@ public record ProductDto(
                 p.getSubcategory() != null ? p.getSubcategory().getId() : null,
                 p.getSubcategory() != null ? p.getSubcategory().getName() : null,
                 p.getShortDescription(), p.getDescription(), p.getIngredients(), p.getHowToUse(),
-                p.isPublished(), p.isDeleted(), primaryImageUrl, variants);
+                p.isPublished(), p.isDeleted(), p.isPopular(), p.isNewArrival(), primaryImageUrl, variants);
     }
 }

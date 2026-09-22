@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 
 /**
  * The SKU — the only stockable, sellable thing. A "foundation with 24 shades" is
@@ -37,6 +38,18 @@ public class ProductVariant extends BaseEntity {
 
     @Column(precision = 14, scale = 2)
     private BigDecimal compareAtPrice;
+
+    /**
+     * A per-variant flash deal: sale price + its own deadline, independent of any site-wide
+     * {@code PromoCampaign}. Both null = no deal; {@code VariantDealService} enforces they're set
+     * or cleared together. Wins over an active campaign when both would apply — see
+     * {@code EffectivePriceResolver}.
+     */
+    @Column(name = "deal_price", precision = 14, scale = 2)
+    private BigDecimal dealPrice;
+
+    @Column(name = "deal_ends_at")
+    private Instant dealEndsAt;
 
     @Column(precision = 14, scale = 2)
     private BigDecimal standardCost;

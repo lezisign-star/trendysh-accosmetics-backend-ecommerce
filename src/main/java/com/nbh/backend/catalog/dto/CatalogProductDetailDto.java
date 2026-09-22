@@ -21,6 +21,8 @@ public record CatalogProductDetailDto(
         String howToUse,
         List<CatalogImageDto> images,
         List<CatalogVariantDto> variants,
+        boolean isPopular,
+        boolean isNewArrival,
         double avgRating,
         long reviewCount,
         BigDecimal unitsSold,
@@ -36,7 +38,7 @@ public record CatalogProductDetailDto(
                 p.getSubcategory() != null ? p.getSubcategory().getId() : null,
                 p.getSubcategory() != null ? p.getSubcategory().getName() : null,
                 p.getShortDescription(), p.getDescription(), p.getIngredients(), p.getHowToUse(),
-                images, variants, avgRating, reviewCount, unitsSold,
+                images, variants, p.isPopular(), p.isNewArrival(), avgRating, reviewCount, unitsSold,
                 variants.stream().anyMatch(CatalogVariantDto::inStock));
     }
 }

@@ -45,8 +45,15 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
               AND (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(p.shortDescription) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
               AND (:categorySlug IS NULL OR c.slug = :categorySlug OR sc.slug = :categorySlug)
+              AND (:popular IS NULL OR p.isPopular = :popular)
+              AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)
+              AND (:deal IS NULL OR :deal = false OR EXISTS (
+                        SELECT 1 FROM ProductVariant v
+                        WHERE v.product = p AND v.dealPrice IS NOT NULL AND v.dealEndsAt > CURRENT_TIMESTAMP))
             """)
-    Page<Product> searchPublished(@Param("q") String q, @Param("categorySlug") String categorySlug, Pageable pageable);
+    Page<Product> searchPublished(@Param("q") String q, @Param("categorySlug") String categorySlug,
+                                   @Param("deal") Boolean deal, @Param("popular") Boolean popular,
+                                   @Param("newArrival") Boolean newArrival, Pageable pageable);
 
     /**
      * Staff product list: every optional filter short-circuits when null. {@code q} also matches a
@@ -65,6 +72,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                               WHERE v.product = p AND LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))))
               AND (:categoryId IS NULL OR c.id = :categoryId OR sc.id = :categoryId)
               AND (:published IS NULL OR p.isPublished = :published)
+              AND (:popular IS NULL OR p.isPopular = :popular)
+              AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)
               AND (:stock IS NULL
                    OR (CAST(:stock AS string) = 'IN' AND EXISTS (
                             SELECT 1 FROM StockBalance b JOIN b.location loc
@@ -77,6 +86,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                @Param("categoryId") UUID categoryId,
                                @Param("published") Boolean published,
                                @Param("stock") String stock,
+                               @Param("popular") Boolean popular,
+                               @Param("newArrival") Boolean newArrival,
                                @Param("deleted") boolean deleted,
                                Pageable pageable);
 

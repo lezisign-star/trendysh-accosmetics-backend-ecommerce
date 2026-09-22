@@ -80,6 +80,8 @@ public class ProductService {
         product.setIngredients(request.ingredients());
         product.setHowToUse(request.howToUse());
         product.setPublished(false); // staff publishes explicitly once photos/pricing are ready
+        product.setPopular(request.isPopular() != null && request.isPopular());
+        product.setNewArrival(request.isNewArrival() != null && request.isNewArrival());
 
         if (request.brandId() != null) {
             product.setBrand(brandRepository.findById(request.brandId())
@@ -97,11 +99,14 @@ public class ProductService {
     }
 
     /**
-     * Full-replace update of a product's own fields. Founder's explicit ask
-     * ("add a variant under a product") surfaced that this — and {@link
-     * #addVariant} below — didn't exist at all: the original API could only
-     * create a product with its initial variants in one shot, with no way
-     * to correct a typo or add a shade discovered after the fact.
+     * Updates a product's own fields. {@code name}/{@code brandId}/category-subcategory are
+     * full-replace (send what you want, null clears it — their established contract). The text
+     * fields and the two merchandising flags are merge-only (null = leave unchanged) — see
+     * {@link UpdateProductRequest}'s javadoc for why: a plain full-replace here used to let the
+     * admin's Quick-edit panel silently wipe a product's description/ingredients/how-to-use to
+     * null on every quick save, since that panel only ever sends a handful of fields. Found live
+     * 2026-09-22, fixed here rather than by making every caller resend every field, which would
+     * only invite the same bug again the next time a new partial-save screen is added.
      */
     @Transactional
     public ProductDto updateProduct(UUID productId, UpdateProductRequest request) {
@@ -109,10 +114,12 @@ public class ProductService {
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
 
         product.setName(request.name());
-        product.setShortDescription(request.shortDescription());
-        product.setDescription(request.description());
-        product.setIngredients(request.ingredients());
-        product.setHowToUse(request.howToUse());
+        if (request.shortDescription() != null) product.setShortDescription(request.shortDescription());
+        if (request.description() != null) product.setDescription(request.description());
+        if (request.ingredients() != null) product.setIngredients(request.ingredients());
+        if (request.howToUse() != null) product.setHowToUse(request.howToUse());
+        if (request.isPopular() != null) product.setPopular(request.isPopular());
+        if (request.isNewArrival() != null) product.setNewArrival(request.isNewArrival());
         product.setBrand(request.brandId() != null
                 ? brandRepository.findById(request.brandId())
                         .orElseThrow(() -> new EntityNotFoundException("No brand: " + request.brandId()))
@@ -266,14 +273,14 @@ public class ProductService {
      */
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<ProductDto> listProducts(
-            String q, UUID categoryId, Boolean published, String stock, boolean deleted,
-            org.springframework.data.domain.Pageable pageable) {
+            String q, UUID categoryId, Boolean published, String stock, Boolean popular, Boolean newArrival,
+            boolean deleted, org.springframework.data.domain.Pageable pageable) {
         String stockFilter = stock == null || stock.isBlank() ? null : stock.trim().toUpperCase(Locale.ROOT);
         if (stockFilter != null && !stockFilter.equals("IN") && !stockFilter.equals("OUT")) {
             throw new IllegalArgumentException("stock must be IN or OUT");
         }
         String query = q == null || q.isBlank() ? null : q.trim();
-        var page = productRepository.searchAdmin(query, categoryId, published, stockFilter, deleted, pageable);
+        var page = productRepository.searchAdmin(query, categoryId, published, stockFilter, popular, newArrival, deleted, pageable);
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
 
         List<ProductVariant> allVariants = variantRepository.findByProductIdIn(productIds);

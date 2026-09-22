@@ -39,6 +39,7 @@ class CatalogServiceInStockUnitTest {
     @Mock private ProductViewEventRepository viewEventRepository;
     @Mock private CategoryRepository categoryRepository;
     @Mock private StockBalanceRepository balanceRepository;
+    @Mock private PromoCampaignService promoCampaignService;
 
     private CatalogService catalogService;
     private Product product;
@@ -48,9 +49,15 @@ class CatalogServiceInStockUnitTest {
 
     @BeforeEach
     void setUp() {
+        // A real resolver (not mocked) — it's a pure function needing no repository of its own, and
+        // stubbing its return value for every variant here would obscure that price isn't what these
+        // tests are about. promoCampaignService is mocked and left unstubbed (no campaign in play);
+        // lenient() since not every test method necessarily reaches the code path that calls it.
+        org.mockito.Mockito.lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         catalogService = new CatalogService(productRepository, variantRepository, imageRepository,
                 variantAttributeValueRepository, reviewRepository, saleEventRepository, viewEventRepository,
-                categoryRepository, balanceRepository, Clock.systemUTC());
+                categoryRepository, balanceRepository, new EffectivePriceResolver(Clock.systemUTC()),
+                promoCampaignService, Clock.systemUTC());
 
         product = new Product();
         product.setId(UUID.randomUUID());

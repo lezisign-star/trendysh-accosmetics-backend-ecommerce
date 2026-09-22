@@ -8,9 +8,11 @@ import com.nbh.backend.catalog.dto.ProductVariantDto;
 import com.nbh.backend.catalog.dto.UpdateProductRequest;
 import com.nbh.backend.catalog.dto.UpdateVariantRequest;
 import com.nbh.backend.catalog.service.ProductService;
+import com.nbh.backend.catalog.service.VariantDealService;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.stock.service.VariantStockService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -20,6 +22,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -29,10 +32,13 @@ public class ProductController {
 
     private final ProductService productService;
     private final VariantStockService variantStockService;
+    private final VariantDealService variantDealService;
 
-    public ProductController(ProductService productService, VariantStockService variantStockService) {
+    public ProductController(ProductService productService, VariantStockService variantStockService,
+                              VariantDealService variantDealService) {
         this.productService = productService;
         this.variantStockService = variantStockService;
+        this.variantDealService = variantDealService;
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_VIEW') or hasAuthority('PERM_PRODUCT_MANAGE')")
@@ -41,9 +47,11 @@ public class ProductController {
                                   @RequestParam(required = false) UUID categoryId,
                                   @RequestParam(required = false) Boolean published,
                                   @RequestParam(required = false) String stock,
+                                  @RequestParam(required = false) Boolean popular,
+                                  @RequestParam(name = "newArrival", required = false) Boolean newArrival,
                                   @RequestParam(defaultValue = "false") boolean deleted,
                                   @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return productService.listProducts(q, categoryId, published, stock, deleted, pageable);
+        return productService.listProducts(q, categoryId, published, stock, popular, newArrival, deleted, pageable);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_VIEW') or hasAuthority('PERM_PRODUCT_MANAGE')")
@@ -140,4 +148,22 @@ public class ProductController {
     }
 
     public record SetStockRequest(@jakarta.validation.constraints.NotNull BigDecimal quantity, BigDecimal unitCost) {}
+
+    /** Sets a variant's flash-deal price + deadline. See {@link VariantDealService}'s javadoc for the validation rules. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PutMapping("/{id}/variants/{variantId}/deal")
+    @org.springframework.transaction.annotation.Transactional
+    public ProductVariantDto setDeal(@PathVariable UUID id, @PathVariable UUID variantId,
+                                      @Valid @RequestBody SetDealRequest request) {
+        return ProductVariantDto.from(variantDealService.setDeal(id, variantId, request.dealPrice(), request.dealEndsAt()));
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @DeleteMapping("/{id}/variants/{variantId}/deal")
+    @org.springframework.transaction.annotation.Transactional
+    public ProductVariantDto clearDeal(@PathVariable UUID id, @PathVariable UUID variantId) {
+        return ProductVariantDto.from(variantDealService.clearDeal(id, variantId));
+    }
+
+    public record SetDealRequest(@NotNull BigDecimal dealPrice, @NotNull Instant dealEndsAt) {}
 }

@@ -2,14 +2,20 @@ package com.nbh.backend.catalog.controller;
 
 import com.nbh.backend.catalog.dto.*;
 import com.nbh.backend.catalog.entity.ProductReview;
+import com.nbh.backend.catalog.entity.PromoCampaign;
 import com.nbh.backend.catalog.service.CatalogService;
 import com.nbh.backend.catalog.service.ProductReviewService;
+import com.nbh.backend.catalog.service.PromoCampaignService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,18 +31,35 @@ public class CatalogController {
 
     private final CatalogService catalogService;
     private final ProductReviewService reviewService;
+    private final PromoCampaignService promoCampaignService;
+    private final Clock clock;
 
-    public CatalogController(CatalogService catalogService, ProductReviewService reviewService) {
+    public CatalogController(CatalogService catalogService, ProductReviewService reviewService,
+                              PromoCampaignService promoCampaignService, Clock clock) {
         this.catalogService = catalogService;
         this.reviewService = reviewService;
+        this.promoCampaignService = promoCampaignService;
+        this.clock = clock;
     }
 
     @GetMapping("/products")
     public Page<CatalogProductSummaryDto> browse(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) Boolean deal,
+            @RequestParam(required = false) Boolean popular,
+            @RequestParam(name = "new", required = false) Boolean newArrival,
             @PageableDefault(size = 24) Pageable pageable) {
-        return catalogService.browse(q, category, pageable);
+        return catalogService.browse(q, category, deal, popular, newArrival, pageable);
+    }
+
+    /** The one currently-active site-wide campaign, or 204 when none is running — drives the compact top banner. */
+    @GetMapping("/promo-campaign")
+    @Transactional
+    public ResponseEntity<PromoCampaignDto> activePromoCampaign() {
+        PromoCampaign active = promoCampaignService.getActiveOrNull();
+        return active == null ? ResponseEntity.noContent().build()
+                : ResponseEntity.ok(PromoCampaignDto.from(active, Instant.now(clock)));
     }
 
     @GetMapping("/products/{slug}")

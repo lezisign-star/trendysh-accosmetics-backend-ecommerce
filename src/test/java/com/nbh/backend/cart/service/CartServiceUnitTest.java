@@ -13,6 +13,8 @@ import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.catalog.service.EffectivePriceResolver;
+import com.nbh.backend.catalog.service.PromoCampaignService;
 import com.nbh.backend.stock.entity.StockBalance;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +24,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -46,6 +49,7 @@ class CartServiceUnitTest {
     @Mock private BranchRepository branchRepository;
     @Mock private StockLocationRepository locationRepository;
     @Mock private StockBalanceRepository balanceRepository;
+    @Mock private PromoCampaignService promoCampaignService;
 
     private CartService cartService;
     private Cart cart;
@@ -55,8 +59,13 @@ class CartServiceUnitTest {
 
     @BeforeEach
     void setUp() {
+        // A real resolver (pure function, no repository of its own) plus a mocked campaign service
+        // returning no active campaign — these tests aren't about pricing, so the plain selling
+        // price is what should end up in unitPriceSnapshot, same as before this dependency existed.
+        lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         cartService = new CartService(cartRepository, cartItemRepository, variantRepository,
-                branchRepository, locationRepository, balanceRepository);
+                branchRepository, locationRepository, balanceRepository,
+                new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());

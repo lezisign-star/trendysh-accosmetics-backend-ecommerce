@@ -16,6 +16,8 @@ public record CreateProductRequest(
         String description,
         String ingredients,
         String howToUse,
+        Boolean isPopular,
+        Boolean isNewArrival,
         @NotEmpty @Valid List<CreateVariantRequest> variants
 ) {
     public record CreateVariantRequest(

@@ -1,5 +1,60 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Merchandising backend — Flash Deals / New Arrivals / Popular / site-wide campaigns (2026-09-22)
+
+Built + tested + pushed to `main`. Full design: `C:\Users\ADMIN\.claude\
+NairobiBeautyHub_Merchandising_Promo_Plan.md` — that file's own "Backend build log" section has
+the real deviations found while building (checkout doesn't need to call the price resolver, a real
+description-wiping bug in the Quick-edit panel found and fixed, exact migration number). Read it
+before touching this feature again; not re-duplicated here. One-line status: backend done, **admin
+UI and storefront rails are next and not started** — including a required small follow-up on the
+existing admin product editor's save calls (see the plan doc). Suite: 164 run, 0 failures, 1
+pre-existing unrelated error (same one already documented below).
+
+## Order fulfilment lifecycle — PICKING/READY/DELIVERED are now real (2026-09-22, later same day)
+
+Fixes gap 1 in the "READ THIS FIRST" section directly below — that section's own text is now
+stale on this one point; this section supersedes it. The user chose the fuller of the two options
+offered ("build real fulfilment stages" over "just simplify the tracker UI").
+
+- `OrderFulfilmentService`: three new methods. `startPicking` (PAID -> PICKING) and `markReady`
+  (PAID or PICKING -> READY) do a pure status flip, no stock movement — the one real stock
+  movement still happens only in `fulfil` (now accepts PAID/PICKING/READY, not just PAID, so a
+  small operation can still skip straight to dispatch same as before). `markDelivered`
+  (DISPATCHED -> DELIVERED) is the piece that was missing entirely — a manual staff action
+  (confirmed by phone/WhatsApp with the rider/customer; there's still no automated courier
+  webhook). `CANCELLABLE_STATUSES` widened to include PICKING/READY too (no stock has moved yet
+  at those stages either, same reasoning `fulfil`'s precondition already used).
+- Three new events (`OrderPickingStartedEvent`, `OrderReadyEvent`, `OrderDeliveredEvent`),
+  log-only via `EventLoggingListener` for now, same v1-seam pattern as every other order event —
+  a real consumer (customer SMS/email on each stage) is a listener to add later, not a service
+  change.
+- Three new endpoints on `OrderController`: `POST /orders/{id}/start-picking`,
+  `POST /orders/{id}/mark-ready`, `POST /orders/{id}/mark-delivered` — same
+  `PERM_ORDER_MANAGE_ALL` gate and `@Transactional` (ArchUnit's ControllerArchitectureTest checks
+  both) as `fulfil`/`cancel`.
+- `fulfil`'s precondition exception changed from `IllegalStateException` to `UnprocessableException`
+  while touching that line anyway — matches this codebase's own stated preference for the typed
+  exception taxonomy over the legacy safety net for new/touched domain-error code.
+- 9 new unit tests in `OrderFulfilmentServiceUnitTest` (happy path + invalid-state path for each
+  new method, plus two new cancel-from-PICKING/READY cases), same result-driven/ArgumentCaptor
+  style as the existing cancel tests. Full suite: 149 run, 0 failures, 1 pre-existing unrelated
+  error (`CustomerAccountsIntegrationTest`, a JSON-parsing NPE in a staff-email-registration test —
+  confirmed unrelated before this work started, not touched, not fixed here).
+- **Live-verified end-to-end**, not just unit-tested: placed two real guest orders via the actual
+  API (one BRANCH_PICKUP, one DELIVERY_COURIER/BODA) against a freshly-started dev-DB backend,
+  confirmed payment, then walked PAID -> PICKING -> READY -> DISPATCHED -> DELIVERED — checking
+  `GET /orders/track/{orderNo}` after every step. Also clicked through the real admin UI (see the
+  frontend HANDOFF's matching entry) and the real customer tracker page in the browser: all 6
+  steps light up correctly in order, ending at "Delivered" instead of getting stuck at step 5
+  forever as gap 1 described.
+- **Not done / correctly deferred**: no notification listener on the three new events yet (staff
+  and customers still only find out via the admin UI / a phone call, same as before); PICKING and
+  READY still have no timestamp columns (only the single `status` enum field moved, matching how
+  every other status transition in this entity already works — a `pickingStartedAt`/`readyAt`
+  pair would be a reasonable later addition if the founder wants stage-duration reporting, not
+  needed for the tracker itself).
+
 ## READ THIS FIRST (2026-09-22) — corrects stale status further down, and scopes the next feature
 
 **Deploy is DONE, not a blocker anymore.** Despite what older sections below still say: the backend
@@ -20,14 +75,9 @@ Frontend got a matching admin product/category UI (Quick + Full edit panels, lis
 first) and real customer-facing category → subcategory browsing (shop sidebar tree, breadcrumbs,
 subcategory-first related products) — see the frontend HANDOFF for that side.
 
-**Two real gaps found live, not yet fixed (found while documenting the actual order journey
-2026-09-22):**
-1. `OrderFulfilmentService.fulfil` jumps a `PAID` order straight to `DISPATCHED` — `PICKING` and
-   `READY` are never set by anything, and **`DELIVERED` is never set by any endpoint at all.** The
-   customer-facing tracker (`OrderProgress.tsx`) shows a 6-step bar including those steps, so today
-   it visually jumps from "Payment confirmed" to "On its way" and then gets stuck forever, even
-   after a real delivery. Needs either real PICKING/READY/DELIVERED admin actions, or the tracker UI
-   simplified to match what the backend actually does — a product decision, not just a bug fix.
+**Two real gaps found live 2026-09-22 — #1 fixed later the same day, see the section above this one:**
+1. ~~`OrderFulfilmentService.fulfil` jumps a `PAID` order straight to `DISPATCHED`...~~ **FIXED** —
+   see "Order fulfilment lifecycle — PICKING/READY/DELIVERED are now real" at the top of this file.
 2. No inventory/low-stock dashboard in the admin UI. The backend already has one (`GET
    /stock/inventory`, `belowReorderOnly` filter) and the Overview page shows a "Low stock items"
    count tile, but nothing lets staff click it through to a list — stock is only visible/editable
