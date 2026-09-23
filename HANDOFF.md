@@ -1,5 +1,25 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Auto-generated SKUs, variant attributes now readable by admin (2026-09-24, later same day)
+
+**Phase C of the admin-dashboard rework.** Two small, additive changes, both verified live against a
+real database (not just unit-tested):
+
+- `CreateProductRequest.CreateVariantRequest.sku` is now optional (was `@NotBlank`). When a caller
+  omits it, `ProductService.generateSku()` builds one from the product's subcategory-or-category slug
+  (first 4 uppercase letters) plus a new atomic Postgres sequence (`variant_sku_seq`, migration
+  `V23__variant_sku_sequence.sql`, `START WITH 1000`) — e.g. `MAKE-001000`, `LASH-001045`. No
+  category → `SKU-NNNNNN`. An explicitly supplied SKU is still honored as-is (data migration,
+  matching a supplier's own code). One sequence, not per-category, so generation stays race-free
+  under concurrent inserts with zero extra locking.
+- `ProductVariantDto` gained an `attributes` field (mirrors `CatalogVariantDto.AttributeValueSummary`
+  exactly). `attributeValueIds` on `CreateVariantRequest` was already fully wired into the
+  `variant_attribute_value` join table — it just never read back out anywhere the admin UI could see
+  it. Threaded through `variantDtos()`, `listProducts()`, `createVariant()` and `updateVariant()`, all
+  via the same batch-fetch-then-filter pattern `CatalogVariantDto` already used (no N+1s introduced).
+
+New `VariantSkuAndAttributesIntegrationTest` (4 tests). Full suite still green.
+
 ## Staff management: invite/list/re-role/disable staff accounts (2026-09-24)
 
 **Phase B of the admin-dashboard rework** (plan: owner asked for a proper Users tab — previously the
