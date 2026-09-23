@@ -10,4 +10,5 @@ import java.util.UUID;
 public interface StaffRoleRepository extends JpaRepository<StaffRole, UUID> {
     Optional<StaffRole> findByName(String name);
     List<StaffRole> findByIsDefaultTrue();
+    List<StaffRole> findByDeletedFalseOrderByDisplayName();
 }

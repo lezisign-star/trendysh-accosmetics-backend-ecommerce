@@ -87,6 +87,25 @@ public class StaffPasswordResetService {
     }
 
     /**
+     * Sends a brand-new staff account its first sign-in code, reusing the exact same OTP
+     * mechanism as a password reset (same token table, same 10-minute/5-attempt lockout) —
+     * accepting the invite IS a password reset, just for an account nobody has signed into yet.
+     * Called by {@code StaffManagementService} right after it saves a newly-invited user.
+     */
+    @Transactional
+    public void issueInvite(StaffUser user) {
+        String code = issueOtp(user);
+        String intro = "You've been added as staff on the Trendysh admin dashboard. Use the code below to"
+                + " set your password and sign in.";
+        events.publishEvent(new CustomerEmailRequestedEvent(user.getEmail(),
+                "You're invited to the Trendysh admin dashboard",
+                "Hi " + user.getFirstName() + ",\n\n" + intro + "\n\n" + code
+                        + "\n\nIt expires in 10 minutes. Go to " + frontendUrl
+                        + "/login and click \"Forgot your password?\" to enter it and set your password.",
+                EmailTemplates.otpCode(frontendUrl + "/trendysh-logo.png", user.getFirstName(), intro, code, 10)));
+    }
+
+    /**
      * @return true if the email is a staff account (the code/password were then checked, throwing on
      *         a problem); false if the email is not a staff account at all (the caller then tries the
      *         shopper flow).
