@@ -12,7 +12,11 @@ import lombok.Setter;
 
 import java.time.Instant;
 
-/** A single-use, expiring password-reset link for a staff account. Only the SHA-256 hash is stored. */
+/**
+ * A single-use, expiring 6-digit OTP for a staff password reset. Only the SHA-256
+ * hash is stored, and lookups are scoped by staff (not a global hash lookup) since
+ * an OTP's narrow code space makes table-wide uniqueness impractical.
+ */
 @Getter
 @Setter
 @Entity
@@ -23,7 +27,7 @@ public class StaffPasswordResetToken extends BaseEntity {
     @JoinColumn(name = "staff_id", nullable = false)
     private StaffUser staff;
 
-    @Column(name = "token_hash", nullable = false, unique = true, length = 64)
+    @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
 
     @Column(name = "expires_at", nullable = false)
@@ -31,4 +35,8 @@ public class StaffPasswordResetToken extends BaseEntity {
 
     @Column(name = "used_at")
     private Instant usedAt;
+
+    /** Wrong-code guesses against this row; locked out (used-up) at MAX_ATTEMPTS. */
+    @Column(nullable = false)
+    private int attempts = 0;
 }

@@ -1,5 +1,39 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Password reset: link → 6-digit OTP, shared by shoppers and staff (2026-09-23)
+
+Both `CustomerAuthService.forgotPassword/resetPassword` and `StaffPasswordResetService`
+(still one asks the other first — staff email short-circuits the shopper path, unchanged)
+now issue/verify a 6-digit numeric code instead of a link token. Only `VERIFY_EMAIL` is
+still a link (unaffected).
+
+- **Why an OTP-specific redesign, not just a shorter token:** a 6-digit code only has
+  1,000,000 values, so the old `UNIQUE(token_hash)` DB constraint became a real collision
+  risk (birthday paradox) once more than a handful of resets are in flight — dropped in
+  V22. Lookups are now scoped to the account/staff row (latest `createdAt`) instead of a
+  global hash lookup.
+- **Lockout:** new `attempts` column (`int`, not `SMALLINT` — Hibernate's `ddl-auto=validate`
+  will refuse to boot on that mismatch, learned the hard way this session). 5 wrong guesses
+  locks that code (`usedAt` set immediately, so even the right code stops working — request
+  a fresh one). Each wrong guess **must** persist even though the request handler then
+  throws — both `resetPassword` and `tryReset` need `@Transactional(noRollbackFor =
+  UnprocessableException.class)`, same pattern as `CustomerRefreshTokenService`'s reuse
+  detection, or the attempts increment silently rolls back with the exception.
+- **TTL:** 10 minutes (was 1 hour for the link). Resend cooldown unchanged (2 min).
+- **API shape change:** `POST /api/v1/customer/auth/reset-password` body is now
+  `{ email, code, newPassword }`, not `{ token, newPassword }` — the OTP alone can't
+  identify an account the way a globally-unique link token could, so the email has to come
+  along. `CustomerDtos.ResetPasswordRequest` updated to match; `code` validated
+  `@Pattern(\\d{6})`.
+- **Frontend:** `/reset-password` route deleted; `forgot-password.tsx` is now a two-step
+  page (email → code+new-password) with a "Resend code" button and a "Wrong email? Change
+  it" escape hatch back to step 1 — no more token-in-URL. `customerApi.resetPassword(email,
+  code, newPassword)` signature changed to match.
+- Live-verified end-to-end this session, both paths: staff (admin@nairobibeautyhub.co.ke)
+  and a throwaway customer account, including the 5-attempt lockout and a post-lockout
+  correct-code rejection, through curl **and** the actual browser UI (resend button, code +
+  password entry, redirect to `/login`, sign-in with the new password).
+
 ## Merchandising backend — Flash Deals / New Arrivals / Popular / site-wide campaigns (2026-09-22)
 
 Built + tested + pushed to `main`. Full design: `C:\Users\ADMIN\.claude\
@@ -1147,8 +1181,10 @@ Migration **V15** (`customer_account`, `customer_email_token`, `customer_order.c
   the link is only logged — dev) and `BrevoEmailSender` (when `BREVO_API_KEY` +
   `MAIL_FROM_EMAIL` are set; **untested against the live API**, no key available).
   Sent AFTER COMMIT via `CustomerEmailRequestedEvent`. Config: `app.frontend-url`
-  (`FRONTEND_URL`, for the links), `app.mail.*`. Tokens: 32 random bytes, only the
-  SHA-256 stored, single use, verify 48h / reset 1h, 2-minute resend cooldown.
+  (`FRONTEND_URL`, for the verify-email link), `app.mail.*`. Only the SHA-256 hash is ever
+  stored, single use, 2-minute resend cooldown. Verify-email is still a 32-random-byte link,
+  48h TTL. Password reset is now a 6-digit OTP (see the dated entry at the top of this
+  file), 10-minute TTL, 5-attempt lockout.
 - `OrderDto` gained `createdAt`.
 - **Before deploying:** set `BREVO_API_KEY`, `MAIL_FROM_EMAIL`, `FRONTEND_URL`, a real `JWT_SECRET`.
 

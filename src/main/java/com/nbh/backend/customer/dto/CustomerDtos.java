@@ -3,6 +3,7 @@ package com.nbh.backend.customer.dto;
 import com.nbh.backend.order.entity.OrderStatus;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
@@ -31,7 +32,8 @@ public final class CustomerDtos {
     public record ForgotPasswordRequest(@NotBlank @Email String email) {}
 
     public record ResetPasswordRequest(
-            @NotBlank String token,
+            @NotBlank @Email String email,
+            @NotBlank @Pattern(regexp = "\\d{6}", message = "Enter the 6-digit code") String code,
             @NotBlank @Size(min = 8, max = 72, message = "Password must be 8–72 characters") String newPassword) {}
 
     public record ChangePasswordRequest(

@@ -56,9 +56,11 @@ import java.util.UUID;
 public class CustomerAuthService {
 
     private static final Duration VERIFY_TTL = Duration.ofHours(48);
-    private static final Duration RESET_TTL = Duration.ofHours(1);
+    private static final Duration RESET_OTP_TTL = Duration.ofMinutes(10);
     /** A second email of the same kind inside this window is refused/skipped, so the endpoint can't be used to spam a mailbox. */
     private static final Duration RESEND_COOLDOWN = Duration.ofMinutes(2);
+    private static final int MAX_ATTEMPTS = 5;
+    private static final String GENERIC_INVALID = "That code is invalid or has expired — please request a new one";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final CustomerAccountRepository accounts;
@@ -218,7 +220,7 @@ public class CustomerAuthService {
     /** Always succeeds from the caller's side — never reveals whether the email has an account. */
     @Transactional
     public void forgotPassword(String email) {
-        // Staff share this page; a staff email gets a staff reset link and the shopper flow stops here.
+        // Staff share this page; a staff email gets a staff reset code and the shopper flow stops here.
         if (staffReset.requestReset(email)) {
             return;
         }
@@ -226,34 +228,55 @@ public class CustomerAuthService {
                 .filter(CustomerAccount::isEnabled)
                 .filter(account -> !inCooldown(account, Purpose.RESET_PASSWORD))
                 .ifPresent(account -> {
-                    String raw = issueToken(account, Purpose.RESET_PASSWORD, RESET_TTL);
+                    String code = issueOtp(account, Purpose.RESET_PASSWORD, RESET_OTP_TTL);
                     events.publishEvent(new CustomerEmailRequestedEvent(account.getEmail(),
-                            "Reset your Trendysh password",
+                            "Your Trendysh password reset code",
                             "Hi " + firstName(account) + ",\n\nSomeone (hopefully you) asked to reset the password for "
-                                    + "your Trendysh account. Use this link within the next hour:\n\n"
-                                    + frontendUrl + "/reset-password?token=" + raw
-                                    + "\n\nIf you didn't ask for this, you can ignore this email — your password stays the same."));
+                                    + "your Trendysh account. Your verification code is:\n\n" + code
+                                    + "\n\nIt expires in 10 minutes. If you didn't ask for this, you can ignore this"
+                                    + " email — your password stays the same."));
                 });
     }
 
-    @Transactional
-    public void resetPassword(String rawToken, String newPassword) {
-        if (staffReset.tryReset(rawToken, newPassword)) {
+    // noRollbackFor: a wrong-code guess must still commit its attempts increment even though we then throw.
+    @Transactional(noRollbackFor = UnprocessableException.class)
+    public void resetPassword(String email, String code, String newPassword) {
+        if (staffReset.tryReset(email, code, newPassword)) {
             return;
         }
-        CustomerEmailToken token = tokens.findByTokenHash(hash(rawToken))
-                .filter(t -> t.getPurpose() == Purpose.RESET_PASSWORD)
-                .filter(t -> t.getUsedAt() == null && !isExpired(t))
-                .orElseThrow(() -> new UnprocessableException("This reset link is invalid or has expired — please request a new one"));
-        CustomerAccount account = token.getAccount();
+        CustomerAccount account = accounts.findByEmailIgnoreCase(normalizeEmail(email))
+                .orElseThrow(() -> new UnprocessableException(GENERIC_INVALID));
+        CustomerEmailToken token = tokens.findFirstByAccountIdAndPurposeOrderByCreatedAtDesc(account.getId(), Purpose.RESET_PASSWORD)
+                .orElseThrow(() -> new UnprocessableException(GENERIC_INVALID));
+        verifyCode(token, code);
 
         account.setPassword(passwordEncoder.encode(newPassword));
         token.setUsedAt(Instant.now(clock));
         tokens.save(token);
-        // Receiving the link proves control of the mailbox, same as the verification link.
+        // Receiving the code proves control of the mailbox, same as the verification link.
         markVerifiedAndLinkOrders(account);
         throttle.reset(account.getEmail());
         refreshTokens.endAllSessions(account.getId());
+    }
+
+    private void verifyCode(CustomerEmailToken token, String code) {
+        Instant now = Instant.now(clock);
+        if (token.getUsedAt() != null || !token.getExpiresAt().isAfter(now)) {
+            throw new UnprocessableException(GENERIC_INVALID);
+        }
+        if (token.getAttempts() >= MAX_ATTEMPTS) {
+            token.setUsedAt(now);
+            tokens.save(token);
+            throw new UnprocessableException("Too many incorrect attempts — please request a new code");
+        }
+        if (!hash(code.trim()).equals(token.getTokenHash())) {
+            token.setAttempts(token.getAttempts() + 1);
+            tokens.save(token);
+            int left = MAX_ATTEMPTS - token.getAttempts();
+            throw new UnprocessableException(
+                    left > 0 ? "Incorrect code — " + left + " attempt" + (left == 1 ? "" : "s") + " left"
+                              : "Too many incorrect attempts — please request a new code");
+        }
     }
 
     // ---- internals
@@ -286,6 +309,18 @@ public class CustomerAuthService {
         token.setExpiresAt(Instant.now(clock).plus(ttl));
         tokens.save(token);
         return raw;
+    }
+
+    private String issueOtp(CustomerAccount account, Purpose purpose, Duration ttl) {
+        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+
+        CustomerEmailToken token = new CustomerEmailToken();
+        token.setAccount(account);
+        token.setPurpose(purpose);
+        token.setTokenHash(hash(code));
+        token.setExpiresAt(Instant.now(clock).plus(ttl));
+        tokens.save(token);
+        return code;
     }
 
     private boolean inCooldown(CustomerAccount account, Purpose purpose) {

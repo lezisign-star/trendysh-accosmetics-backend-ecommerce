@@ -108,7 +108,7 @@ public class CustomerAuthController {
 
     @PostMapping("/reset-password")
     public void resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
-        authService.resetPassword(request.token(), request.newPassword());
+        authService.resetPassword(request.email(), request.code(), request.newPassword());
     }
 
     @PostMapping("/resend-verification")

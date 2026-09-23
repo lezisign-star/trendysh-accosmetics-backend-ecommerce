@@ -6,7 +6,6 @@ import com.nbh.backend.staff.entity.StaffPasswordResetToken;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.staff.repository.StaffPasswordResetTokenRepository;
 import com.nbh.backend.staff.repository.StaffUserRepository;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -19,21 +18,23 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.HexFormat;
 
 /**
  * Password reset for staff, sharing the storefront's forgot/reset-password pages with shoppers.
  * The shopper flow asks this service first: if the email is a staff account it handles the request,
  * otherwise the shopper flow carries on. Like the shopper flow it never reveals whether an email
- * has an account, and the link works once, for an hour.
+ * has an account. A reset is a 6-digit code, emailed, valid for 10 minutes, locked out after
+ * {@value #MAX_ATTEMPTS} wrong guesses (a fresh request issues a new code and resets the count).
  */
 @Service
 public class StaffPasswordResetService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final Duration LINK_TTL = Duration.ofHours(1);
+    private static final Duration OTP_TTL = Duration.ofMinutes(10);
     private static final Duration RESEND_COOLDOWN = Duration.ofMinutes(2);
+    private static final int MAX_ATTEMPTS = 5;
+    private static final String GENERIC_INVALID = "That code is invalid or has expired — please request a new one";
     /** Same floor as the staff change-password endpoint. */
     private static final int MIN_PASSWORD_LENGTH = 10;
 
@@ -42,24 +43,21 @@ public class StaffPasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher events;
     private final Clock clock;
-    private final String frontendUrl;
 
     public StaffPasswordResetService(StaffUserRepository staff,
                                      StaffPasswordResetTokenRepository tokens,
                                      PasswordEncoder passwordEncoder,
                                      ApplicationEventPublisher events,
-                                     Clock clock,
-                                     @Value("${app.frontend-url:http://localhost:5250}") String frontendUrl) {
+                                     Clock clock) {
         this.staff = staff;
         this.tokens = tokens;
         this.passwordEncoder = passwordEncoder;
         this.events = events;
         this.clock = clock;
-        this.frontendUrl = frontendUrl.replaceAll("/+$", "");
     }
 
     /**
-     * @return true if the email belongs to a staff account (whether or not a link was sent, e.g.
+     * @return true if the email belongs to a staff account (whether or not a code was sent, e.g.
      *         when it is inside the resend cooldown), so the caller knows not to treat it as a shopper.
      */
     @Transactional
@@ -71,54 +69,77 @@ public class StaffPasswordResetService {
         if (!user.isEnabled() || inCooldown(user)) {
             return true;
         }
-        String raw = issueToken(user);
+        String code = issueOtp(user);
         events.publishEvent(new CustomerEmailRequestedEvent(user.getEmail(),
-                "Reset your Trendysh admin password",
+                "Your Trendysh admin password reset code",
                 "Hi " + user.getFirstName() + ",\n\nSomeone (hopefully you) asked to reset the password for your "
-                        + "Trendysh staff account. Use this link within the next hour:\n\n"
-                        + frontendUrl + "/reset-password?token=" + raw
-                        + "\n\nIf you didn't ask for this, you can ignore this email — your password stays the same."));
+                        + "Trendysh staff account. Your verification code is:\n\n" + code
+                        + "\n\nIt expires in 10 minutes. If you didn't ask for this, you can ignore this email —"
+                        + " your password stays the same."));
         return true;
     }
 
     /**
-     * @return true if the token was a staff reset link and the password was changed; false if the
-     *         token is not a staff link at all (the caller then tries the shopper flow).
+     * @return true if the email is a staff account (the code/password were then checked, throwing on
+     *         a problem); false if the email is not a staff account at all (the caller then tries the
+     *         shopper flow).
      */
-    @Transactional
-    public boolean tryReset(String rawToken, String newPassword) {
-        StaffPasswordResetToken token = tokens.findByTokenHash(hash(rawToken)).orElse(null);
-        if (token == null) {
+    // noRollbackFor: a wrong-code guess must still commit its attempts increment even though we then throw.
+    @Transactional(noRollbackFor = UnprocessableException.class)
+    public boolean tryReset(String email, String code, String newPassword) {
+        StaffUser user = staff.findByEmailIgnoreCaseAndDeletedFalse(email.trim()).orElse(null);
+        if (user == null) {
             return false;
         }
-        Instant now = Instant.now(clock);
-        if (token.getUsedAt() != null || !token.getExpiresAt().isAfter(now)) {
-            throw new UnprocessableException("This reset link is invalid or has expired — please request a new one");
-        }
+        StaffPasswordResetToken token = tokens.findFirstByStaffIdOrderByCreatedAtDesc(user.getId())
+                .orElseThrow(() -> new UnprocessableException(GENERIC_INVALID));
+        verifyCode(token, code);
+
         if (newPassword.length() < MIN_PASSWORD_LENGTH) {
             throw new UnprocessableException("Staff passwords need at least " + MIN_PASSWORD_LENGTH + " characters");
         }
-        StaffUser user = token.getStaff();
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setMustChangePassword(false);
         user.setTempPasswordExpiresAt(null);
         staff.save(user);
-        token.setUsedAt(now);
+        token.setUsedAt(Instant.now(clock));
         tokens.save(token);
         return true;
     }
 
-    private String issueToken(StaffUser user) {
-        byte[] bytes = new byte[32];
-        RANDOM.nextBytes(bytes);
-        String raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    private void verifyCode(StaffPasswordResetToken token, String code) {
+        Instant now = Instant.now(clock);
+        if (token.getUsedAt() != null || !token.getExpiresAt().isAfter(now)) {
+            throw new UnprocessableException(GENERIC_INVALID);
+        }
+        if (token.getAttempts() >= MAX_ATTEMPTS) {
+            token.setUsedAt(now);
+            tokens.save(token);
+            throw new UnprocessableException("Too many incorrect attempts — please request a new code");
+        }
+        if (!hash(code.trim()).equals(token.getTokenHash())) {
+            token.setAttempts(token.getAttempts() + 1);
+            tokens.save(token);
+            int left = MAX_ATTEMPTS - token.getAttempts();
+            throw new UnprocessableException(
+                    left > 0 ? "Incorrect code — " + left + " attempt" + (left == 1 ? "" : "s") + " left"
+                              : "Too many incorrect attempts — please request a new code");
+        }
+    }
+
+    private String issueOtp(StaffUser user) {
+        String code = generateOtp();
 
         StaffPasswordResetToken token = new StaffPasswordResetToken();
         token.setStaff(user);
-        token.setTokenHash(hash(raw));
-        token.setExpiresAt(Instant.now(clock).plus(LINK_TTL));
+        token.setTokenHash(hash(code));
+        token.setExpiresAt(Instant.now(clock).plus(OTP_TTL));
         tokens.save(token);
-        return raw;
+        return code;
+    }
+
+    private static String generateOtp() {
+        return String.format("%06d", RANDOM.nextInt(1_000_000));
     }
 
     private boolean inCooldown(StaffUser user) {

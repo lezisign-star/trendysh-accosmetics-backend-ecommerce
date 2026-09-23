@@ -14,7 +14,12 @@ import lombok.Setter;
 
 import java.time.Instant;
 
-/** A single-use, expiring link token. Only the SHA-256 hash of the token is ever stored. */
+/**
+ * A single-use, expiring token: a link for VERIFY_EMAIL, a 6-digit OTP for
+ * RESET_PASSWORD. Only the SHA-256 hash of the raw value is ever stored, and
+ * lookups are scoped by account + purpose (not a global hash lookup) since an
+ * OTP's narrow code space makes table-wide uniqueness impractical.
+ */
 @Getter
 @Setter
 @Entity
@@ -27,7 +32,7 @@ public class CustomerEmailToken extends BaseEntity {
     @JoinColumn(name = "account_id", nullable = false)
     private CustomerAccount account;
 
-    @Column(name = "token_hash", nullable = false, unique = true, length = 64)
+    @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
 
     @Enumerated(EnumType.STRING)
@@ -39,4 +44,8 @@ public class CustomerEmailToken extends BaseEntity {
 
     @Column(name = "used_at")
     private Instant usedAt;
+
+    /** Wrong-code guesses against this row; RESET_PASSWORD is locked out (used-up) at MAX_ATTEMPTS. */
+    @Column(nullable = false)
+    private int attempts = 0;
 }
