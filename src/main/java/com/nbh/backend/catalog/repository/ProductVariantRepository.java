@@ -2,6 +2,7 @@ package com.nbh.backend.catalog.repository;
 
 import com.nbh.backend.catalog.entity.ProductVariant;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.Collection;
 import java.util.List;
@@ -15,4 +16,8 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
 
     /** Batch fetch for a page of products — avoids one query per product (audit finding F12). */
     List<ProductVariant> findByProductIdIn(Collection<UUID> productIds);
+
+    /** Backs auto-generated SKUs (see {@code ProductService.generateSku}) — atomic, race-free. */
+    @Query(value = "SELECT nextval('variant_sku_seq')", nativeQuery = true)
+    long nextSkuSequence();
 }

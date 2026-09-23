@@ -21,7 +21,10 @@ public record CreateProductRequest(
         @NotEmpty @Valid List<CreateVariantRequest> variants
 ) {
     public record CreateVariantRequest(
-            @NotBlank String sku,
+            /** Optional — {@code ProductService} generates one when blank. An explicit value is honored
+             *  as-is (data migration, matching an existing supplier code), but most callers should just
+             *  omit it. */
+            String sku,
             @NotBlank String variantName,
             @NotBlank String sellingPrice,   // string in/out to avoid float rounding surprises over JSON
             String compareAtPrice,

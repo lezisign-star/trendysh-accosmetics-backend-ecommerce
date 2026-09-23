@@ -163,13 +163,19 @@ public class ProductService {
         product.setSubcategory(subcategory);
     }
 
-    /** A product's variants with their sellable stock filled in. */
+    /** A product's variants with their sellable stock and selected attribute values filled in. */
     private List<ProductVariantDto> variantDtos(UUID productId) {
         List<ProductVariant> variants = variantRepository.findByProductId(productId);
-        Map<UUID, BigDecimal> available = availability(variants.stream().map(ProductVariant::getId).toList());
+        List<UUID> variantIds = variants.stream().map(ProductVariant::getId).toList();
+        Map<UUID, BigDecimal> available = availability(variantIds);
+        List<VariantAttributeValue> attrs = attributesFor(variantIds);
         return variants.stream()
-                .map(v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)))
+                .map(v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO), attrs))
                 .toList();
+    }
+
+    private List<VariantAttributeValue> attributesFor(Collection<UUID> variantIds) {
+        return variantIds.isEmpty() ? List.of() : variantAttributeValueRepository.findByVariantIdIn(variantIds);
     }
 
     private Map<UUID, BigDecimal> availability(Collection<UUID> variantIds) {
@@ -207,13 +213,14 @@ public class ProductService {
         if (request.reorderLevel() != null) variant.setReorderLevel(new BigDecimal(request.reorderLevel()));
         if (request.isActive() != null) variant.setActive(request.isActive());
 
-        return ProductVariantDto.from(variantRepository.save(variant));
+        variant = variantRepository.save(variant);
+        return ProductVariantDto.from(variant, null, attributesFor(List.of(variant.getId())));
     }
 
     private ProductVariantDto createVariant(Product product, CreateProductRequest.CreateVariantRequest vr) {
         ProductVariant variant = new ProductVariant();
         variant.setProduct(product);
-        variant.setSku(vr.sku());
+        variant.setSku(vr.sku() != null && !vr.sku().isBlank() ? vr.sku().trim() : generateSku(product));
         variant.setVariantName(vr.variantName());
         variant.setSellingPrice(new BigDecimal(vr.sellingPrice()));
         if (vr.compareAtPrice() != null) variant.setCompareAtPrice(new BigDecimal(vr.compareAtPrice()));
@@ -247,7 +254,24 @@ public class ProductService {
             }
         }
 
-        return ProductVariantDto.from(variant);
+        return ProductVariantDto.from(variant, null, attributesFor(List.of(variant.getId())));
+    }
+
+    /**
+     * Category-prefixed, sequential, auto-generated when a caller doesn't supply an explicit SKU
+     * (see {@link CreateProductRequest.CreateVariantRequest#sku}'s javadoc). Prefers the more
+     * specific subcategory over the category so e.g. "Gel polish" under "Nails" gets its own
+     * prefix rather than sharing NAIL- with every other nail product.
+     */
+    private String generateSku(Product product) {
+        Category prefixSource = product.getSubcategory() != null ? product.getSubcategory() : product.getCategory();
+        String prefix = prefixSource == null ? "SKU" : categoryPrefix(prefixSource.getSlug());
+        return prefix + "-" + String.format("%06d", variantRepository.nextSkuSequence());
+    }
+
+    private String categoryPrefix(String slug) {
+        String letters = slug.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        return letters.isBlank() ? "SKU" : letters.substring(0, Math.min(4, letters.length()));
     }
 
     @Transactional(readOnly = true)
@@ -284,12 +308,14 @@ public class ProductService {
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
 
         List<ProductVariant> allVariants = variantRepository.findByProductIdIn(productIds);
-        Map<UUID, BigDecimal> available = availability(allVariants.stream().map(ProductVariant::getId).toList());
+        List<UUID> allVariantIds = allVariants.stream().map(ProductVariant::getId).toList();
+        Map<UUID, BigDecimal> available = availability(allVariantIds);
+        List<VariantAttributeValue> allAttrs = attributesFor(allVariantIds);
         Map<UUID, List<ProductVariantDto>> variantsByProduct = allVariants.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         v -> v.getProduct().getId(),
                         java.util.stream.Collectors.mapping(
-                                v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)),
+                                v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO), allAttrs),
                                 java.util.stream.Collectors.toList())));
 
         Map<UUID, String> primaryImageByProduct = new HashMap<>();
