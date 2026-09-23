@@ -1,5 +1,41 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Staff management: invite/list/re-role/disable staff accounts (2026-09-24)
+
+**Phase B of the admin-dashboard rework** (plan: owner asked for a proper Users tab — previously the
+only way to add a staff member was editing `BOOTSTRAP_*` env vars and redeploying). New
+`com.nbh.backend.staff.controller.StaffController` at `/api/v1/admin/staff` — `GET` (list), `GET
+/roles`, `POST /invite`, `PATCH /{id}/role`, `PATCH /{id}/status` — gated by the `USER_VIEW` /
+`USER_CREATE` / `USER_MANAGE_ROLES` permissions that already existed in the `Permission` enum but had
+never been wired to an endpoint. Only SUPER_ADMIN/DEVELOPER have `USER_CREATE`/`USER_MANAGE_ROLES` by
+default; BRANCH_MANAGER can view the list but not invite or re-role.
+
+**No schema migration, no new token table.** The invite flow reuses `StaffPasswordResetService`'s
+existing OTP mechanism end to end — a new `issueInvite(StaffUser)` method there calls the same private
+`issueOtp()` used by password resets and publishes a "you're invited" email instead of a "reset your
+password" one, through the same `CustomerEmailRequestedEvent`/`CustomerEmailListener` pipeline. An
+invite genuinely *is* a first-time password reset (brand-new account, unusable random password,
+`mustChangePassword=true`), so the invitee sets their password through the exact same public
+forgot-password/reset-password page shoppers and existing staff already use — no separate accept-invite
+endpoint or page needed.
+
+**Status is derived, not stored**: `StaffDtos.StaffDto.from()` computes PENDING (never completed a
+reset — true for a fresh invite *and* for the legacy env-var-seeded accounts until their first sign-in),
+DISABLED (`enabled=false`), or ACTIVE from fields that already existed on `StaffUser`. A SUPER_ADMIN/
+DEVELOPER can't disable their own account (`StaffManagementService.setEnabled` checks
+`actingStaff.getId()`).
+
+New `StaffManagementIntegrationTest` (7 tests) covers: no-token refusal, a role without `USER_CREATE`
+being blocked from inviting but not from listing, invite creating a PENDING member and actually sending
+mail (`verify(emailSender, ...)`), duplicate-email conflict, role change + disable + reactivate through
+the real API, and the self-disable guard. Verified live end to end in the browser too (invite -> emailed
+code appeared in the `LoggingEmailSender` log with the right dynamic name/code/URL -> list updated ->
+disable/reactivate toggled) against a second local instance on port 8082, since the port-8081 dev server
+already running in this checkout was serving stale/broken responses for the new routes — almost
+certainly a devtools hot-reload artifact from a concurrent session's uncommitted Co-op Bank work also
+sitting in this checkout (`SecurityConfig.java`, `BankCreditService.java`, `application.yml`,
+`payment/coop/**` — untouched, not staged, not part of this commit).
+
 ## Branded HTML for the OTP reset emails, real CORS fix note, Brevo confirmed reachable (2026-09-23, later same day)
 
 **Real bugs found and fixed live this round, in production:** the deployed staging frontend had
