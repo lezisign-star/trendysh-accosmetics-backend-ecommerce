@@ -91,6 +91,30 @@ public class OrderController {
         return OrderDto.from(fulfilmentService.fulfil(id, staff.getId()));
     }
 
+    /** PAID -> PICKING. See {@code OrderFulfilmentService.startPicking}. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/start-picking")
+    @Transactional
+    public OrderDto startPicking(@PathVariable java.util.UUID id) {
+        return OrderDto.from(fulfilmentService.startPicking(id));
+    }
+
+    /** PAID or PICKING -> READY. See {@code OrderFulfilmentService.markReady}. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/mark-ready")
+    @Transactional
+    public OrderDto markReady(@PathVariable java.util.UUID id) {
+        return OrderDto.from(fulfilmentService.markReady(id));
+    }
+
+    /** DISPATCHED -> DELIVERED — the step that was missing entirely before 2026-09-22. See {@code OrderFulfilmentService.markDelivered}. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/mark-delivered")
+    @Transactional
+    public OrderDto markDelivered(@PathVariable java.util.UUID id) {
+        return OrderDto.from(fulfilmentService.markDelivered(id));
+    }
+
     /** See {@code OrderFulfilmentService.cancel}'s javadoc for exactly which statuses this accepts. */
     @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
     @PostMapping("/{id}/cancel")

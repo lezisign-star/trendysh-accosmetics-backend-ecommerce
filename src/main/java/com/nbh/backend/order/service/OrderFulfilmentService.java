@@ -4,7 +4,10 @@ import com.nbh.backend.branch.entity.LocationType;
 import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.common.event.OrderCancelledEvent;
+import com.nbh.backend.common.event.OrderDeliveredEvent;
 import com.nbh.backend.common.event.OrderFulfilledEvent;
+import com.nbh.backend.common.event.OrderPickingStartedEvent;
+import com.nbh.backend.common.event.OrderReadyEvent;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
@@ -36,17 +39,42 @@ import java.util.Set;
  * needed or correct here; going through the document line is what makes this
  * atomic.
  *
- * Deliberately collapses PICKING/READY/DISPATCHED into a single "fulfil"
- * action for now — a staff member marks the whole order dispatched at once.
- * Splitting that into real per-stage transitions (with their own timestamps)
- * is a reasonable later refinement, not a correctness requirement.
+ * {@code fulfil} still does the one real stock movement (PAID/PICKING/READY
+ * -> DISPATCHED) — that's unchanged and deliberate, since nothing physically
+ * leaves the shelf until a rider/vehicle/customer actually takes it. What's
+ * no longer collapsed is the staff-visible/customer-visible journey leading
+ * up to that: {@link #startPicking} and {@link #markReady} are real,
+ * independently settable status transitions (a small operation can still
+ * skip straight from PAID to {@code fulfil} if it doesn't want the extra
+ * granularity — {@code fulfil}'s precondition accepts PAID, PICKING or READY
+ * for exactly that reason), and {@link #markDelivered} closes the loop that
+ * was previously missing entirely: nothing ever moved an order past
+ * DISPATCHED, so the customer-facing tracker's "Delivered" step was
+ * unreachable. See HANDOFF.md's note on this (found 2026-09-22).
  */
 @Service
 public class OrderFulfilmentService {
 
-    /** Anything already DISPATCHED or later has physically left the building — cancel is a checkout-time-only escape hatch. */
+    /** PICKING and READY have no stock movement yet (that only happens in {@link #fulfil}), so a PAID order can start picking at any point before dispatch. */
+    private static final Set<OrderStatus> PICKABLE_STATUSES = EnumSet.of(OrderStatus.PAID);
+
+    /** Ready can follow either PAID directly (skip the picking stage) or PICKING. */
+    private static final Set<OrderStatus> READYABLE_STATUSES =
+            EnumSet.of(OrderStatus.PAID, OrderStatus.PICKING);
+
+    /** {@code fulfil} (the real stock movement) can be triggered from any pre-dispatch stage — staff aren't forced through PICKING/READY if they don't use them. */
+    private static final Set<OrderStatus> DISPATCHABLE_STATUSES =
+            EnumSet.of(OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY);
+
+    /**
+     * Anything DISPATCHED or later has physically left the building —
+     * cancel is a pre-dispatch escape hatch. PICKING/READY are included
+     * (not just PENDING_PAYMENT/PAID) because no stock movement has
+     * happened yet at those stages either — the reservation is still just
+     * a hold, not a posted sale, until {@link #fulfil} runs.
+     */
     private static final Set<OrderStatus> CANCELLABLE_STATUSES =
-            EnumSet.of(OrderStatus.PENDING_PAYMENT, OrderStatus.PAID);
+            EnumSet.of(OrderStatus.PENDING_PAYMENT, OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY);
 
     private final CustomerOrderRepository orderRepository;
     private final StockLocationRepository locationRepository;
@@ -76,9 +104,9 @@ public class OrderFulfilmentService {
     public CustomerOrder fulfil(java.util.UUID orderId, java.util.UUID staffUserId) {
         CustomerOrder order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
-        if (order.getStatus() != OrderStatus.PAID) {
-            throw new IllegalStateException(
-                    "Order " + order.getOrderNo() + " is " + order.getStatus() + ", not PAID — cannot fulfil it");
+        if (!DISPATCHABLE_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException(
+                    "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot fulfil it");
         }
 
         StockLocation salesFloor = locationRepository
@@ -132,13 +160,76 @@ public class OrderFulfilmentService {
         return order;
     }
 
+    /** PAID -> PICKING. No stock movement — see {@link #PICKABLE_STATUSES}. */
+    @Transactional
+    public CustomerOrder startPicking(java.util.UUID orderId) {
+        CustomerOrder order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+        if (!PICKABLE_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException(
+                    "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot start picking");
+        }
+
+        order.setStatus(OrderStatus.PICKING);
+        order = orderRepository.save(order);
+
+        eventPublisher.publishEvent(new OrderPickingStartedEvent(order.getId(), order.getOrderNo()));
+
+        return order;
+    }
+
+    /** PAID or PICKING -> READY. No stock movement — see {@link #READYABLE_STATUSES}. */
+    @Transactional
+    public CustomerOrder markReady(java.util.UUID orderId) {
+        CustomerOrder order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+        if (!READYABLE_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException(
+                    "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot mark it ready");
+        }
+
+        order.setStatus(OrderStatus.READY);
+        order = orderRepository.save(order);
+
+        eventPublisher.publishEvent(
+                new OrderReadyEvent(order.getId(), order.getOrderNo(), order.getFulfilmentType()));
+
+        return order;
+    }
+
+    /**
+     * DISPATCHED -> DELIVERED. This is the step that was missing entirely
+     * before 2026-09-22 — nothing ever set DELIVERED, so the customer-facing
+     * tracker's final step was unreachable no matter how long an order sat
+     * dispatched. A manual staff action (confirmed by phone/WhatsApp with the
+     * rider or the customer, per the founder's manual-delivery model — there
+     * is no automated courier webhook to trigger this instead).
+     */
+    @Transactional
+    public CustomerOrder markDelivered(java.util.UUID orderId) {
+        CustomerOrder order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+        if (order.getStatus() != OrderStatus.DISPATCHED) {
+            throw new UnprocessableException(
+                    "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot mark it delivered (must be DISPATCHED first)");
+        }
+
+        order.setStatus(OrderStatus.DELIVERED);
+        order = orderRepository.save(order);
+
+        eventPublisher.publishEvent(new OrderDeliveredEvent(order.getId(), order.getOrderNo()));
+
+        return order;
+    }
+
     /**
      * A staff-initiated cancellation — the frontend's admin orders screen
      * assumes this action exists; it didn't until now. Deliberately narrower
-     * than a general "set status to X" endpoint: only PENDING_PAYMENT and
-     * PAID orders are cancellable (releases any active reservation back to
-     * available stock); anything DISPATCHED or later has physically left the
-     * building and needs a real return/refund process, not a status flip.
+     * than a general "set status to X" endpoint: only pre-dispatch orders
+     * (PENDING_PAYMENT/PAID/PICKING/READY) are cancellable (releases any
+     * active reservation back to available stock); anything DISPATCHED or
+     * later has physically left the building and needs a real return/refund
+     * process, not a status flip.
      */
     @Transactional
     public CustomerOrder cancel(java.util.UUID orderId, String reason) {
