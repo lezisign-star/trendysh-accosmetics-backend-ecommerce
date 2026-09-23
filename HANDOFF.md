@@ -1,5 +1,33 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Purchase orders (LPOs): suppliers, lifecycle, real stock on receipt (2026-09-24, later same day)
+
+**Phase D of the admin-dashboard rework** — the one genuinely large new backend subsystem in the
+whole plan (everything else so far reused something that already existed). New `purchasing` package:
+`Supplier`, `PurchaseOrder`, `PurchaseOrderLine` (migration `V24__purchasing.sql`). A PO moves
+`DRAFT -> SENT -> PARTIALLY_RECEIVED/RECEIVED`, or `CANCELLED` (only while nothing's been received
+yet).
+
+**Receiving a PO posts a real `GOODS_RECEIPT` `StockDocument` through the existing
+`StockPostingService`** — `PurchaseOrderService.receive()` builds the document/lines exactly like
+`StockController.receive()` already does for a plain restock, tagging it via the document's
+`referenceType`/`referenceId` columns (found already sitting on `StockDocument`, indexed, completely
+unused by any code path until now). This service never writes a stock quantity itself —
+`SingleWritePathArchitectureTest` passes unmodified, which is the mechanical proof it didn't sneak
+around the single write path. PO numbers (`PO-20260924-000001`) reuse the same atomic per-key counter
+table `StockDocumentNoGenerator` already uses for `GRN-`/`ADJ-` etc., just with a different key prefix
+— no new sequence/table needed there either. The "which location received this" picker uses the
+already-existing, previously-unused-by-any-frontend `GET /branches/{id}/locations` endpoint.
+
+New `/api/v1/admin/suppliers` and `/api/v1/admin/purchase-orders` controllers, gated by the existing
+`STOCK_RECEIVE`/`STOCK_VIEW` permissions — already correctly scoped to Branch Manager, Stock
+Controller, Super Admin and Developer by the existing role seeder, so no role changes were needed.
+
+New `PurchaseOrderIntegrationTest`: draft creation with a real sequential PO number, the
+can't-receive-a-draft guard, a genuine two-part partial receipt verified against `/stock/balance`
+(not just PO bookkeeping), the over-receive guard, and the can't-cancel-after-receiving guard. Full
+suite green.
+
 ## Auto-generated SKUs, variant attributes now readable by admin (2026-09-24, later same day)
 
 **Phase C of the admin-dashboard rework.** Two small, additive changes, both verified live against a
