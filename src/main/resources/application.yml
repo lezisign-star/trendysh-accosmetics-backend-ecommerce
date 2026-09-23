@@ -56,8 +56,12 @@ app:
   bootstrap:
     admin-email: ${BOOTSTRAP_ADMIN_EMAIL:admin@nairobibeautyhub.co.ke}
     # Extra SUPER_ADMINs created on boot if missing (comma-separated); they set their password via
-    # "Forgot your password?". Set BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS to change or (empty) to disable.
-    additional-admin-emails: ${BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS:mdaucodes@gmail.com}
+    # "Forgot your password?". trendyshaccosmetic@gmail.com is the shop owner's own address, given
+    # to us directly for this purpose. Set BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS to change or (empty) to disable.
+    additional-admin-emails: ${BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS:trendyshaccosmetic@gmail.com}
+    # Same as above but under the DEVELOPER role (identical permissions, distinct label) — the
+    # engineering account, kept separate from the shop owner's SUPER_ADMIN account above.
+    developer-emails: ${BOOTSTRAP_DEVELOPER_EMAILS:mdaucodes@gmail.com}
   stock:
     reservation-sweep-interval-ms: ${RESERVATION_SWEEP_INTERVAL_MS:60000}
   payments:

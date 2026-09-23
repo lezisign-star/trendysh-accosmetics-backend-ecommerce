@@ -1,5 +1,63 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Railway deployment confirmed live; DEVELOPER role + dual admin seeding; JUnit coverage for the OTP flow (2026-09-23, later same day)
+
+**Railway, confirmed via the actual dashboard (not just this file's own earlier notes):** project
+"Trendysh-Backend", environment `production`, repo `trendysh-accosmetics-backend-ecommerce`
+(GitHub, owner `lezisign-star` per the "repository moved" notice on push — matches the note further
+down this file), live at `trendysh-accosmetics-backend-ecommerce-production.up.railway.app`,
+Postgres alongside it in the same Railway project. Auto-deploys on push to `main`; the OTP commit
+below showed up there as "ACTIVE / Deployment successful" within minutes of being pushed, so Flyway
+migrations do run automatically on deploy — no manual migration step needed.
+
+**DEVELOPER role added** (`StaffRoleSeeder`) — same full permission set as SUPER_ADMIN, display
+name "Developer" only. Two staff accounts are now seeded by email on boot (`StaffUserSeeder`,
+password unset — set via the forgot-password OTP flow, never logged or hardcoded):
+- `trendyshaccosmetic@gmail.com` → SUPER_ADMIN. The shop owner's own address, given to us directly
+  by them for this purpose (not guessed). Config: `app.bootstrap.additional-admin-emails`
+  (`BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS`).
+- `mdaucodes@gmail.com` → DEVELOPER (moved off SUPER_ADMIN — see below). Config:
+  `app.bootstrap.developer-emails` (`BOOTSTRAP_DEVELOPER_EMAILS`), a new property alongside the
+  existing one.
+
+**A real gap, found and fixed before this shipped:** `StaffUserSeeder` only ever creates *missing*
+accounts — `mdaucodes@gmail.com` already existed as SUPER_ADMIN in every environment (dev, and
+Railway production per the V18 entry below), seeded under the *old* `additional-admin-emails`
+default before DEVELOPER existed as a role. Simply repointing config at a new `developer-emails`
+list does nothing for an account that's already there. Fixed with a one-time, idempotent move in
+`StaffUserSeeder.seed()` (`moveToRoleIfPresent`, not a SQL migration — a Flyway migration runs
+*before* Spring's `@PostConstruct` seeders, so a SQL `UPDATE` referencing the not-yet-created
+DEVELOPER role row would either fail outright or null the FK; doing it in Java after
+`StaffRoleSeeder` has already run, via the same constructor-ordering trick this class already used,
+sidesteps that entirely). Verified live against the local dev DB across two restarts: first restart
+logs `Moved mdaucodes@gmail.com from SUPER_ADMIN to DEVELOPER`, second restart is a clean no-op.
+This will do the same thing on Railway production on its next deploy.
+
+**JUnit coverage added for this and for the OTP flow itself** (the earlier OTP entry below was
+live-verified by hand, not by an automated suite — this closes that gap):
+- `StaffPasswordResetIntegrationTest` rewritten for the OTP shape (was still asserting the old
+  `token=` link format — would have failed at runtime against the new `{email, code, newPassword}`
+  API, just never actually run since the code compiles fine either way). Added coverage for the
+  5-attempt lockout, the exact "N attempts left" messages, and a locked code staying rejected even
+  when the right one is finally tried.
+- `CustomerPasswordResetIntegrationTest` — new; the shopper side of this flow had **zero** test
+  coverage before (the staff test file only ever exercised the staff branch). Same lockout coverage,
+  plus confirms a successful reset also verifies the email and links earlier guest orders, matching
+  the old link-based behaviour.
+- `StaffUserSeederUnitTest` — new, Mockito-only (no DB/Spring context), for the seeding/move branch
+  logic specifically: moves a pre-existing SUPER_ADMIN mdaucodes account, leaves an already-correct
+  one untouched, no-ops when the account has never existed, seeds a fresh developer-emails entry.
+- **Found and fixed a pre-existing, unrelated broken test** while running the full suite against a
+  genuinely fresh `nairobi_beauty_hub_test` (per this file's own standing "fresh DB" note — it did
+  its job again): `CustomerAccountsIntegrationTest.aShopperWhoRegistersWithAStaffEmailStillCannotBecomeStaff`
+  assumed a shopper could still register on a staff email and fall back to signing in — but
+  `CustomerAuthService.register()` has since been hardened to block that outright (409, prevents
+  staff-email probing). The test only ever passed because of leftover state in a long-reused test
+  DB from before that hardening existed. Rewritten to assert the actual current behavior
+  (409, staff login unaffected); renamed to
+  `aShopperCannotRegisterOnAStaffEmailAndStaffLoginIsUnaffected`.
+- Full suite: **177 run, 0 failures**, fresh test DB, twice in a row.
+
 ## Password reset: link → 6-digit OTP, shared by shoppers and staff (2026-09-23)
 
 Both `CustomerAuthService.forgotPassword/resetPassword` and `StaffPasswordResetService`

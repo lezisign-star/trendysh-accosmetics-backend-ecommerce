@@ -61,6 +61,13 @@ public class StaffRoleSeeder {
                 "Full access across both branches — every permission.",
                 EnumSet.allOf(Permission.class)));
 
+        // Functionally identical to SUPER_ADMIN (same full permission set) — only the name differs,
+        // for the engineering/maintenance account(s) seeded alongside the shop owner's.
+        roles.put("DEVELOPER", new RoleDefinition(
+                "Developer",
+                "Full access across both branches — every permission. For engineering/maintenance accounts.",
+                EnumSet.allOf(Permission.class)));
+
         roles.put("BRANCH_MANAGER", new RoleDefinition(
                 "Branch Manager",
                 "Runs day-to-day operations for their assigned branch(es): stock, POS, orders, staff view.",

@@ -129,20 +129,16 @@ class CustomerAccountsIntegrationTest {
     }
 
     @Test
-    void aShopperWhoRegistersWithAStaffEmailStillCannotBecomeStaff() throws Exception {
+    void aShopperCannotRegisterOnAStaffEmailAndStaffLoginIsUnaffected() throws Exception {
         String staffEmail = "admin@nairobibeautyhub.co.ke";
-        // The two account tables are separate, so this is allowed to exist...
-        // (Fixed email, so on a re-run against the same DB the account already exists: sign in instead.)
+        // Blocked outright — see CustomerAuthService.register()'s javadoc: a shopper account on a
+        // staff email could never be signed into anyway (staff are checked first on the shared
+        // sign-in page), and allowing the attempt at all would let someone probe which emails are staff.
         JsonNode created = post("/api/v1/customer/auth/register",
                 "{\"email\":\"" + staffEmail + "\",\"password\":\"" + PASSWORD + "\",\"fullName\":\"Shopper\"}", null);
-        String customerToken = created.get("_status").asInt() == 200
-                ? created.get("accessToken").asText()
-                : post("/api/v1/customer/auth/login",
-                        "{\"email\":\"" + staffEmail + "\",\"password\":\"" + PASSWORD + "\"}", null).get("accessToken").asText();
+        assertThat(created.get("_status").asInt()).isEqualTo(409);
 
-        // ...but its token is a shopper token: no staff access, and staff login is unaffected.
-        mvc.perform(get("/api/v1/orders").header("Authorization", "Bearer " + customerToken))
-                .andExpect(status().isForbidden());
+        // Staff sign-in and staff-only access are unaffected.
         mvc.perform(get("/api/v1/orders").header("Authorization", "Bearer " + staffToken()))
                 .andExpect(status().isOk());
     }

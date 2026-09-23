@@ -40,10 +40,18 @@ public class StaffUserSeeder {
     /**
      * Comma-separated. Each gets a SUPER_ADMIN account if it doesn't exist yet, with a random password
      * that is never shown anywhere: the owner sets their own through "Forgot your password?" on the
-     * sign-in page (a staff reset link is emailed).
+     * sign-in page (a staff reset code is emailed).
      */
     @Value("${app.bootstrap.additional-admin-emails:}")
     private String additionalAdminEmails;
+
+    /**
+     * Comma-separated. Same as {@link #additionalAdminEmails} but under the DEVELOPER role instead
+     * of SUPER_ADMIN — functionally identical permissions, kept as a separate role purely so an
+     * engineering account reads distinctly from the shop owner's in the staff list.
+     */
+    @Value("${app.bootstrap.developer-emails:}")
+    private String developerEmails;
 
     public StaffUserSeeder(StaffUserRepository staffUserRepository,
                             StaffRoleRepository staffRoleRepository,
@@ -56,7 +64,14 @@ public class StaffUserSeeder {
 
     @PostConstruct
     public void seed() {
-        seedAdditionalAdmins();
+        // One-time move for the account seeded under the old SUPER_ADMIN default (see V18) before
+        // DEVELOPER existed as a role — seedEmails() below only creates MISSING accounts, so on any
+        // environment that already has this row (dev, test, Railway production), simply re-pointing
+        // developer-emails at it wouldn't change its existing role. Idempotent: a no-op once moved.
+        moveToRoleIfPresent("mdaucodes@gmail.com", "DEVELOPER");
+
+        seedEmails(additionalAdminEmails, "SUPER_ADMIN", "Owner", "Admin");
+        seedEmails(developerEmails, "DEVELOPER", "Developer", "Account");
         if (staffUserRepository.existsByEmailIgnoreCase(bootstrapEmail)) {
             return;
         }
@@ -87,23 +102,36 @@ public class StaffUserSeeder {
                 bootstrapEmail, tempPassword);
     }
 
-    private void seedAdditionalAdmins() {
-        for (String raw : additionalAdminEmails.split(",")) {
+    private void moveToRoleIfPresent(String email, String roleName) {
+        staffUserRepository.findByEmailIgnoreCaseAndDeletedFalse(email).ifPresent(user -> {
+            if (!roleName.equals(user.getStaffRole().getName())) {
+                StaffRole role = staffRoleRepository.findByName(roleName)
+                        .orElseThrow(() -> new IllegalStateException(roleName + " role must be seeded before StaffUserSeeder runs"));
+                String previous = user.getStaffRole().getName();
+                user.setStaffRole(role);
+                staffUserRepository.save(user);
+                log.info("Moved {} from {} to {}", email, previous, roleName);
+            }
+        });
+    }
+
+    private void seedEmails(String csv, String roleName, String firstName, String lastName) {
+        for (String raw : csv.split(",")) {
             String email = raw.trim().toLowerCase();
             if (email.isEmpty() || staffUserRepository.existsByEmailIgnoreCase(email)) {
                 continue;
             }
-            StaffRole superAdmin = staffRoleRepository.findByName("SUPER_ADMIN")
-                    .orElseThrow(() -> new IllegalStateException("SUPER_ADMIN role must be seeded before StaffUserSeeder runs"));
+            StaffRole role = staffRoleRepository.findByName(roleName)
+                    .orElseThrow(() -> new IllegalStateException(roleName + " role must be seeded before StaffUserSeeder runs"));
             StaffUser user = new StaffUser();
             user.setEmail(email);
             user.setPassword(passwordEncoder.encode(generateTempPassword()));
-            user.setFirstName("Owner");
-            user.setLastName("Admin");
-            user.setStaffRole(superAdmin);
+            user.setFirstName(firstName);
+            user.setLastName(lastName);
+            user.setStaffRole(role);
             user.setMustChangePassword(true);
             staffUserRepository.save(user);
-            log.info("Seeded SUPER_ADMIN {} (password is set through the forgot-password flow)", email);
+            log.info("Seeded {} {} (password is set through the forgot-password flow)", roleName, email);
         }
     }
 
