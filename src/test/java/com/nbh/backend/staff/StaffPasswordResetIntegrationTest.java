@@ -24,8 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -40,7 +40,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class StaffPasswordResetIntegrationTest {
 
-    private static final Pattern OTP_CODE = Pattern.compile("verification code is:\\s*\\n*\\s*(\\d{6})");
+    /** The code sits alone on its own line in the text body, between the intro line and the expiry note. */
+    private static final Pattern OTP_CODE = Pattern.compile("\\n(\\d{6})\\n");
 
     @Autowired private MockMvc mvc;
     @Autowired private StaffUserRepository staffUsers;
@@ -71,7 +72,8 @@ class StaffPasswordResetIntegrationTest {
     private String requestOtpCode(String email) throws Exception {
         post("/api/v1/customer/auth/forgot-password", "{\"email\":\"" + email + "\"}", 200);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(emailSender, atLeastOnce()).send(eq(email), anyString(), body.capture());
+        // The OTP flow always has an HTML alternative, so the 4-arg overload is the one actually called.
+        verify(emailSender, atLeastOnce()).send(eq(email), anyString(), body.capture(), anyString());
         List<String> bodies = body.getAllValues();
         Matcher m = OTP_CODE.matcher(bodies.get(bodies.size() - 1));
         assertThat(m.find()).as("email contains a 6-digit code").isTrue();
@@ -118,7 +120,7 @@ class StaffPasswordResetIntegrationTest {
     void anUnknownEmailLooksIdenticalAndSendsNothing() throws Exception {
         String stranger = "nobody-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com";
         post("/api/v1/customer/auth/forgot-password", "{\"email\":\"" + stranger + "\"}", 200);
-        verify(emailSender, never()).send(eq(stranger), anyString(), anyString());
+        verifyNoInteractions(emailSender);
     }
 
     @Test

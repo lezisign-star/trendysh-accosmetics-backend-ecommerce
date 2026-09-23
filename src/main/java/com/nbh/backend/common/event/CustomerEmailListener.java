@@ -16,6 +16,10 @@ public class CustomerEmailListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onEmailRequested(CustomerEmailRequestedEvent event) {
-        emailSender.send(event.toEmail(), event.subject(), event.textBody());
+        if (event.htmlBody() != null) {
+            emailSender.send(event.toEmail(), event.subject(), event.textBody(), event.htmlBody());
+        } else {
+            emailSender.send(event.toEmail(), event.subject(), event.textBody());
+        }
     }
 }

@@ -1,5 +1,50 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Branded HTML for the OTP reset emails, real CORS fix note, Brevo confirmed reachable (2026-09-23, later same day)
+
+**Real bugs found and fixed live this round, in production:** the deployed staging frontend had
+`.env`'s `VITE_API_URL` still pointing at `http://localhost:8081` (a long-standing, previously-flagged-
+but-never-actually-fixed issue — see the frontend HANDOFF) — every request from a real visitor was
+failing. Fixed on the frontend side; once that landed, the *next* real failure surfaced was
+`CORS_ALLOWED_ORIGINS` on Railway not including the deployed origin — a Railway dashboard fix, not a
+code one, done directly by the founder. Both are resolved as of this entry: a live reset request from
+the deployed site now reaches this backend, generates a code, and **a real Brevo email arrives** (this
+was the open question from the OTP entry below — `BREVO_API_KEY`/`MAIL_FROM_EMAIL` are in fact set on
+Railway, confirmed by an actual received email, not just by their presence in the Variables list).
+
+**HTML email added, on top of the existing plain-text body (never replacing it — Brevo gets both,
+`textContent` as the fallback):**
+- New `EmailTemplates.otpCode(logoUrl, greetingName, introLine, code, expiryMinutes)` —
+  table-layout, inline-styles-only HTML (the "bulletproof email HTML" pattern: nothing structural
+  relies on a `<style>` block, since Gmail and others strip it). Colors are the storefront's actual
+  brand palette, sampled to hex via a `<canvas>` fill (`getComputedStyle` echoed the raw `oklch(...)`
+  string back unresolved — canvas forces real color resolution) since email clients don't support
+  `oklch()`: `#bd0087` fuchsia, `#ffe2ee` the code's highlight box, `#261c21` text, `#71656d` muted,
+  `#fffafc` ground.
+- `EmailSender` gained a default 4-arg `send(to, subject, textBody, htmlBody)` overload (falls back to
+  the existing 3-arg text-only send, so `LoggingEmailSender` and every other untouched call site — the
+  verify-email link — needed zero changes). `BrevoEmailSender` overrides it to add `htmlContent` to the
+  API body. `CustomerEmailRequestedEvent` gained an optional `htmlBody` field the same way (new 4-arg
+  canonical constructor + a 3-arg compatibility constructor so every existing publish site still
+  compiles unchanged); `CustomerEmailListener` picks whichever `send` overload actually applies.
+- Wired into **both** reset-password flows only (`CustomerAuthService.forgotPassword`,
+  `StaffPasswordResetService.requestReset`) — scope was explicitly "refining the resetting password,"
+  not every email type. `StaffPasswordResetService` needed `app.frontend-url` re-added (it was removed
+  when the OTP rewrite dropped the emailed link, but the logo URL needs it: `{frontendUrl}/trendysh-
+  logo.png`, matching the frontend's new stable-path logo — see the frontend HANDOFF).
+- **A real gap the tests caught, not just inferred:** the reworded intro line ("...verification code is
+  below.") broke both integration tests' OTP-extraction regex, which depended on the old exact phrase
+  "verification code is:" — and separately, `@MockitoBean`-mocked interface default methods are
+  themselves mocked (no-op), not delegated to the real default body, so every existing
+  `verify(emailSender, atLeastOnce()).send(3-arg-signature)` assertion was verifying an overload that
+  was no longer the one actually called once an HTML body existed. Both integration tests updated:
+  regex now matches the code by position (`\n(\d{6})\n`) rather than a specific preceding phrase, and
+  verification now targets the 4-arg overload. Caught by actually running the suite, not assumed.
+- New `EmailTemplatesUnitTest` (well-formed HTML, every dynamic value present, and — since `greetingName`/
+  `introLine` are real user-influenced strings (a customer's own name) — HTML-escaping is actually
+  exercised, not just assumed safe).
+- Full suite: **180 run, 0 failures**, fresh test DB.
+
 ## Railway deployment confirmed live; DEVELOPER role + dual admin seeding; JUnit coverage for the OTP flow (2026-09-23, later same day)
 
 **Railway, confirmed via the actual dashboard (not just this file's own earlier notes):** project

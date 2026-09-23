@@ -29,8 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * The shopper side of the shared forgot/reset-password flow (staff coverage lives in
@@ -46,7 +46,8 @@ import static org.mockito.Mockito.verify;
 class CustomerPasswordResetIntegrationTest {
 
     private static final String PASSWORD = "correct-horse-battery";
-    private static final Pattern OTP_CODE = Pattern.compile("verification code is:\\s*\\n*\\s*(\\d{6})");
+    /** The code sits alone on its own line in the text body, between the intro line and the expiry note. */
+    private static final Pattern OTP_CODE = Pattern.compile("\\n(\\d{6})\\n");
 
     @Autowired private MockMvc mvc;
     @Autowired private ObjectMapper json;
@@ -79,7 +80,9 @@ class CustomerPasswordResetIntegrationTest {
     private String requestOtpCode(String email) throws Exception {
         post("/api/v1/customer/auth/forgot-password", "{\"email\":\"" + email + "\"}");
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(emailSender, atLeastOnce()).send(eq(email), anyString(), body.capture());
+        // The OTP flow always has an HTML alternative, so the 4-arg overload is the one actually called
+        // (distinct from the 3-arg verify-email sent at registration, which this correctly ignores).
+        verify(emailSender, atLeastOnce()).send(eq(email), anyString(), body.capture(), anyString());
         List<String> bodies = body.getAllValues();
         Matcher m = OTP_CODE.matcher(bodies.get(bodies.size() - 1));
         assertThat(m.find()).as("email contains a 6-digit code").isTrue();
@@ -156,7 +159,7 @@ class CustomerPasswordResetIntegrationTest {
         String stranger = uniqueEmail();
         assertThat(post("/api/v1/customer/auth/forgot-password", "{\"email\":\"" + stranger + "\"}")
                 .get("_status").asInt()).isEqualTo(200);
-        verify(emailSender, never()).send(eq(stranger), anyString(), anyString());
+        verifyNoInteractions(emailSender);
     }
 
     @Test

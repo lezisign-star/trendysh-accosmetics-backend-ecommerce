@@ -1,5 +1,6 @@
 package com.nbh.backend.customer.service;
 
+import com.nbh.backend.common.email.EmailTemplates;
 import com.nbh.backend.common.event.CustomerEmailRequestedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.NotFoundException;
@@ -229,12 +230,14 @@ public class CustomerAuthService {
                 .filter(account -> !inCooldown(account, Purpose.RESET_PASSWORD))
                 .ifPresent(account -> {
                     String code = issueOtp(account, Purpose.RESET_PASSWORD, RESET_OTP_TTL);
+                    String intro = "Someone (hopefully you) asked to reset the password for your Trendysh account. "
+                            + "Your verification code is below.";
                     events.publishEvent(new CustomerEmailRequestedEvent(account.getEmail(),
                             "Your Trendysh password reset code",
-                            "Hi " + firstName(account) + ",\n\nSomeone (hopefully you) asked to reset the password for "
-                                    + "your Trendysh account. Your verification code is:\n\n" + code
+                            "Hi " + firstName(account) + ",\n\n" + intro + "\n\n" + code
                                     + "\n\nIt expires in 10 minutes. If you didn't ask for this, you can ignore this"
-                                    + " email — your password stays the same."));
+                                    + " email — your password stays the same.",
+                            EmailTemplates.otpCode(frontendUrl + "/trendysh-logo.png", firstName(account), intro, code, 10)));
                 });
     }
 

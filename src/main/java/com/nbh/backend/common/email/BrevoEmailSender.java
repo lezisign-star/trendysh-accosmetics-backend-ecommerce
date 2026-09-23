@@ -49,20 +49,29 @@ public class BrevoEmailSender implements EmailSender {
 
     @Override
     public void send(String toEmail, String subject, String textBody) {
+        send(toEmail, subject, textBody, null);
+    }
+
+    @Override
+    public void send(String toEmail, String subject, String textBody, String htmlBody) {
         if (fromEmail.isBlank()) {
             log.error("MAIL_FROM_EMAIL is not set — cannot send \"{}\" to {}", subject, toEmail);
             return;
         }
         try {
+            Map<String, Object> body = new java.util.HashMap<>(Map.of(
+                    "sender", Map.of("email", fromEmail, "name", fromName),
+                    "to", List.of(Map.of("email", toEmail)),
+                    "subject", subject,
+                    "textContent", textBody));
+            if (htmlBody != null) {
+                body.put("htmlContent", htmlBody);
+            }
             restClient.post()
                     .uri("/v3/smtp/email")
                     .header("api-key", apiKey)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of(
-                            "sender", Map.of("email", fromEmail, "name", fromName),
-                            "to", List.of(Map.of("email", toEmail)),
-                            "subject", subject,
-                            "textContent", textBody))
+                    .body(body)
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {

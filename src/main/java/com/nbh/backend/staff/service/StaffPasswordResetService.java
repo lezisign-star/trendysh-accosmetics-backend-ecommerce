@@ -1,11 +1,13 @@
 package com.nbh.backend.staff.service;
 
+import com.nbh.backend.common.email.EmailTemplates;
 import com.nbh.backend.common.event.CustomerEmailRequestedEvent;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.staff.entity.StaffPasswordResetToken;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.staff.repository.StaffPasswordResetTokenRepository;
 import com.nbh.backend.staff.repository.StaffUserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -43,17 +45,20 @@ public class StaffPasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher events;
     private final Clock clock;
+    private final String frontendUrl;
 
     public StaffPasswordResetService(StaffUserRepository staff,
                                      StaffPasswordResetTokenRepository tokens,
                                      PasswordEncoder passwordEncoder,
                                      ApplicationEventPublisher events,
-                                     Clock clock) {
+                                     Clock clock,
+                                     @Value("${app.frontend-url:http://localhost:5250}") String frontendUrl) {
         this.staff = staff;
         this.tokens = tokens;
         this.passwordEncoder = passwordEncoder;
         this.events = events;
         this.clock = clock;
+        this.frontendUrl = frontendUrl.replaceAll("/+$", "");
     }
 
     /**
@@ -70,12 +75,14 @@ public class StaffPasswordResetService {
             return true;
         }
         String code = issueOtp(user);
+        String intro = "Someone (hopefully you) asked to reset the password for your Trendysh staff account. "
+                + "Your verification code is below.";
         events.publishEvent(new CustomerEmailRequestedEvent(user.getEmail(),
                 "Your Trendysh admin password reset code",
-                "Hi " + user.getFirstName() + ",\n\nSomeone (hopefully you) asked to reset the password for your "
-                        + "Trendysh staff account. Your verification code is:\n\n" + code
+                "Hi " + user.getFirstName() + ",\n\n" + intro + "\n\n" + code
                         + "\n\nIt expires in 10 minutes. If you didn't ask for this, you can ignore this email —"
-                        + " your password stays the same."));
+                        + " your password stays the same.",
+                EmailTemplates.otpCode(frontendUrl + "/trendysh-logo.png", user.getFirstName(), intro, code, 10)));
         return true;
     }
 
