@@ -111,9 +111,11 @@ class CheckoutServiceUnitTest {
 
     private static final BankPaymentSettings.CollectionMode BANK = BankPaymentSettings.CollectionMode.BANK;
 
+    // Checkout only ever reads mode()/paymentWindow() from this, never the bank-detail accessors,
+    // so the settings repository doesn't need a real row backing it for these tests.
     private static BankPaymentSettings bankSettings(BankPaymentSettings.CollectionMode mode) {
-        return new BankPaymentSettings(mode, 45, "Co-op Bank", "400200", "<ref>",
-                "Trendysh Accosmetic", "01100123456789", "Nairobi", "");
+        return new BankPaymentSettings(
+                mock(com.nbh.backend.payment.repository.PaymentSettingsRepository.class), mode, 45, "<ref>");
     }
 
     @Test

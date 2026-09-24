@@ -4,7 +4,9 @@ import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.payment.entity.PaymentRecord;
+import com.nbh.backend.payment.entity.PaymentSettings;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
+import com.nbh.backend.payment.repository.PaymentSettingsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -32,8 +34,19 @@ class PaymentInstructionsServiceTest {
     @BeforeEach
     void setUp() {
         repository = mock(PaymentRecordRepository.class);
-        var settings = new BankPaymentSettings(BankPaymentSettings.CollectionMode.BANK, 45, "Co-op Bank", "400200",
-                "01100123#<ref>", "Trendysh Accosmetic", "01100123456789", "Nairobi", "254700000000");
+
+        PaymentSettings row = new PaymentSettings();
+        row.setBankName("Co-op Bank");
+        row.setPaybillNumber("400200");
+        row.setAccountName("Trendysh Accosmetic");
+        row.setAccountNumber("01100123456789");
+        row.setAccountBranch("Nairobi");
+        row.setSupportWhatsapp("254700000000");
+        PaymentSettingsRepository settingsRepository = mock(PaymentSettingsRepository.class);
+        when(settingsRepository.findFirstByOrderByCreatedAtAsc()).thenReturn(Optional.of(row));
+        var settings = new BankPaymentSettings(
+                settingsRepository, BankPaymentSettings.CollectionMode.BANK, 45, "01100123#<ref>");
+
         service = new PaymentInstructionsService(repository, mock(com.nbh.backend.payment.repository.PaymentClaimRepository.class),
                 generator, settings, clock);
 
