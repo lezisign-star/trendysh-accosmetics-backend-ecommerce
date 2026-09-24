@@ -1,5 +1,38 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Bank/paybill/WhatsApp settings become admin-editable, not static config (2026-09-24, later same day)
+
+**Phase G of the admin-dashboard rework** (Phase F was frontend-only — quick-edit camera capture,
+no backend change). This is the actual fix for the "payment confusion" flagged at the very start of
+the rework: the admin Settings tab's bank details were never real — they wrote to `localStorage` and
+had zero effect on what a customer saw at checkout. `BankPaymentSettings` used to read bank name/
+paybill/account/WhatsApp straight from `@Value`-bound env vars; it's now backed by a new single-row
+`payment_settings` table (migration `V25__payment_settings.sql`, deliberately seeded with **no**
+values baked into the migration itself — a real bank account number never belongs in git history).
+
+A new `PaymentSettingsSeeder` (`@PostConstruct`, same "seed once, only if empty" pattern as
+`StaffUserSeeder`) copies whatever the live `app.bank.*` env vars hold into that row the first time
+the app boots after this deploy — a value-preserving cutover, not a reset. From then on
+`BankPaymentSettings`'s bank-detail accessors (`bankName()`/`paybillNumber()`/etc.) read through the
+new `PaymentSettingsRepository` instead of the old `@Value` fields; only `paybillAccountTemplate` and
+the M-PESA/collection-mode fields stay env-var config (deliberately not admin-editable). New
+`AdminSettingsController` (`GET/PUT /api/v1/admin/settings/payment`, gated on the existing
+`PERM_SETTINGS_MANAGE`) — a blank field on `PUT` clears that value rather than being rejected, so an
+admin can deliberately hide a payment method on the pay page.
+
+**Found and fixed a real shared-test-database bug while wiring this up**: `payment_settings` is one
+row shared across every Spring test context in the whole suite (unlike `@TestPropertySource`, which
+is scoped per context) — whichever test class's context happened to boot *first* during a full
+`mvn test` run silently decided that row's content for every other test, since the seeder is a
+one-time no-op after that. `BankPaymentPageIntegrationTest` was flaky against this exact bug (passed
+alone, failed in the full suite) until it was changed to write its own `PaymentSettings` row directly
+via the repository in `@BeforeEach` instead of relying on `@TestPropertySource` + the seeder — also a
+more accurate model of production now, where these values live in the DB, not env vars.
+
+New `AdminSettingsIntegrationTest` (update-then-read round-trip, blank clears a field, non-
+SUPER_ADMIN role gets 403). Full suite green (199 tests). Verified live: booted a second instance
+against the dev DB, confirmed `V25` applies cleanly and the seeder fires exactly once.
+
 ## Branch-aware checkout, real branch CRUD, order branch visibility (2026-09-24, later same day)
 
 **Phase E of the admin-dashboard rework**, prompted by the owner watching a screenshot of stray
