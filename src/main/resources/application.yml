@@ -82,6 +82,18 @@ app:
     account-number: ${BANK_ACCOUNT_NUMBER:}
     account-branch: ${BANK_ACCOUNT_BRANCH:}
     support-whatsapp: ${SUPPORT_WHATSAPP:}
+  coop:
+    ins:
+      # Co-op Bank Instant Notification Service (deposit notifications). NOT tested against the real
+      # bank. Blank credentials = reject everything. Agree these with the bank when registering the endpoint
+      # https://<api-host>/api/v1/payments/coop/ins ; INS authenticates with this shared Basic credential only.
+      username: ${COOP_INS_USERNAME:}
+      password: ${COOP_INS_PASSWORD:}
+      # When set, notifications for any other Co-op account number are ignored.
+      account-number: ${COOP_INS_ACCOUNT_NUMBER:}
+      # false (default): record each credit for staff to allocate. true: confirm an order automatically when the
+      # credit carries a valid reference and the exact amount. Turn on only after verifying against the real bank.
+      auto-match: ${COOP_INS_AUTO_MATCH:false}
   mpesa:
     # UNSET PLACEHOLDERS — DarajaPaymentGateway refuses to call Safaricom until
     # real sandbox credentials are set here. See that class's javadoc.

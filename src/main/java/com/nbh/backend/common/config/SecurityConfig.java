@@ -74,6 +74,8 @@ public class SecurityConfig {
                     "/api/v1/payments/mpesa/callback/**",
                     // Customer's bank pay page: authorised by order number + payment reference.
                     "/api/v1/payments/pay/**",
+                    // Co-op Bank deposit notifications: authenticated inside the controller (shared Basic credential).
+                    "/api/v1/payments/coop/ins",
                     // Public storefront browse/search/reviews — read-only, only
                     // ever returns published products (CatalogService's javadoc).
                     // Review submission (POST /catalog/products/{id}/reviews) is

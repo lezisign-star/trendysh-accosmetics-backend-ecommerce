@@ -386,7 +386,7 @@ unless you're continuing that specific work.
 
 ---
 
-## CO-OP INS RECEIVER (2026-09-21, UNCOMMITTED) — built from the bank's PUBLIC spec, NEVER tested against the real bank
+## CO-OP INS RECEIVER (2026-09-21, committed 2026-09-24) — built from the bank's PUBLIC spec, NEVER tested against the real bank
 `POST /api/v1/payments/coop/ins` (`com.nbh.backend.payment.coop.*`): Basic-auth check (`COOP_INS_USERNAME/PASSWORD`,
 blank = reject everything), records CREDIT events for `COOP_INS_ACCOUNT_NUMBER` via `BankCreditService.record(...,
 IPN, autoMatch)`. **`COOP_INS_AUTO_MATCH` defaults to false**: credits are recorded for staff to allocate on
@@ -394,8 +394,7 @@ IPN, autoMatch)`. **`COOP_INS_AUTO_MATCH` defaults to false**: credits are recor
 signature). Reference is searched in Narration + CustMemoLine1-3 (bank has not said which). Ack body shape is an
 assumption. NOT built: AccountTransactions reconciliation (needs OAuth creds + sandbox), SafaricomSTKPush (see
 Coop-STK-Push-Configuration-Guide.pdf in Downloads: ~30% chance of production access in 6 weeks; do not depend on it).
-Suite on a FRESH DB: 139/140; the 1 failure is the known stale
-`CustomerAccountsIntegrationTest.aShopperWhoRegistersWithAStaffEmailStillCannotBecomeStaff` (not from this work).
+Suite on a fresh DB, re-run at commit time: 200/200 (the earlier 139/140 note's stale failure no longer reproduces).
 
 
 > **IMPORTANT: the Co-op Bank (or Family Bank) integration is NOT DONE.** It is untested and no real credentials exist. Everything below is bank-agnostic scaffolding confirmed manually by staff. There is no bank IPN endpoint, no reconciliation job and no bank API client. Do not describe bank payments as automatically verified until the real bank integration is built and tested against the bank's sandbox.

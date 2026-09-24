@@ -52,6 +52,16 @@ public class BankCreditService {
     @Transactional
     public BankCredit record(String bankTxnId, BigDecimal amount, String payerName, String payerPhone,
                              String narration, Instant receivedAt, BankCredit.Source source) {
+        return record(bankTxnId, amount, payerName, payerPhone, narration, receivedAt, source, true);
+    }
+
+    /**
+     * {@code autoMatch=false} records the credit and leaves it UNMATCHED for staff to allocate. Used for a feed
+     * we have not yet verified against the real bank: recording is always safe, confirming an order is not.
+     */
+    @Transactional
+    public BankCredit record(String bankTxnId, BigDecimal amount, String payerName, String payerPhone,
+                             String narration, Instant receivedAt, BankCredit.Source source, boolean autoMatch) {
         String txnId = bankTxnId.trim();
         BankCredit existing = creditRepository.findByBankTxnId(txnId).orElse(null);
         if (existing != null) {
@@ -68,7 +78,9 @@ public class BankCreditService {
         credit.setSource(source);
         credit = creditRepository.save(credit);
 
-        tryAutoMatch(credit);
+        if (autoMatch) {
+            tryAutoMatch(credit);
+        }
         return credit;
     }
 
