@@ -70,13 +70,27 @@ pre-migration `pg_dump` and letting Flyway apply V26 itself, the normal way. **N
 hand-apply a migration to a database Flyway also manages** — always let Flyway run
 it, even in a hurry; dry-run against a disposable restored copy first instead.
 
+**Phase 0 production pre-flight — run 2026-09-24, clean:** connected read-only to the
+live Railway Postgres (public TCP proxy, not the internal hostname — that only
+resolves inside Railway's network) and ran the same three guard queries V26 itself
+re-checks, plus a broader sanity pass, before ever running the migration there:
+- DAMAGED/IN_TRANSIT locations holding stock: **0** (2 DAMAGED + 1 IN_TRANSIT
+  location row exist, all with `on_hand_qty`/`reserved_qty` = 0).
+- `TRANSFER` stock_document rows: **0**. `TRANSFER_OUT` reservations: **0**.
+- `customer_order.fulfilment_type` distribution: 1 `DELIVERY_COURIER`, 0
+  `BRANCH_PICKUP` — nothing for the rename to touch.
+- `staff_branch_assignment`: **0** rows (table drops clean).
+- `staff_role` name collision check: exactly one `BRANCH_MANAGER` row, no existing
+  `MANAGER` row — the rename in V26 is a plain rename, not a merge.
+- Overall production has very little live data yet (1 goods receipt, 1 online sale,
+  1 fulfilled reservation, total recorded stock value ≈ 0) — low blast radius even
+  before the guards are considered.
+
+All clear. **Safe to push to `main`** as far as this pre-flight is concerned — still
+apply the same discipline as the dev run: let Flyway apply V26 on deploy, never by
+hand against production.
+
 **Not yet done, in order:**
-- Phase 0's production pre-flight (the same DAMAGED/IN_TRANSIT/TRANSFER row-count
-  checks run against dev above) has **not** been run against the live production
-  database. **Do not push this to `main` until that's done** — `main` auto-deploys
-  and this migration drops tables; the guards inside V26 will refuse to run if
-  production has data that doesn't fit the assumptions, but that should be
-  confirmed deliberately, not discovered by a failed deploy.
 - Phase 2 (frontend): remove the Branches screen, the branch/location pickers in
   Restock and Purchase Orders, `BRANCH_PICKUP` → `PICKUP` everywhere in the
   frontend, the "Fulfilled from…" branch line in admin order detail. Ships together
