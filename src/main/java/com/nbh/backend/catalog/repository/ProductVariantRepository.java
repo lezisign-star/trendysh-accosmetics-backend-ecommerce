@@ -17,6 +17,14 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     /** Batch fetch for a page of products — avoids one query per product (audit finding F12). */
     List<ProductVariant> findByProductIdIn(Collection<UUID> productIds);
 
+    /**
+     * Excludes soft-deleted rows — found live while building Phase 3's editor (2026-09-24): nothing
+     * previously filtered {@code deleted}, so a removed variant kept showing in the admin list/editor.
+     */
+    List<ProductVariant> findByProductIdAndDeletedFalseOrderBySortOrderAsc(UUID productId);
+
+    List<ProductVariant> findByProductIdInAndDeletedFalse(Collection<UUID> productIds);
+
     /** Backs auto-generated SKUs (see {@code ProductService.generateSku}) — atomic, race-free. */
     @Query(value = "SELECT nextval('variant_sku_seq')", nativeQuery = true)
     long nextSkuSequence();

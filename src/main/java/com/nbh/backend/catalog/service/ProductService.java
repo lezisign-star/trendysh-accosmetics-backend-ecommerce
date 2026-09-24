@@ -1,28 +1,39 @@
 package com.nbh.backend.catalog.service;
 
 import com.nbh.backend.catalog.dto.AttachImageRequest;
+import com.nbh.backend.catalog.dto.BulkProductActionRequest;
+import com.nbh.backend.catalog.dto.BulkProductActionResult;
 import com.nbh.backend.catalog.dto.CatalogImageDto;
 import com.nbh.backend.catalog.dto.CreateProductRequest;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
+import com.nbh.backend.catalog.dto.SaveProductRequest;
 import com.nbh.backend.catalog.dto.UpdateProductRequest;
 import com.nbh.backend.catalog.dto.UpdateVariantRequest;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
+import com.nbh.backend.common.exception.ConflictException;
+import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Product/variant creation — the "easy to add a product" flow the founder
@@ -131,9 +142,11 @@ public class ProductService {
     }
 
     /**
-     * Sets a product's category and subcategory together and keeps them consistent: a subcategory must
-     * be a child of the category. Picking only a subcategory files the product under that subcategory's
-     * parent; a category alone is fine; neither clears both.
+     * Compatibility path for the pre-Phase-3 category/subcategory pair (old create/update
+     * endpoints, still used by the old frontend until Phase 3c ships) — translates it into the
+     * new many-to-many {@code categories} list. A subcategory is more specific than its category,
+     * so it becomes the one stored (and primary, position 0); a category alone is fine; neither
+     * clears the list. Removed in Phase 3f once nothing calls the old endpoints any more.
      */
     private void applyCategories(Product product, UUID categoryId, UUID subcategoryId) {
         Category category = categoryId != null
@@ -159,13 +172,35 @@ public class ProductService {
         if (category != null && category.getParent() != null) {
             throw new IllegalArgumentException("\"" + category.getName() + "\" is a subcategory - choose it as the subcategory instead");
         }
-        product.setCategory(category);
-        product.setSubcategory(subcategory);
+        List<Category> categories = new java.util.ArrayList<>();
+        if (subcategory != null) {
+            categories.add(subcategory);
+        } else if (category != null) {
+            categories.add(category);
+        }
+        product.setCategories(categories);
     }
 
-    /** A product's variants with their sellable stock and selected attribute values filled in. */
+    /**
+     * The new Phase 3 (2026-09-24) multi-category path: a product can belong to several
+     * categories, in the given order — the first is "primary" (breadcrumbs, SKU prefix).
+     */
+    private void setCategories(Product product, List<UUID> categoryIds) {
+        if (categoryIds == null || categoryIds.isEmpty()) {
+            product.setCategories(new java.util.ArrayList<>());
+            return;
+        }
+        List<Category> categories = new java.util.ArrayList<>();
+        for (UUID id : categoryIds) {
+            categories.add(categoryRepository.findById(id)
+                    .orElseThrow(() -> new EntityNotFoundException("No category: " + id)));
+        }
+        product.setCategories(categories);
+    }
+
+    /** A product's live (non-deleted) variants with their sellable stock and selected attribute values filled in. */
     private List<ProductVariantDto> variantDtos(UUID productId) {
-        List<ProductVariant> variants = variantRepository.findByProductId(productId);
+        List<ProductVariant> variants = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
         List<UUID> variantIds = variants.stream().map(ProductVariant::getId).toList();
         Map<UUID, BigDecimal> available = availability(variantIds);
         List<VariantAttributeValue> attrs = attributesFor(variantIds);
@@ -183,6 +218,296 @@ public class ProductService {
         if (variantIds.isEmpty()) return result;
         for (StockBalanceRepository.VariantAvailability a : balanceRepository.availabilityForVariants(variantIds)) {
             result.put(a.getVariantId(), a.getAvailable());
+        }
+        return result;
+    }
+
+    /**
+     * The one-page editor's single Save (Phase 3, 2026-09-24). Creates a new draft when
+     * {@code productId} is null, otherwise updates in place. Always saves — publishing with
+     * missing fields only produces {@link ProductDto#warnings()} in the response, it never
+     * blocks (founder decision: "drafts save anytime, only warn at publish"). Photos still go
+     * through the existing dedicated image endpoints, not this one — no behaviour change there,
+     * just not folded into this request to keep it manageable.
+     */
+    @Transactional
+    public ProductDto saveProduct(UUID productId, SaveProductRequest request, StaffUser staff) {
+        Product product;
+        if (productId == null) {
+            product = new Product();
+            String draftName = request.name() == null || request.name().isBlank() ? "product" : request.name();
+            product.setSlug(generateUniqueSlug(draftName));
+            product.setPublished(false);
+            product.setCreatedBy(staff != null ? staff.getId() : null);
+        } else {
+            product = productRepository.findById(productId)
+                    .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+            if (request.expectedUpdatedAt() != null && !request.expectedUpdatedAt().equals(product.getUpdatedAt())) {
+                throw new ConflictException("Someone else changed this product — reload to see their changes");
+            }
+        }
+
+        product.setName(request.name() == null ? "" : request.name());
+        product.setDescription(request.description());
+        product.setShortDescription(request.shortDescription());
+        product.setIngredients(request.ingredients());
+        product.setHowToUse(request.howToUse());
+        if (request.isPopular() != null) product.setPopular(request.isPopular());
+        if (request.isNewArrival() != null) product.setNewArrival(request.isNewArrival());
+        product.setUpdatedBy(staff != null ? staff.getId() : null);
+        setCategories(product, request.categoryIds());
+
+        boolean wasPublished = product.isPublished();
+        product.setPublished(request.published());
+        if (request.published() && !wasPublished) {
+            product.setPublishedAt(Instant.now());
+        } else if (!request.published()) {
+            product.setPublishedAt(null);
+        }
+
+        product = productRepository.save(product);
+        saveVariants(product, request.variants() == null ? List.of() : request.variants());
+
+        List<ProductVariantDto> variants = variantDtos(product.getId());
+        return ProductDto.from(product, variants, primaryImageUrl(product.getId()), warnings(product, variants));
+    }
+
+    /**
+     * Diffs the request's variant list against what's stored: a variant with an {@code id}
+     * already on this product is updated, one with no {@code id} is created (with an
+     * auto-generated SKU — SKUs are never user-editable, see {@link #generateSku}), and one
+     * that's on the product but missing from the request is soft-deleted. Order becomes
+     * {@code sortOrder}.
+     */
+    private void saveVariants(Product product, List<SaveProductRequest.VariantInput> inputs) {
+        List<ProductVariant> existing = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(product.getId());
+        Map<UUID, ProductVariant> byId = existing.stream().collect(Collectors.toMap(ProductVariant::getId, v -> v));
+        Set<UUID> keep = new HashSet<>();
+
+        int order = 0;
+        for (SaveProductRequest.VariantInput in : inputs) {
+            ProductVariant variant;
+            if (in.id() != null && byId.containsKey(in.id())) {
+                variant = byId.get(in.id());
+            } else {
+                variant = new ProductVariant();
+                variant.setProduct(product);
+                variant.setSku(generateSku(product));
+                variant.setVatExempt(false);
+            }
+            variant.setVariantName(in.variantName() == null ? "" : in.variantName());
+            variant.setDescription(in.description());
+            variant.setSellingPrice(parsePriceOrNull(in.sellingPrice()));
+            variant.setActive(in.isActive());
+            variant.setSortOrder(order++);
+            variant = variantRepository.save(variant);
+            keep.add(variant.getId());
+        }
+
+        for (ProductVariant v : existing) {
+            if (!keep.contains(v.getId())) {
+                v.setDeleted(true);
+                v.setActive(false);
+                variantRepository.save(v);
+            }
+        }
+    }
+
+    private BigDecimal parsePriceOrNull(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return new BigDecimal(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("\"" + raw + "\" is not a valid price");
+        }
+    }
+
+    /**
+     * Plain-language readiness hints for the editor's publish-warning dialog — never blocks a
+     * save, only informs (founder decision, Phase 3, 2026-09-24). Computed fresh on every
+     * save/read so the frontend never has to mirror this logic to stay correct, only to give
+     * live hints as the admin types.
+     */
+    private List<String> warnings(Product product, List<ProductVariantDto> variants) {
+        List<String> warnings = new ArrayList<>();
+        if (product.getName() == null || product.getName().isBlank()) warnings.add("No name yet");
+        if (product.getCategories().isEmpty()) warnings.add("Not in any category");
+        if (primaryImageUrl(product.getId()) == null) warnings.add("No photo");
+
+        long noPriceCount = variants.stream().filter(v -> v.sellingPrice() == null).count();
+        if (noPriceCount > 0) {
+            warnings.add(noPriceCount + (noPriceCount == 1 ? " variant has" : " variants have")
+                    + " no price — " + (noPriceCount == 1 ? "it won't" : "they won't") + " show in the shop");
+        }
+
+        if (variants.size() > 1) {
+            Set<String> seen = new HashSet<>();
+            Set<String> dupes = new LinkedHashSet<>();
+            for (ProductVariantDto v : variants) {
+                String name = v.variantName() == null ? "" : v.variantName().trim().toLowerCase(Locale.ROOT);
+                if (!name.isBlank() && !seen.add(name)) dupes.add(v.variantName());
+            }
+            dupes.forEach(name -> warnings.add("Two variants are both called \"" + name + "\""));
+
+            if (variants.stream().anyMatch(v -> v.variantName() == null || v.variantName().isBlank())) {
+                warnings.add("A variant needs a name");
+            }
+        }
+        return warnings;
+    }
+
+    /** A fresh, unpublished copy — "Name (copy)" — for fast entry of many similar products (founder priority, Phase 3). */
+    @Transactional
+    public ProductDto duplicate(UUID productId, StaffUser staff) {
+        Product source = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+
+        Product copy = new Product();
+        copy.setName(source.getName() + " (copy)");
+        copy.setSlug(generateUniqueSlug(copy.getName()));
+        copy.setBrand(source.getBrand());
+        copy.setCategories(new ArrayList<>(source.getCategories()));
+        copy.setShortDescription(source.getShortDescription());
+        copy.setDescription(source.getDescription());
+        copy.setIngredients(source.getIngredients());
+        copy.setHowToUse(source.getHowToUse());
+        copy.setPublished(false);
+        copy.setCreatedBy(staff != null ? staff.getId() : null);
+        copy = productRepository.save(copy);
+
+        for (ProductVariant sv : variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId)) {
+            ProductVariant nv = new ProductVariant();
+            nv.setProduct(copy);
+            nv.setSku(generateSku(copy));
+            nv.setVariantName(sv.getVariantName());
+            nv.setDescription(sv.getDescription());
+            nv.setSellingPrice(sv.getSellingPrice());
+            nv.setCompareAtPrice(sv.getCompareAtPrice());
+            nv.setStandardCost(sv.getStandardCost());
+            nv.setUom(sv.getUom());
+            nv.setVatRate(sv.getVatRate());
+            nv.setVatExempt(sv.isVatExempt());
+            nv.setReorderLevel(sv.getReorderLevel());
+            nv.setSortOrder(sv.getSortOrder());
+            nv.setActive(sv.isActive());
+            variantRepository.save(nv);
+        }
+
+        for (ProductImage si : imageRepository.findByProductIdOrderBySortOrderAsc(productId)) {
+            ProductImage ni = new ProductImage();
+            ni.setProduct(copy);
+            ni.setUrl(si.getUrl());
+            ni.setThumbnailUrl(si.getThumbnailUrl());
+            ni.setAltText(si.getAltText());
+            ni.setWidth(si.getWidth());
+            ni.setHeight(si.getHeight());
+            ni.setByteSize(si.getByteSize());
+            ni.setSortOrder(si.getSortOrder());
+            ni.setPrimary(si.isPrimary());
+            imageRepository.save(ni);
+        }
+
+        List<ProductVariantDto> variants = variantDtos(copy.getId());
+        return ProductDto.from(copy, variants, primaryImageUrl(copy.getId()), warnings(copy, variants));
+    }
+
+    /**
+     * The admin product list's bulk-action bar (Phase 3, 2026-09-24) — one transaction, one
+     * action, across every selected product. PUBLISH still only warns, never blocks (same rule
+     * as a single product's save).
+     */
+    @Transactional
+    public BulkProductActionResult bulk(BulkProductActionRequest request) {
+        List<Product> products = productRepository.findAllById(request.productIds());
+        List<String> warnings = new ArrayList<>();
+        int affectedVariants = 0;
+
+        switch (request.action()) {
+            case PUBLISH -> {
+                for (Product p : products) {
+                    List<ProductVariantDto> variants = variantDtos(p.getId());
+                    List<String> w = warnings(p, variants);
+                    if (!w.isEmpty()) warnings.add("\"" + p.getName() + "\": " + String.join("; ", w));
+                    p.setPublished(true);
+                    p.setPublishedAt(Instant.now());
+                    productRepository.save(p);
+                }
+            }
+            case UNPUBLISH -> {
+                for (Product p : products) {
+                    p.setPublished(false);
+                    p.setPublishedAt(null);
+                    productRepository.save(p);
+                }
+            }
+            case DELETE -> {
+                for (Product p : products) {
+                    p.setDeleted(true);
+                    p.setPublished(false);
+                    p.setPublishedAt(null);
+                    productRepository.save(p);
+                }
+            }
+            case RESTORE -> {
+                for (Product p : products) {
+                    p.setDeleted(false);
+                    productRepository.save(p);
+                }
+            }
+            case ADD_CATEGORIES, REPLACE_CATEGORIES -> {
+                List<Category> toAdd = resolveCategories(request.categoryIds());
+                for (Product p : products) {
+                    if (request.action() == BulkProductActionRequest.Action.REPLACE_CATEGORIES) {
+                        p.setCategories(new ArrayList<>(toAdd));
+                    } else {
+                        List<Category> merged = new ArrayList<>(p.getCategories());
+                        Set<UUID> existingIds = merged.stream().map(Category::getId).collect(Collectors.toSet());
+                        for (Category c : toAdd) {
+                            if (existingIds.add(c.getId())) merged.add(c);
+                        }
+                        p.setCategories(merged);
+                    }
+                    productRepository.save(p);
+                }
+            }
+            case ADJUST_PRICE -> {
+                BigDecimal percent = request.percent();
+                if (percent == null) throw new IllegalArgumentException("percent is required");
+                if (percent.compareTo(new BigDecimal("-90")) < 0 || percent.compareTo(new BigDecimal("500")) > 0) {
+                    throw new IllegalArgumentException("percent must be between -90 and 500");
+                }
+                Set<UUID> excluded = request.excludedVariantIds() == null ? Set.of() : new HashSet<>(request.excludedVariantIds());
+                BigDecimal factor = BigDecimal.ONE.add(percent.movePointLeft(2));
+                List<UUID> productIds = products.stream().map(Product::getId).toList();
+                for (ProductVariant v : variantRepository.findByProductIdInAndDeletedFalse(productIds)) {
+                    if (excluded.contains(v.getId())) continue;
+                    if (v.getSellingPrice() == null) {
+                        warnings.add(v.getSku() + ": has no price yet, skipped");
+                        continue;
+                    }
+                    BigDecimal newPrice = v.getSellingPrice().multiply(factor).setScale(0, RoundingMode.HALF_UP);
+                    if (newPrice.signum() < 0) newPrice = BigDecimal.ZERO;
+                    v.setSellingPrice(newPrice);
+                    if (v.getDealPrice() != null && v.getDealPrice().compareTo(newPrice) >= 0) {
+                        v.setDealPrice(null);
+                        v.setDealEndsAt(null);
+                        warnings.add(v.getSku() + ": its sale price was no longer below the new price, so the sale was cleared");
+                    }
+                    variantRepository.save(v);
+                    affectedVariants++;
+                }
+            }
+        }
+
+        return new BulkProductActionResult(products.size(), affectedVariants, warnings);
+    }
+
+    private List<Category> resolveCategories(List<UUID> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<Category> result = new ArrayList<>();
+        for (UUID id : ids) {
+            result.add(categoryRepository.findById(id)
+                    .orElseThrow(() -> new EntityNotFoundException("No category: " + id)));
         }
         return result;
     }
@@ -264,7 +589,7 @@ public class ProductService {
      * prefix rather than sharing NAIL- with every other nail product.
      */
     private String generateSku(Product product) {
-        Category prefixSource = product.getSubcategory() != null ? product.getSubcategory() : product.getCategory();
+        Category prefixSource = product.getCategories().isEmpty() ? null : product.getCategories().get(0);
         String prefix = prefixSource == null ? "SKU" : categoryPrefix(prefixSource.getSlug());
         return prefix + "-" + String.format("%06d", variantRepository.nextSkuSequence());
     }
@@ -307,7 +632,7 @@ public class ProductService {
         var page = productRepository.searchAdmin(query, categoryId, published, stockFilter, popular, newArrival, deleted, pageable);
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
 
-        List<ProductVariant> allVariants = variantRepository.findByProductIdIn(productIds);
+        List<ProductVariant> allVariants = variantRepository.findByProductIdInAndDeletedFalse(productIds);
         List<UUID> allVariantIds = allVariants.stream().map(ProductVariant::getId).toList();
         Map<UUID, BigDecimal> available = availability(allVariantIds);
         List<VariantAttributeValue> allAttrs = attributesFor(allVariantIds);

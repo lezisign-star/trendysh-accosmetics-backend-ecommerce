@@ -37,9 +37,17 @@ public class EffectivePriceResolver {
         this.clock = clock;
     }
 
-    /** @param activeCampaign the currently-active campaign, or null if none is active right now */
+    /**
+     * @param activeCampaign the currently-active campaign, or null if none is active right now
+     * @throws IllegalStateException if the variant has no price — callers on every sellable path
+     *         must filter to {@link ProductVariant#isSellable()} first (Phase 3, 2026-09-24: a
+     *         draft variant can now be saved with no price at all).
+     */
     public EffectivePrice resolve(ProductVariant variant, PromoCampaign activeCampaign) {
         BigDecimal original = variant.getSellingPrice();
+        if (original == null) {
+            throw new IllegalStateException("Variant " + variant.getId() + " has no price — filter to isSellable() first");
+        }
         Instant now = Instant.now(clock);
 
         if (variant.getDealPrice() != null && variant.getDealEndsAt() != null && variant.getDealEndsAt().isAfter(now)) {

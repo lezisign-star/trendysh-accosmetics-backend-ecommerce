@@ -38,13 +38,21 @@ public class CategoryController {
         for (Object[] row : categoryRepository.liveProductCountsByCategory()) {
             direct.merge((UUID) row[0], (Long) row[1], Long::sum);
         }
-        Map<UUID, Long> viaSubcategory = new HashMap<>();
-        for (Object[] row : categoryRepository.liveProductCountsBySubcategory()) {
-            viaSubcategory.merge((UUID) row[0], (Long) row[1], Long::sum);
+        List<Category> all = categoryRepository.findAll();
+        // A top-level category's shown count rolls up its subcategories' products too (a product
+        // in several categories, Phase 3 2026-09-24 — direct counts alone would undercount a
+        // parent whose products are all filed one level down, under its children).
+        Map<UUID, Long> rolledUp = new HashMap<>();
+        for (Category c : all) {
+            long own = direct.getOrDefault(c.getId(), 0L);
+            rolledUp.merge(c.getId(), own, Long::sum);
+            if (c.getParent() != null) {
+                rolledUp.merge(c.getParent().getId(), own, Long::sum);
+            }
         }
-        return categoryRepository.findAll().stream()
+        return all.stream()
                 .sorted(Comparator.comparingInt(Category::getSortOrder).thenComparing(Category::getName, String.CASE_INSENSITIVE_ORDER))
-                .map(c -> CategoryDto.from(c, direct.getOrDefault(c.getId(), 0L) + viaSubcategory.getOrDefault(c.getId(), 0L)))
+                .map(c -> CategoryDto.from(c, rolledUp.getOrDefault(c.getId(), 0L)))
                 .toList();
     }
 

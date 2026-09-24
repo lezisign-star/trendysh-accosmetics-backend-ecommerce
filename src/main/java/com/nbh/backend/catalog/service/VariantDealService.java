@@ -33,6 +33,9 @@ public class VariantDealService {
         if (dealPrice == null || dealPrice.signum() <= 0) {
             throw new IllegalArgumentException("Deal price must be greater than zero");
         }
+        if (variant.getSellingPrice() == null) {
+            throw new IllegalArgumentException("Set a price for this variant first");
+        }
         if (dealPrice.compareTo(variant.getSellingPrice()) >= 0) {
             throw new IllegalArgumentException("Deal price must be less than the regular selling price ("
                     + variant.getSellingPrice() + ")");

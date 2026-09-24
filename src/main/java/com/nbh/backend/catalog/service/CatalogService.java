@@ -128,13 +128,12 @@ public class CatalogService {
     public List<CatalogProductSummaryDto> related(UUID productId, int limit) {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-        UUID categoryId = product.getCategory() != null ? product.getCategory().getId() : null;
-        UUID subcategoryId = product.getSubcategory() != null ? product.getSubcategory().getId() : null;
-        if (categoryId == null && subcategoryId == null) {
+        List<UUID> categoryIds = product.getCategories().stream().map(Category::getId).toList();
+        if (categoryIds.isEmpty()) {
             return List.of();
         }
 
-        List<Product> related = productRepository.findRelated(categoryId, subcategoryId, productId,
+        List<Product> related = productRepository.findRelated(categoryIds, productId,
                 PageRequest.of(0, limit));
         List<UUID> relatedIds = related.stream().map(Product::getId).toList();
         if (relatedIds.isEmpty()) {

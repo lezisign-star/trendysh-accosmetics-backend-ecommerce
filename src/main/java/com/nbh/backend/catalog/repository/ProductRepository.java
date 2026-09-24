@@ -19,32 +19,34 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     /**
      * Public storefront browse — published/not-deleted only. {@code q} and
      * {@code categorySlug} are optional (a null parameter short-circuits its
-     * own clause). Matches a category OR its subcategory since the catalogue
-     * only has two levels (session 3's schema).
+     * own clause). A product tagged with a subcategory also matches its parent
+     * category's slug (Phase 3, 2026-09-24 — products can belong to several
+     * categories now; {@code c.parent} rolls a subcategory match up to its
+     * parent the same way the old category/subcategory pair used to).
      *
-     * Explicit {@code LEFT JOIN}s are required here — found live: an implicit
-     * path navigation like {@code p.subcategory.slug} in a WHERE clause
-     * compiles to an INNER join, which silently drops every product whose
-     * {@code subcategory} is null (the common case) even when its
-     * {@code category} matches, because Hibernate still requires that inner
-     * join to succeed for the row to appear at all.
-     *
-     * {@code CAST(:q AS string)} is also required — found live: with a null
+     * {@code CAST(:q AS string)} is required — found live: with a null
      * {@code q}, PostgreSQL's JDBC driver can't infer a type for that bind
      * parameter from its position inside {@code LOWER(CONCAT(...))} alone and
      * defaults it to {@code bytea}, so every call with no search term (not
      * just an actual search) failed with "function lower(bytea) does not
      * exist". The explicit cast forces varchar, which the null-check on the
      * same parameter never needed since {@code IS NULL} doesn't care about type.
+     *
+     * Explicit {@code LEFT JOIN c.parent parent} is required — found live (Phase 3,
+     * 2026-09-24, the exact same landmine {@link #searchAdmin}'s old category/
+     * subcategory version warned about): an implicit path navigation like
+     * {@code c.parent.slug} in a WHERE clause compiles to an INNER join, which
+     * silently drops every product with NO category at all, since that inner
+     * join can never succeed when {@code c} itself is null from the outer LEFT JOIN.
      */
     @Query("""
-            SELECT p FROM Product p
-            LEFT JOIN p.category c
-            LEFT JOIN p.subcategory sc
+            SELECT DISTINCT p FROM Product p
+            LEFT JOIN p.categories c
+            LEFT JOIN c.parent parent
             WHERE p.isPublished = true AND p.deleted = false
               AND (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(p.shortDescription) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-              AND (:categorySlug IS NULL OR c.slug = :categorySlug OR sc.slug = :categorySlug)
+              AND (:categorySlug IS NULL OR c.slug = :categorySlug OR parent.slug = :categorySlug)
               AND (:popular IS NULL OR p.isPopular = :popular)
               AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)
               AND (:deal IS NULL OR :deal = false OR EXISTS (
@@ -57,21 +59,25 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
 
     /**
      * Staff product list: every optional filter short-circuits when null. {@code q} also matches a
-     * variant SKU. {@code stock} is IN (something sellable) or OUT (nothing sellable); the same
-     * sellable definition as the public catalogue (on hand minus reserved, at SHOP — branches/
-     * locations were removed 2026-09-24, founder decision, see HANDOFF.md).
+     * variant SKU or name. {@code stock} is IN (something sellable) or OUT (nothing sellable); the
+     * same sellable definition as the public catalogue (on hand minus reserved, at SHOP — branches/
+     * locations were removed 2026-09-24, founder decision, see HANDOFF.md). {@code categoryId}
+     * matches a product tagged with that category directly, or with one of its subcategories
+     * (Phase 3, 2026-09-24 — products can belong to several categories now).
      * Same {@code CAST(... AS string)} null-parameter fix as {@link #searchPublished}.
      */
     @Query("""
-            SELECT p FROM Product p
-            LEFT JOIN p.category c
-            LEFT JOIN p.subcategory sc
+            SELECT DISTINCT p FROM Product p
+            LEFT JOIN p.categories c
+            LEFT JOIN c.parent parent
             WHERE p.deleted = :deleted
               AND (:q IS NULL
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR EXISTS (SELECT 1 FROM ProductVariant v
-                              WHERE v.product = p AND LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))))
-              AND (:categoryId IS NULL OR c.id = :categoryId OR sc.id = :categoryId)
+                              WHERE v.product = p AND (
+                                  LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                                  OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))))
+              AND (:categoryId IS NULL OR c.id = :categoryId OR parent.id = :categoryId)
               AND (:published IS NULL OR p.isPublished = :published)
               AND (:popular IS NULL OR p.isPopular = :popular)
               AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)
@@ -94,17 +100,15 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                @Param("deleted") boolean deleted,
                                Pageable pageable);
 
-    /** Same category or subcategory as the given product, excluding itself — the "related products" rail. */
+    /** Shares a category (directly, or via a shared parent) with the given product, excluding itself — the "related products" rail. */
     @Query("""
-            SELECT p FROM Product p
-            LEFT JOIN p.category c
-            LEFT JOIN p.subcategory sc
+            SELECT DISTINCT p FROM Product p
+            JOIN p.categories c
+            LEFT JOIN c.parent parent
             WHERE p.isPublished = true AND p.deleted = false AND p.id <> :excludeId
-              AND ((c.id = :categoryId) OR (sc.id = :categoryId)
-                   OR (c.id = :subcategoryId) OR (sc.id = :subcategoryId))
+              AND (c.id IN :categoryIds OR parent.id IN :categoryIds)
             """)
-    List<Product> findRelated(@Param("categoryId") UUID categoryId,
-                               @Param("subcategoryId") UUID subcategoryId,
+    List<Product> findRelated(@Param("categoryIds") List<UUID> categoryIds,
                                @Param("excludeId") UUID excludeId,
                                Pageable pageable);
 }

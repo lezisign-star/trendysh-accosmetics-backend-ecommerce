@@ -67,6 +67,7 @@ public class CartService {
         Cart cart = findOrCreateCart(sessionId);
         ProductVariant variant = variantRepository.findById(variantId)
                 .orElseThrow(() -> new EntityNotFoundException("No product variant: " + variantId));
+        requireSellable(variant);
 
         checkCourtesyAvailability(variant, qty);
 
@@ -100,6 +101,7 @@ public class CartService {
                 .filter(i -> i.getCart().getId().equals(cart.getId()))
                 .orElseThrow(() -> new EntityNotFoundException("No cart item: " + itemId));
 
+        requireSellable(item.getVariant());
         checkCourtesyAvailability(item.getVariant(), qty);
         item.setQty(qty);
         cartItemRepository.save(item);
@@ -139,6 +141,18 @@ public class CartService {
         cartItemRepository.deleteAll(cartItemRepository.findByCartId(cart.getId()));
         cart.setStatus(Cart.CartStatus.ACTIVE);
         return cartRepository.save(cart);
+    }
+
+    /**
+     * A deleted/hidden variant, or one whose product is unpublished/deleted, must never be
+     * addable to a cart — found live while building Phase 3's editor (2026-09-24): nothing
+     * previously checked this, so a variant an admin had just soft-deleted or hidden stayed
+     * addable to a cart that already had a reference to it (e.g. reopened from local storage).
+     */
+    private void requireSellable(ProductVariant variant) {
+        if (!variant.isSellable() || !variant.getProduct().isPublished() || variant.getProduct().isDeleted()) {
+            throw new IllegalArgumentException("This item is no longer available");
+        }
     }
 
     private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty) {

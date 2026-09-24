@@ -17,15 +17,20 @@ public interface CategoryRepository extends JpaRepository<Category, UUID> {
 
     long countByParentId(UUID parentId);
 
-    /** Live products per category id (as category). Rows: [categoryId, count]. */
-    @Query("SELECT p.category.id, COUNT(p) FROM Product p WHERE p.deleted = false AND p.category IS NOT NULL GROUP BY p.category.id")
+    /**
+     * Live products directly in a category (however many categories each belongs to — Phase 3,
+     * 2026-09-24). Rows: [categoryId, count]. A caller that wants a top-level category's count to
+     * include its subcategories' products sums this with the same query filtered to its children.
+     */
+    @Query("""
+            SELECT c.id, COUNT(DISTINCT p)
+            FROM Product p JOIN p.categories c
+            WHERE p.deleted = false
+            GROUP BY c.id
+            """)
     List<Object[]> liveProductCountsByCategory();
 
-    /** Live products per category id (as subcategory). Rows: [categoryId, count]. */
-    @Query("SELECT p.subcategory.id, COUNT(p) FROM Product p WHERE p.deleted = false AND p.subcategory IS NOT NULL GROUP BY p.subcategory.id")
-    List<Object[]> liveProductCountsBySubcategory();
-
-    /** Every product (including soft-deleted ones) that still points at the category — these block deleting it. */
-    @Query("SELECT COUNT(p) FROM Product p WHERE p.category.id = :id OR p.subcategory.id = :id")
+    /** Every product (including soft-deleted ones) still in this category — these block deleting it. */
+    @Query("SELECT COUNT(DISTINCT p) FROM Product p JOIN p.categories c WHERE c.id = :id")
     long countProductsReferencing(UUID id);
 }

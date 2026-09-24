@@ -6,6 +6,8 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -29,13 +31,23 @@ public class Product extends BaseEntity {
     @JoinColumn(name = "brand_id")
     private Brand brand;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "category_id")
-    private Category category;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "subcategory_id")
-    private Category subcategory;
+    /**
+     * A product can belong to several categories (founder decision 2026-09-24, Phase 3 of the
+     * inventory redesign — replaces the old single category/subcategory pair). {@code position} 0
+     * is the "primary" category, used for breadcrumbs and the SKU prefix; {@code @OrderColumn}
+     * lets Hibernate own that column, which means every save replaces the whole join-table row set
+     * for this product rather than diffing it — fine at this catalogue's size, revisit only if it
+     * ever becomes a hot path. The old {@code product.category_id}/{@code subcategory_id} columns
+     * still exist in the database (V27 kept them for rollback safety) but are deliberately not
+     * mapped here — nothing in Phase 3a's code reads or writes them; V28 drops them for good once
+     * Phase 3e is live and re-verified.
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(name = "product_category",
+            joinColumns = @JoinColumn(name = "product_id"),
+            inverseJoinColumns = @JoinColumn(name = "category_id"))
+    @OrderColumn(name = "position")
+    private List<Category> categories = new ArrayList<>();
 
     @Column(length = 500)
     private String shortDescription;

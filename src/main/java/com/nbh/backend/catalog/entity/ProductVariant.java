@@ -33,7 +33,21 @@ public class ProductVariant extends BaseEntity {
     @Column(nullable = false, length = 250)
     private String variantName;
 
-    @Column(nullable = false, precision = 14, scale = 2)
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
+    /** Position within its product on the editor page and the storefront's sibling strip. */
+    @Column(nullable = false)
+    private int sortOrder = 0;
+
+    /**
+     * Nullable since Phase 3 (2026-09-24): a draft variant can be saved with no price at all —
+     * publishing only WARNS about this (never blocks a save), so a priced-less variant needs a
+     * real "not sellable yet" state rather than a fake zero. See {@link #isSellable()} and every
+     * caller that reads this field for a null check; {@code EffectivePriceResolver} and
+     * {@code VariantDealService} both guard it explicitly.
+     */
+    @Column(precision = 14, scale = 2)
     private BigDecimal sellingPrice;
 
     @Column(precision = 14, scale = 2)
@@ -77,4 +91,9 @@ public class ProductVariant extends BaseEntity {
 
     @Column(nullable = false)
     private boolean deleted = false;
+
+    /** Not deleted, not hidden, and has a price — the one definition of "can appear/be sold" everywhere. */
+    public boolean isSellable() {
+        return !deleted && isActive && sellingPrice != null;
+    }
 }

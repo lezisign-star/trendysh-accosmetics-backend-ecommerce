@@ -69,6 +69,7 @@ class CartServiceUnitTest {
         product.setId(UUID.randomUUID());
         product.setName("Gel polish");
         product.setSlug("gel-polish");
+        product.setPublished(true);
         variant = new ProductVariant();
         variant.setId(UUID.randomUUID());
         variant.setProduct(product);

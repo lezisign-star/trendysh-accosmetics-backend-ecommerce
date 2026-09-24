@@ -1,5 +1,6 @@
 package com.nbh.backend.catalog.dto;
 
+import com.nbh.backend.catalog.entity.Category;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.service.EffectivePriceResolver;
 
@@ -56,13 +57,15 @@ public record CatalogProductSummaryDto(
                 .filter(java.util.Objects::nonNull)
                 .min(Instant::compareTo)
                 .orElse(null);
+        Category primary = p.getCategories().isEmpty() ? null : p.getCategories().get(0);
+        Category primaryParent = primary != null ? primary.getParent() : null;
         return new CatalogProductSummaryDto(
                 p.getId(), p.getSlug(), p.getName(),
                 p.getBrand() != null ? p.getBrand().getName() : null,
-                p.getCategory() != null ? p.getCategory().getId() : null,
-                p.getCategory() != null ? p.getCategory().getName() : null,
-                p.getSubcategory() != null ? p.getSubcategory().getId() : null,
-                p.getSubcategory() != null ? p.getSubcategory().getName() : null,
+                primaryParent != null ? primaryParent.getId() : (primary != null ? primary.getId() : null),
+                primaryParent != null ? primaryParent.getName() : (primary != null ? primary.getName() : null),
+                primaryParent != null ? primary.getId() : null,
+                primaryParent != null ? primary.getName() : null,
                 p.getShortDescription(), primaryImageUrl, min, max, originalMin, onDeal, dealEndsAt,
                 p.isPopular(), p.isNewArrival(), avgRating, reviewCount, unitsSold, inStock);
     }

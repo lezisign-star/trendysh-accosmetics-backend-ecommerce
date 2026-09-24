@@ -24,6 +24,8 @@ public record ProductVariantDto(
         UUID id,
         String sku,
         String variantName,
+        String description,
+        int sortOrder,
         BigDecimal sellingPrice,
         BigDecimal compareAtPrice,
         BigDecimal standardCost,
@@ -35,6 +37,8 @@ public record ProductVariantDto(
         BigDecimal availableQty,
         BigDecimal dealPrice,
         Instant dealEndsAt,
+        // Always empty as of Phase 3 (2026-09-24) — the attribute/option model is gone from the
+        // editor. Compatibility for the pre-Phase-3 frontend; removed in Phase 3f.
         List<AttributeValueSummary> attributes
 ) {
     public record AttributeValueSummary(
@@ -65,7 +69,8 @@ public record ProductVariantDto(
                         vav.getAttributeValue().getSwatchHex()))
                 .toList();
         return new ProductVariantDto(
-                v.getId(), v.getSku(), v.getVariantName(), v.getSellingPrice(), v.getCompareAtPrice(),
+                v.getId(), v.getSku(), v.getVariantName(), v.getDescription(), v.getSortOrder(),
+                v.getSellingPrice(), v.getCompareAtPrice(),
                 v.getStandardCost(), v.getUom(), v.getVatRate(), v.isVatExempt(), v.getReorderLevel(), v.isActive(),
                 availableQty, v.getDealPrice(), v.getDealEndsAt(), attrs);
     }

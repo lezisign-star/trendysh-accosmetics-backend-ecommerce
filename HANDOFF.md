@@ -1,5 +1,76 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Inventory redesign Phase 3a — plain variants, multi-category, one-page editor API (2026-09-24, later same day)
+
+Backend half of the actual UX fix the audit was for (Phase 1/2 were branches; this is the real
+"products CRUD is confusing" complaint). Full Opus-authored plan (3a–3f) lives only in this
+session's conversation, not written to disk — this entry is the record of what actually shipped.
+
+**Schema (`V27__plain_variants_and_multi_category.sql`, additive only):** new `product_category`
+join table (product ↔ category many-to-many, `position` 0 = primary — used for breadcrumbs/SKU
+prefix), backfilled from the old `category_id`/`subcategory_id` pair (the more specific one wins).
+`product_variant` gained `description` and `sort_order` (backfilled by creation order), and
+`selling_price` became nullable — a draft variant can now be saved with no price at all. The old
+`product.category_id`/`subcategory_id` columns are untouched (kept for rollback safety, no longer
+mapped in code); `V28` in Phase 3f drops them along with the attribute tables once the new frontend
+is live and re-verified. Guard re-checks the same subcategory/parent consistency Phase 3.0 already
+confirmed clean.
+
+**`ProductVariant.isSellable()`** — deleted=false, active=true, price not null — is now the one
+place "can this appear/be sold" is defined; `EffectivePriceResolver`/`VariantDealService` both
+throw on a null price rather than silently miscomputing.
+
+**Real pre-existing bug fixed in passing:** `CartService.addItem`/`updateItemQty` never checked
+that a variant was active/not-deleted or its product published/not-deleted — a soft-deleted or
+hidden variant stayed addable to a cart that already referenced it. Now rejected with "This item is
+no longer available", live-verified.
+
+**New one-page-editor API** (`SaveProductRequest`, nothing `@NotBlank` — a draft saves in any
+state; publishing only returns `ProductDto.warnings()`, it never blocks, per the founder's "warn,
+don't block" rule):
+- `POST /products/draft` / `PUT /products/{id}/full` — the single Save. Diffs the variant list
+  (matched by id) against what's stored: missing = soft-deleted, no id = created with an
+  auto-generated SKU, order in the list becomes `sortOrder`. `expectedUpdatedAt` is an optional
+  optimistic-concurrency check — a mismatch is a 409 "Someone else changed this product".
+- `POST /products/{id}/duplicate` — an unpublished "Name (copy)" with the same categories,
+  variants (new SKUs) and photos.
+- `POST /products/bulk` — `PUBLISH`/`UNPUBLISH`/`DELETE`/`RESTORE`/`ADD_CATEGORIES`/
+  `REPLACE_CATEGORIES`/`ADJUST_PRICE` (percent, rounds half-up to whole shillings, clears a sale
+  that's no longer below the new price, skips priceless variants) across many products at once.
+- Photos deliberately stay on the existing dedicated image endpoints, not folded into this
+  request — no behaviour change there, kept the diff manageable.
+- `CategoryRepository`/`CategoryController` counts now roll a subcategory's products up to its
+  parent (a product filed only under a subcategory used to undercount the parent).
+
+**A real bug caught by the test suite, not by inspection:** the new `searchPublished`/`searchAdmin`
+JPQL used `c.parent.slug`/`c.parent.id` directly — the exact same "implicit path navigation compiles
+to an INNER JOIN" landmine `ProductRepository`'s own comments already warned about for the old
+`p.subcategory.slug`. It silently dropped every product with **no category at all** from every
+catalogue/admin search. Fixed with an explicit `LEFT JOIN c.parent parent` in all three rewritten
+queries (`searchPublished`, `searchAdmin`, `findRelated`) — caught by `MerchandisingIntegrationTest`
+(4 failures) before this ever reached dev.
+
+**Verified:** full backend suite **197/197** green on a fresh test database. `V27` dry-run against a
+disposable `pg_dump`/`pg_restore` copy of dev first, then applied to real dev **through Flyway**
+(never by hand). Live curl end-to-end: draft creation with 2 categories + a priceless variant
+(warnings correct: "No photo", "1 variant has no price…", "A variant needs a name"), full save that
+publishes despite warnings (succeeds, warnings still returned), a stale `expectedUpdatedAt` (409),
+duplicate, the soft-deleted-variant cart rejection above, and all of `ADJUST_PRICE`/`DELETE`/
+`RESTORE` via `/products/bulk`. `GET /admin/stock/consistency-check` stayed `consistent: true`
+throughout. Test data cleaned up afterward.
+
+**Known gap, not yet closed:** no dedicated JUnit coverage for `saveProduct`/`duplicate`/`bulk`
+yet (the existing 197 cover everything they already covered, now against the new schema/entity
+shape) — the plan calls for `ProductSaveIntegrationTest`/`ProductBulkActionsIntegrationTest`/
+`ProductDuplicateIntegrationTest`; live curl verification stands in for now, tests are a follow-up
+before this is considered fully done. This commit is **local only as of this entry** — not yet
+pushed pending that gap and a look at the diff.
+
+**Not yet done, in order:** Phase 3b (storefront API: one card per variant, sibling
+recommendations), 3c (the actual one-page editor frontend), 3d (product list redesign), 3e
+(storefront frontend), 3f (drop the attribute tables + `V28`, only once 3a–3e are live and
+re-verified).
+
 ## Inventory redesign Phase 3.0 — plain-variant/multi-category pre-flight (2026-09-24, later same day)
 
 Read-only pre-flight for the next redesign phase (plain variants — name/photo/price/description
