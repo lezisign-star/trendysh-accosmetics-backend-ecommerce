@@ -1,5 +1,40 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Branch-aware checkout, real branch CRUD, order branch visibility (2026-09-24, later same day)
+
+**Phase E of the admin-dashboard rework**, prompted by the owner watching a screenshot of stray
+test-data categories and asking for real multi-branch inventory management. Two parts:
+
+1. **Checkout now falls back across branches.** Every online order used to silently reserve stock
+   from one hardcoded branch (`branchRepository.findByIsDefaultOnlineFulfilmentTrue()`) — an
+   out-of-stock line there failed checkout even if another branch had it. `CheckoutService` now
+   tries the main branch first per line, and only reaches into other active branches (deterministic
+   order, by code) when the main one is short — the owner's explicit rule, not a full nearest/
+   cheapest allocator. The schema already supported this (`StockReservation.location` per order
+   line already existed); only the checkout loop's location resolution changed — no migration.
+   **Customer-facing errors were cleaned up in the same change**: the raw
+   `InsufficientAvailabilityException` message includes an internal location code
+   (`"...at BR-A/SALES_FLOOR..."`) — `CheckoutService` now catches it and rethrows a message naming
+   only the product, never any branch/location, and only when NO branch has enough (the owner was
+   explicit: customers must never see a "branch is short" state, only a genuine "out of stock").
+   Confirmed the storefront's existing `inStock` flag (`CatalogService.inStockVariantIds`) already
+   aggregates across all branches, not just the main one — no change needed there.
+
+2. **Branches went from create-only to real CRUD**, plus visibility. `BranchController` gained
+   `PATCH /{id}` (name/address/city/phone/email/active/**main-branch flag** — setting the latter
+   atomically clears whichever branch currently holds it, matching the DB's existing partial-unique-
+   index guarantee). `BranchDto` widened from `{id,code,name,city,isActive,isDefaultOnlineFulfilment}`
+   to also include `addressLine1/2`/`phone`/`email` (all were already on the entity, just never
+   exposed). `AdminOrderDetailDto` now carries the order's main branch and, per line, which branch
+   its stock actually came from (derived from the existing reservation/location chain — nothing new
+   stored) so staff can see at a glance which branch(es) to coordinate with for dispatch.
+
+New `CheckoutBranchFallbackIntegrationTest` (3 tests, real DB, two real branches): main branch
+covers a line it can handle alone, another branch covers a line the main one can't, and a
+genuinely-everywhere-short line fails with the clean customer message (asserted to *not* contain any
+branch/location code). `CheckoutServiceUnitTest` updated for the new constructor dependency and the
+new customer-facing message shape. Full suite green (196 tests).
+
 ## Purchase orders (LPOs): suppliers, lifecycle, real stock on receipt (2026-09-24, later same day)
 
 **Phase D of the admin-dashboard rework** — the one genuinely large new backend subsystem in the
