@@ -1,6 +1,5 @@
 package com.nbh.backend.stock.entity;
 
-import com.nbh.backend.branch.entity.Branch;
 import com.nbh.backend.common.entity.BaseEntity;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -32,10 +31,6 @@ public class StockDocument extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 10)
     private StockDocumentStatus status = StockDocumentStatus.DRAFT;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "branch_id")
-    private Branch branch;
 
     private Instant postedAt;
 

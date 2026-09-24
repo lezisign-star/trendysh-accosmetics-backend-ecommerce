@@ -1,10 +1,7 @@
 package com.nbh.backend.purchasing.service;
 
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
-import com.nbh.backend.common.exception.ConfigurationException;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.purchasing.dto.PurchaseOrderDtos.CreateLineRequest;
@@ -20,6 +17,7 @@ import com.nbh.backend.purchasing.entity.PurchaseOrderStatus;
 import com.nbh.backend.purchasing.entity.Supplier;
 import com.nbh.backend.purchasing.repository.PurchaseOrderRepository;
 import com.nbh.backend.purchasing.repository.SupplierRepository;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
@@ -27,7 +25,6 @@ import com.nbh.backend.stock.repository.StockDocumentCounterRepository;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.staff.entity.StaffUser;
-import com.nbh.backend.staff.service.StaffBranchAccessService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -54,26 +51,21 @@ public class PurchaseOrderService {
     private final PurchaseOrderRepository purchaseOrders;
     private final SupplierRepository suppliers;
     private final ProductVariantRepository variants;
-    private final StockLocationRepository locations;
     private final StockDocumentCounterRepository counters;
     private final StockPostingService postingService;
     private final StockDocumentNoGenerator documentNoGenerator;
-    private final StaffBranchAccessService branchAccessService;
     private final Clock clock;
 
     public PurchaseOrderService(PurchaseOrderRepository purchaseOrders, SupplierRepository suppliers,
-                                 ProductVariantRepository variants, StockLocationRepository locations,
+                                 ProductVariantRepository variants,
                                  StockDocumentCounterRepository counters, StockPostingService postingService,
-                                 StockDocumentNoGenerator documentNoGenerator,
-                                 StaffBranchAccessService branchAccessService, Clock clock) {
+                                 StockDocumentNoGenerator documentNoGenerator, Clock clock) {
         this.purchaseOrders = purchaseOrders;
         this.suppliers = suppliers;
         this.variants = variants;
-        this.locations = locations;
         this.counters = counters;
         this.postingService = postingService;
         this.documentNoGenerator = documentNoGenerator;
-        this.branchAccessService = branchAccessService;
         this.clock = clock;
     }
 
@@ -191,14 +183,9 @@ public class PurchaseOrderService {
             throw new UnprocessableException("Order must be sent before it can be received");
         }
 
-        StockLocation target = findInternalActiveLocationOrThrow(request.locationId());
-        branchAccessService.assertCanAccessBranch(staff, target.getBranch().getId());
-        StockLocation supplierLocation = findLocationByCodeOrThrow("SUPPLIER");
-
         StockDocument document = new StockDocument();
         document.setDocumentNo(documentNoGenerator.next(StockDocumentType.GOODS_RECEIPT));
         document.setDocumentType(StockDocumentType.GOODS_RECEIPT);
-        document.setBranch(target.getBranch());
         document.setNotes(request.notes());
         document.setPostedByUserId(staff.getId());
         document.setReferenceType("PURCHASE_ORDER");
@@ -225,8 +212,8 @@ public class PurchaseOrderService {
             docLine.setDocument(document);
             docLine.setLineNo(lineNo++);
             docLine.setVariant(poLine.getVariant());
-            docLine.setSourceLocation(supplierLocation);
-            docLine.setTargetLocation(target);
+            docLine.setSourceAccount(StockAccount.SUPPLIER);
+            docLine.setTargetAccount(StockAccount.SHOP);
             docLine.setQty(qty);
             docLine.setUnitCost(poLine.getUnitCost());
             document.getLines().add(docLine);
@@ -252,24 +239,6 @@ public class PurchaseOrderService {
 
     private PurchaseOrder findOrThrow(UUID id) {
         return purchaseOrders.findById(id).orElseThrow(() -> new NotFoundException("No purchase order: " + id));
-    }
-
-    private StockLocation findInternalActiveLocationOrThrow(UUID id) {
-        StockLocation location = locations.findById(id)
-                .orElseThrow(() -> new NotFoundException("No stock location: " + id));
-        if (!location.isInternal()) {
-            throw new UnprocessableException(
-                    "Location " + location.getCode() + " is virtual — receiving must target a physical location");
-        }
-        if (!location.isActive()) {
-            throw new UnprocessableException("Location " + location.getCode() + " is not active");
-        }
-        return location;
-    }
-
-    private StockLocation findLocationByCodeOrThrow(String code) {
-        return locations.findByCode(code)
-                .orElseThrow(() -> new ConfigurationException("Missing seeded virtual location: " + code));
     }
 
     private static String blankToNull(String value) {

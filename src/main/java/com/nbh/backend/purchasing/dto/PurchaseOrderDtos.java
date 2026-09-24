@@ -32,7 +32,6 @@ public final class PurchaseOrderDtos {
     public record ReceiveLineRequest(@NotNull UUID poLineId, @NotBlank String qty) {}
 
     public record ReceivePurchaseOrderRequest(
-            @NotNull UUID locationId,
             @Size(max = 1000) String notes,
             @NotEmpty @Valid List<ReceiveLineRequest> lines) {}
 

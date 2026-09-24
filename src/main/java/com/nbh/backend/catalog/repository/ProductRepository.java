@@ -58,7 +58,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     /**
      * Staff product list: every optional filter short-circuits when null. {@code q} also matches a
      * variant SKU. {@code stock} is IN (something sellable) or OUT (nothing sellable); the same
-     * sellable definition as the public catalogue (on hand minus reserved, physical locations).
+     * sellable definition as the public catalogue (on hand minus reserved, at SHOP — branches/
+     * locations were removed 2026-09-24, founder decision, see HANDOFF.md).
      * Same {@code CAST(... AS string)} null-parameter fix as {@link #searchPublished}.
      */
     @Query("""
@@ -76,11 +77,13 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
               AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)
               AND (:stock IS NULL
                    OR (CAST(:stock AS string) = 'IN' AND EXISTS (
-                            SELECT 1 FROM StockBalance b JOIN b.location loc
-                            WHERE b.variant.product = p AND loc.isInternal = true AND (b.onHandQty - b.reservedQty) > 0))
+                            SELECT 1 FROM StockBalance b
+                            WHERE b.variant.product = p AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+                              AND (b.onHandQty - b.reservedQty) > 0))
                    OR (CAST(:stock AS string) = 'OUT' AND NOT EXISTS (
-                            SELECT 1 FROM StockBalance b JOIN b.location loc
-                            WHERE b.variant.product = p AND loc.isInternal = true AND (b.onHandQty - b.reservedQty) > 0)))
+                            SELECT 1 FROM StockBalance b
+                            WHERE b.variant.product = p AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+                              AND (b.onHandQty - b.reservedQty) > 0)))
             """)
     Page<Product> searchAdmin(@Param("q") String q,
                                @Param("categoryId") UUID categoryId,

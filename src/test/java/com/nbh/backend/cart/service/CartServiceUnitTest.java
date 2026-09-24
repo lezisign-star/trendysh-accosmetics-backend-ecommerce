@@ -1,10 +1,5 @@
 package com.nbh.backend.cart.service;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.cart.dto.CartDto;
 import com.nbh.backend.cart.entity.Cart;
 import com.nbh.backend.cart.entity.CartItem;
@@ -15,8 +10,7 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PromoCampaignService;
-import com.nbh.backend.stock.entity.StockBalance;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,9 +40,7 @@ class CartServiceUnitTest {
     @Mock private CartRepository cartRepository;
     @Mock private CartItemRepository cartItemRepository;
     @Mock private ProductVariantRepository variantRepository;
-    @Mock private BranchRepository branchRepository;
-    @Mock private StockLocationRepository locationRepository;
-    @Mock private StockBalanceRepository balanceRepository;
+    @Mock private StockAvailabilityService availabilityService;
     @Mock private PromoCampaignService promoCampaignService;
 
     private CartService cartService;
@@ -64,8 +56,7 @@ class CartServiceUnitTest {
         // price is what should end up in unitPriceSnapshot, same as before this dependency existed.
         lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         cartService = new CartService(cartRepository, cartItemRepository, variantRepository,
-                branchRepository, locationRepository, balanceRepository,
-                new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService);
+                availabilityService, new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -88,18 +79,8 @@ class CartServiceUnitTest {
     }
 
     private void stockAvailable(String onHand, String reserved) {
-        Branch branch = new Branch();
-        branch.setId(UUID.randomUUID());
-        StockLocation floor = new StockLocation();
-        floor.setId(UUID.randomUUID());
-        when(branchRepository.findByIsDefaultOnlineFulfilmentTrue()).thenReturn(Optional.of(branch));
-        when(locationRepository.findByBranchIdAndLocationType(branch.getId(), LocationType.SALES_FLOOR))
-                .thenReturn(Optional.of(floor));
-        StockBalance balance = new StockBalance();
-        balance.setOnHandQty(new BigDecimal(onHand));
-        balance.setReservedQty(new BigDecimal(reserved));
-        when(balanceRepository.findByVariantIdAndLocationId(variant.getId(), floor.getId()))
-                .thenReturn(Optional.of(balance));
+        when(availabilityService.available(variant.getId()))
+                .thenReturn(new BigDecimal(onHand).subtract(new BigDecimal(reserved)));
     }
 
     @Test

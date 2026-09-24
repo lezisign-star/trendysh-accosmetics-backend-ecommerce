@@ -17,7 +17,6 @@ import java.util.UUID;
 public record OrderFulfilledEvent(
         UUID orderId,
         String orderNo,
-        UUID branchId,
         FulfilmentType fulfilmentType,
         String deliveryAddress
 ) {}

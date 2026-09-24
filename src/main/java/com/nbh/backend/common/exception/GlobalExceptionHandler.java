@@ -64,7 +64,7 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.UNAUTHORIZED, e.getMessage());
     }
 
-    /** Branch-scoping violations (audit finding F12, session 3) surface here as a normal 403 JSON body. */
+    /** Permission-authority violations surface here as a normal 403 JSON body. */
     @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
     public ResponseEntity<Object> handleAccessDenied(org.springframework.security.access.AccessDeniedException e) {
         log.warn("403: {}", e.getMessage());

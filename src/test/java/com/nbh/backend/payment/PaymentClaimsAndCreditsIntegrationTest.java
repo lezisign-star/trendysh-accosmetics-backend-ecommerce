@@ -1,6 +1,5 @@
 package com.nbh.backend.payment;
 
-import com.nbh.backend.branch.repository.BranchRepository;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
@@ -47,7 +46,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PaymentClaimsAndCreditsIntegrationTest {
 
     @Autowired private MockMvc mvc;
-    @Autowired private BranchRepository branchRepository;
     @Autowired private CustomerOrderRepository orderRepository;
     @Autowired private PaymentRecordRepository paymentRecordRepository;
     @Autowired private PaymentReferenceGenerator referenceGenerator;
@@ -194,8 +192,7 @@ class PaymentClaimsAndCreditsIntegrationTest {
         order.setOrderNo(no);
         order.setGuestEmail("payer@example.com");
         order.setGuestPhone("254700000000");
-        order.setFulfilmentBranch(branchRepository.findByCode("BR-A").orElseThrow());
-        order.setFulfilmentType(FulfilmentType.BRANCH_PICKUP);
+        order.setFulfilmentType(FulfilmentType.PICKUP);
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(new BigDecimal("500.00"));
         order.setVatTotal(BigDecimal.ZERO);

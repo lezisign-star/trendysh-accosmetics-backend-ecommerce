@@ -7,7 +7,6 @@ import java.util.UUID;
 
 public record ReserveStockRequest(
         @NotNull UUID variantId,
-        @NotNull UUID locationId,
         @NotNull String qty,
         @NotNull StockReservation.ReservationSource source,
         @NotNull String referenceType,

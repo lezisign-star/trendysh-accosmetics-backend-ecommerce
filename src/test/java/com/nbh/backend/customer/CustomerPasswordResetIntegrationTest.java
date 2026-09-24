@@ -2,7 +2,6 @@ package com.nbh.backend.customer;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nbh.backend.branch.repository.BranchRepository;
 import com.nbh.backend.common.email.EmailSender;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.FulfilmentType;
@@ -52,7 +51,6 @@ class CustomerPasswordResetIntegrationTest {
     @Autowired private MockMvc mvc;
     @Autowired private ObjectMapper json;
     @Autowired private CustomerOrderRepository orders;
-    @Autowired private BranchRepository branches;
     @MockitoBean private EmailSender emailSender;
 
     private static String uniqueEmail() {
@@ -99,8 +97,7 @@ class CustomerPasswordResetIntegrationTest {
         order.setOrderNo("GUEST-" + UUID.randomUUID().toString().substring(0, 8));
         order.setGuestEmail(email);
         order.setGuestPhone("254720000111");
-        order.setFulfilmentBranch(branches.findByCode("BR-A").orElseThrow());
-        order.setFulfilmentType(FulfilmentType.BRANCH_PICKUP);
+        order.setFulfilmentType(FulfilmentType.PICKUP);
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(new BigDecimal("500.00"));
         order.setVatTotal(BigDecimal.ZERO);

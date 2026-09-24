@@ -1,24 +1,20 @@
 package com.nbh.backend.stock.service;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
-import com.nbh.backend.common.exception.ConfigurationException;
 import com.nbh.backend.staff.entity.StaffUser;
-import com.nbh.backend.staff.service.StaffBranchAccessService;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -27,40 +23,35 @@ import java.util.UUID;
  * is posted through {@link StockPostingService} (the single write path), so the ledger stays a
  * complete, balanced audit trail:
  * <ul>
- *   <li>more stock than before: a GOODS_RECEIPT from SUPPLIER into the default online-fulfilment
- *       branch's sales floor (the shelf the storefront cart checks);</li>
- *   <li>less stock: an ADJUSTMENT write-off out of that same shelf.</li>
+ *   <li>more stock than before: a GOODS_RECEIPT from SUPPLIER into SHOP;</li>
+ *   <li>less stock: an ADJUSTMENT write-off out of SHOP.</li>
  * </ul>
- * The target is the SELLABLE quantity (on hand minus reserved, all physical locations), i.e. exactly the
- * number the editor shows, so a pending checkout reservation never causes a wrong correction.
+ * The target is the SELLABLE quantity (on hand minus reserved), i.e. exactly the number the editor
+ * shows, so a pending checkout reservation never causes a wrong correction. Branches/locations were
+ * removed 2026-09-24 (founder decision — see HANDOFF.md); there is one shop, so no location lookup
+ * is needed any more.
  */
 @Service
 public class VariantStockService {
 
     public record Result(BigDecimal previousAvailable, BigDecimal newAvailable, String documentNo) {}
 
+    /** One variant's target stock level, for {@link #setAvailableBatch}. */
+    public record Target(UUID variantId, BigDecimal quantity, BigDecimal unitCost) {}
+
     private final ProductVariantRepository variantRepository;
-    private final StockBalanceRepository balanceRepository;
-    private final BranchRepository branchRepository;
-    private final StockLocationRepository locationRepository;
+    private final StockAvailabilityService availabilityService;
     private final StockPostingService postingService;
     private final StockDocumentNoGenerator documentNoGenerator;
-    private final StaffBranchAccessService branchAccessService;
 
     public VariantStockService(ProductVariantRepository variantRepository,
-                               StockBalanceRepository balanceRepository,
-                               BranchRepository branchRepository,
-                               StockLocationRepository locationRepository,
+                               StockAvailabilityService availabilityService,
                                StockPostingService postingService,
-                               StockDocumentNoGenerator documentNoGenerator,
-                               StaffBranchAccessService branchAccessService) {
+                               StockDocumentNoGenerator documentNoGenerator) {
         this.variantRepository = variantRepository;
-        this.balanceRepository = balanceRepository;
-        this.branchRepository = branchRepository;
-        this.locationRepository = locationRepository;
+        this.availabilityService = availabilityService;
         this.postingService = postingService;
         this.documentNoGenerator = documentNoGenerator;
-        this.branchAccessService = branchAccessService;
     }
 
     /**
@@ -79,52 +70,101 @@ public class VariantStockService {
             throw new EntityNotFoundException("No variant " + variantId + " on product " + productId);
         }
 
-        Branch branch = branchRepository.findByIsDefaultOnlineFulfilmentTrue()
-                .orElseThrow(() -> new ConfigurationException("No branch is configured as the default online-fulfilment branch"));
-        branchAccessService.assertCanAccessBranch(staff, branch.getId());
-        StockLocation shelf = locationRepository.findByBranchIdAndLocationType(branch.getId(), LocationType.SALES_FLOOR)
-                .orElseThrow(() -> new ConfigurationException("The default branch has no sales-floor location"));
-
-        BigDecimal current = balanceRepository.availabilityForVariants(java.util.List.of(variantId)).stream()
-                .findFirst().map(StockBalanceRepository.VariantAvailability::getAvailable).orElse(BigDecimal.ZERO);
+        BigDecimal current = availabilityService.available(variantId);
         BigDecimal delta = target.subtract(current);
         if (delta.signum() == 0) {
             return new Result(current, current, null);
         }
 
-        StockDocument document = new StockDocument();
-        document.setBranch(branch);
-        document.setPostedByUserId(staff.getId());
-        StockDocumentLine line = new StockDocumentLine();
-        line.setDocument(document);
-        line.setLineNo(1);
-        line.setVariant(variant);
-        line.setQty(delta.abs());
-
-        if (delta.signum() > 0) {
-            document.setDocumentType(StockDocumentType.GOODS_RECEIPT);
-            document.setDocumentNo(documentNoGenerator.next(StockDocumentType.GOODS_RECEIPT));
-            document.setNotes("Stock set from the product editor");
-            line.setSourceLocation(virtual("SUPPLIER"));
-            line.setTargetLocation(shelf);
-            BigDecimal cost = unitCost != null ? unitCost
-                    : variant.getStandardCost() != null ? variant.getStandardCost() : BigDecimal.ZERO;
-            line.setUnitCost(cost);
-        } else {
-            document.setDocumentType(StockDocumentType.ADJUSTMENT);
-            document.setDocumentNo(documentNoGenerator.next(StockDocumentType.ADJUSTMENT));
-            document.setNotes("Stock corrected from the product editor");
-            line.setSourceLocation(shelf);
-            line.setTargetLocation(virtual("ADJUSTMENT"));
-        }
-        document.getLines().add(line);
+        StockDocument document = newDocument(delta, staff);
+        document.getLines().add(line(document, variant, 1, delta, unitCost));
 
         StockDocument posted = postingService.post(document);
         return new Result(current, target, posted.getDocumentNo());
     }
 
-    private StockLocation virtual(String code) {
-        return locationRepository.findByCode(code)
-                .orElseThrow(() -> new ConfigurationException("Missing virtual stock location " + code));
+    /**
+     * Sets several variants' target stock in one call — the product editor's one-Save flow (Phase 3)
+     * calls this once for the whole page instead of once per variant, so editing 10 variants produces
+     * at most one GOODS_RECEIPT and one ADJUSTMENT document, not up to 10 of each.
+     */
+    @Transactional
+    public void setAvailableBatch(List<Target> targets, StaffUser staff) {
+        if (targets.isEmpty()) {
+            return;
+        }
+        Map<UUID, BigDecimal> current = availabilityService.available(targets.stream().map(Target::variantId).toList());
+
+        record Pending(ProductVariant variant, BigDecimal delta, BigDecimal unitCost) {}
+        List<Pending> pendingIncreases = new ArrayList<>();
+        List<Pending> pendingDecreases = new ArrayList<>();
+
+        for (Target t : targets) {
+            if (t.quantity() == null || t.quantity().signum() < 0) {
+                throw new IllegalArgumentException("Stock quantity cannot be negative for variant " + t.variantId());
+            }
+            ProductVariant variant = variantRepository.findById(t.variantId())
+                    .orElseThrow(() -> new EntityNotFoundException("No variant: " + t.variantId()));
+            BigDecimal delta = t.quantity().subtract(current.getOrDefault(t.variantId(), BigDecimal.ZERO));
+            if (delta.signum() == 0) {
+                continue;
+            }
+            if (delta.signum() > 0) {
+                pendingIncreases.add(new Pending(variant, delta, t.unitCost()));
+            } else {
+                pendingDecreases.add(new Pending(variant, delta, null));
+            }
+        }
+
+        if (!pendingIncreases.isEmpty()) {
+            StockDocument receipt = newDocument(BigDecimal.ONE, staff);
+            int lineNo = 1;
+            for (Pending p : pendingIncreases) {
+                receipt.getLines().add(line(receipt, p.variant(), lineNo++, p.delta(), p.unitCost()));
+            }
+            postingService.post(receipt);
+        }
+        if (!pendingDecreases.isEmpty()) {
+            StockDocument adjustment = newDocument(BigDecimal.valueOf(-1), staff);
+            int lineNo = 1;
+            for (Pending p : pendingDecreases) {
+                adjustment.getLines().add(line(adjustment, p.variant(), lineNo++, p.delta(), null));
+            }
+            postingService.post(adjustment);
+        }
+    }
+
+    private StockDocument newDocument(BigDecimal signedDelta, StaffUser staff) {
+        StockDocument document = new StockDocument();
+        document.setPostedByUserId(staff.getId());
+        if (signedDelta.signum() >= 0) {
+            document.setDocumentType(StockDocumentType.GOODS_RECEIPT);
+            document.setDocumentNo(documentNoGenerator.next(StockDocumentType.GOODS_RECEIPT));
+            document.setNotes("Stock set from the product editor");
+        } else {
+            document.setDocumentType(StockDocumentType.ADJUSTMENT);
+            document.setDocumentNo(documentNoGenerator.next(StockDocumentType.ADJUSTMENT));
+            document.setNotes("Stock corrected from the product editor");
+        }
+        return document;
+    }
+
+    private StockDocumentLine line(StockDocument document, ProductVariant variant, int lineNo, BigDecimal delta, BigDecimal unitCost) {
+        StockDocumentLine line = new StockDocumentLine();
+        line.setDocument(document);
+        line.setLineNo(lineNo);
+        line.setVariant(variant);
+        line.setQty(delta.abs());
+        if (delta.signum() > 0) {
+            line.setSourceAccount(StockAccount.SUPPLIER);
+            line.setTargetAccount(StockAccount.SHOP);
+            BigDecimal cost = unitCost != null ? unitCost
+                    : variant.getStandardCost() != null ? variant.getStandardCost() : BigDecimal.ZERO;
+            line.setUnitCost(cost);
+        } else {
+            line.setSourceAccount(StockAccount.SHOP);
+            line.setTargetAccount(StockAccount.ADJUSTMENT);
+        }
+        return line;
     }
 }

@@ -1,6 +1,5 @@
 package com.nbh.backend.stock.entity;
 
-import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -33,9 +32,9 @@ public class StockLedgerEntry {
     @JoinColumn(name = "variant_id", nullable = false)
     private ProductVariant variant;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "location_id", nullable = false)
-    private StockLocation location;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private StockAccount account;
 
     @Column(nullable = false)
     private Instant postedAt;
@@ -44,7 +43,7 @@ public class StockLedgerEntry {
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qtyChange;
 
-    /** Running balance at this location after this entry (ERPNext's qty_after_transaction). */
+    /** Running balance for this account after this entry (ERPNext's qty_after_transaction). */
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qtyAfter;
 

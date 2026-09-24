@@ -2,9 +2,6 @@ package com.nbh.backend.purchasing;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.common.security.JwtService;
 import com.nbh.backend.staff.repository.StaffUserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,7 +24,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 /**
  * The LPO lifecycle through the real API: create a draft, send it, receive it in two partial
  * deliveries, and confirm each receipt actually posted real stock (not just PO bookkeeping) —
- * plus the guardrails (can't cancel after receiving, can't over-receive a line).
+ * plus the guardrails (can't cancel after receiving, can't over-receive a line). There is one
+ * shop (SHOP) — branches were removed 2026-09-24 (founder decision — see HANDOFF.md) — so
+ * receiving no longer names a location.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -38,11 +37,8 @@ class PurchaseOrderIntegrationTest {
     @Autowired private ObjectMapper json;
     @Autowired private JwtService jwtService;
     @Autowired private StaffUserRepository staffUsers;
-    @Autowired private BranchRepository branchRepository;
-    @Autowired private StockLocationRepository locationRepository;
 
     private String token;
-    private UUID locationId;
 
     @BeforeEach
     void setUp() {
@@ -50,10 +46,6 @@ class PurchaseOrderIntegrationTest {
                 .filter(u -> u.getStaffRole() != null && "SUPER_ADMIN".equals(u.getStaffRole().getName()))
                 .findFirst().orElseThrow();
         token = jwtService.generateAccessToken(admin);
-
-        var branch = branchRepository.findByCode("BR-A").orElseThrow();
-        locationId = locationRepository.findByBranchIdAndLocationType(branch.getId(), LocationType.BACKSTORE)
-                .orElseThrow().getId();
     }
 
     private static String unique(String base) {
@@ -73,6 +65,16 @@ class PurchaseOrderIntegrationTest {
         request.header("Authorization", "Bearer " + token);
         if (body != null) request.contentType(MediaType.APPLICATION_JSON).content(body);
         return mvc.perform(request).andReturn().getResponse().getStatus();
+    }
+
+    private java.math.BigDecimal shopOnHand(String variantId) throws Exception {
+        JsonNode balances = ok(get("/api/v1/stock/balance?variantId=" + variantId), null);
+        for (JsonNode b : balances) {
+            if ("SHOP".equals(b.get("account").asText())) {
+                return b.get("onHandQty").decimalValue();
+            }
+        }
+        throw new AssertionError("No SHOP balance row for variant " + variantId);
     }
 
     private String newSupplier() throws Exception {
@@ -115,33 +117,31 @@ class PurchaseOrderIntegrationTest {
 
         // Can't receive a draft.
         assertThat(status(post("/api/v1/admin/purchase-orders/" + poId + "/receive"),
-                "{\"locationId\":\"" + locationId + "\",\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"10\"}]}"))
+                "{\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"10\"}]}"))
                 .isEqualTo(422);
 
         ok(post("/api/v1/admin/purchase-orders/" + poId + "/send"), null);
 
         // First partial receipt: 60 of 100.
         JsonNode afterFirst = ok(post("/api/v1/admin/purchase-orders/" + poId + "/receive"),
-                "{\"locationId\":\"" + locationId + "\",\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"60\"}]}");
+                "{\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"60\"}]}");
         assertThat(afterFirst.get("status").asText()).isEqualTo("PARTIALLY_RECEIVED");
         assertThat(afterFirst.get("lines").get(0).get("qtyReceived").decimalValue()).isEqualByComparingTo("60");
 
-        JsonNode balance = ok(get("/api/v1/stock/balance?variantId=" + variantId + "&locationId=" + locationId), null);
-        assertThat(balance.get(0).get("onHandQty").decimalValue()).isEqualByComparingTo("60");
+        assertThat(shopOnHand(variantId)).isEqualByComparingTo("60");
 
         // Over-receiving what's left (100 - 60 = 40) is rejected.
         assertThat(status(post("/api/v1/admin/purchase-orders/" + poId + "/receive"),
-                "{\"locationId\":\"" + locationId + "\",\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"41\"}]}"))
+                "{\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"41\"}]}"))
                 .isEqualTo(422);
 
         // Second receipt finishes it off.
         JsonNode afterSecond = ok(post("/api/v1/admin/purchase-orders/" + poId + "/receive"),
-                "{\"locationId\":\"" + locationId + "\",\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"40\"}]}");
+                "{\"lines\":[{\"poLineId\":\"" + lineId + "\",\"qty\":\"40\"}]}");
         assertThat(afterSecond.get("status").asText()).isEqualTo("RECEIVED");
         assertThat(afterSecond.get("lines").get(0).get("qtyReceived").decimalValue()).isEqualByComparingTo("100");
 
-        JsonNode finalBalance = ok(get("/api/v1/stock/balance?variantId=" + variantId + "&locationId=" + locationId), null);
-        assertThat(finalBalance.get(0).get("onHandQty").decimalValue()).isEqualByComparingTo("100");
+        assertThat(shopOnHand(variantId)).isEqualByComparingTo("100");
 
         // Fully received — can't cancel.
         assertThat(status(post("/api/v1/admin/purchase-orders/" + poId + "/cancel"), null)).isEqualTo(422);

@@ -14,7 +14,6 @@ import java.util.UUID;
 public record LowStockThresholdCrossedEvent(
         UUID variantId,
         String sku,
-        UUID locationId,
         BigDecimal onHandBefore,
         BigDecimal onHandAfter,
         BigDecimal reorderLevel

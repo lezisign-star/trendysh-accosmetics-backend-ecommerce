@@ -2,8 +2,13 @@ package com.nbh.backend.staff.entity;
 
 /**
  * Flat capability set, adapted from Moments Packaging's Permission enum
- * (user/entity/Permission.java) plus the stock/POS/branch permissions
- * NBH needs that Moments doesn't have (see architecture doc section 4.8).
+ * (user/entity/Permission.java) plus the stock/POS permissions NBH needs
+ * that Moments doesn't have (see architecture doc section 4.8).
+ *
+ * <p>BRANCH_MANAGE, STOCK_TRANSFER_INITIATE and STOCK_TRANSFER_APPROVE were
+ * removed 2026-09-24 when branches were eliminated (founder decision — see
+ * HANDOFF.md): there is one shop, nothing to transfer between, and nothing
+ * left to manage per-branch.
  */
 public enum Permission {
 
@@ -20,8 +25,6 @@ public enum Permission {
     STOCK_RECEIVE,
     STOCK_ADJUST,
     STOCK_COUNT,
-    STOCK_TRANSFER_INITIATE,
-    STOCK_TRANSFER_APPROVE,
 
     // POS — new for NBH, reserved ahead of the Phase-4 POS UI
     POS_SELL,
@@ -34,9 +37,6 @@ public enum Permission {
     PAYMENT_VIEW,
     PAYMENT_MANAGE,
     PAYMENT_REFUND,
-
-    // Branch
-    BRANCH_MANAGE,
 
     // Staff / role management
     USER_VIEW,

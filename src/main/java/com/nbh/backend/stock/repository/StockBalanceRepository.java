@@ -1,6 +1,7 @@
 package com.nbh.backend.stock.repository;
 
 import com.nbh.backend.stock.dto.InventoryLineDto;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
@@ -15,13 +16,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Reads and writes here are restricted, in effect, by the ArchUnit rule in
+ * {@code SingleWritePathArchitectureTest} ("no class outside
+ * {@code com.nbh.backend.stock.service} may depend on this repository") — go
+ * through {@link com.nbh.backend.stock.service.StockAvailabilityService} for
+ * reads, {@link com.nbh.backend.stock.service.StockPostingService} for writes.
+ */
 public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID> {
 
-    Optional<StockBalance> findByVariantIdAndLocationId(UUID variantId, UUID locationId);
+    Optional<StockBalance> findByVariantIdAndAccount(UUID variantId, StockAccount account);
 
     List<StockBalance> findByVariantId(UUID variantId);
-
-    List<StockBalance> findByLocationId(UUID locationId);
 
     /**
      * Takes the row lock FIRST, per ERPNext's stock_reservation_entry.py
@@ -33,8 +39,8 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
      * writer, including the very first one.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select b from StockBalance b where b.variant.id = :variantId and b.location.id = :locationId")
-    Optional<StockBalance> lockByVariantIdAndLocationId(UUID variantId, UUID locationId);
+    @Query("select b from StockBalance b where b.variant.id = :variantId and b.account = :account")
+    Optional<StockBalance> lockByVariantIdAndAccount(@Param("variantId") UUID variantId, @Param("account") StockAccount account);
 
     /**
      * Audit finding F5 (session 3): the original fix attempt caught
@@ -53,35 +59,31 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
      */
     @Modifying
     @Query(value = """
-        INSERT INTO stock_balance (id, variant_id, location_id, on_hand_qty, reserved_qty, avg_cost, stock_value, created_at, updated_at)
-        VALUES (gen_random_uuid(), :variantId, :locationId, 0, 0, 0, 0, now(), now())
-        ON CONFLICT (variant_id, location_id) DO NOTHING
+        INSERT INTO stock_balance (id, variant_id, account, on_hand_qty, reserved_qty, avg_cost, stock_value, created_at, updated_at)
+        VALUES (gen_random_uuid(), :variantId, CAST(:account AS varchar), 0, 0, 0, 0, now(), now())
+        ON CONFLICT (variant_id, account) DO NOTHING
         """, nativeQuery = true)
-    void insertZeroIfAbsent(@Param("variantId") UUID variantId, @Param("locationId") UUID locationId);
+    void insertZeroIfAbsent(@Param("variantId") UUID variantId, @Param("account") String account);
 
     /**
      * The staff-facing "browse stock levels" list the completeness tour found
      * missing — {@code GET /stock/balance} requires already knowing a variant
-     * or location ID. Internal (physical) locations only — a virtual
-     * location's balance (SUPPLIER, always negative; CUSTOMER, always
-     * positive) is the double-entry mechanism, not an inventory figure a
-     * human should browse. Same {@code CAST(:q AS string)} null-parameter fix
-     * as {@code ProductRepository.searchPublished} for the same reason.
+     * ID. SHOP only — a virtual account's balance (SUPPLIER, always negative;
+     * CUSTOMER, always positive) is the double-entry mechanism, not an
+     * inventory figure a human should browse. Same {@code CAST(:q AS string)}
+     * null-parameter fix as {@code ProductRepository.searchPublished} for the
+     * same reason.
      */
     @Query("""
             SELECT NEW com.nbh.backend.stock.dto.InventoryLineDto(
                 v.id, v.sku, v.variantName, p.name,
-                loc.id, loc.code, br.id, br.name,
                 b.onHandQty, b.reservedQty, (b.onHandQty - b.reservedQty),
                 v.reorderLevel,
                 CASE WHEN v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel THEN true ELSE false END)
             FROM StockBalance b
             JOIN b.variant v
             JOIN v.product p
-            JOIN b.location loc
-            JOIN loc.branch br
-            WHERE loc.isInternal = true
-              AND (:branchId IS NULL OR br.id = :branchId)
+            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
               AND (:belowReorderOnly = false
                    OR (v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel))
               AND (:q IS NULL
@@ -89,23 +91,20 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
             ORDER BY p.name ASC, v.sku ASC
             """)
-    Page<InventoryLineDto> browseInventory(@Param("branchId") UUID branchId,
-                                            @Param("belowReorderOnly") boolean belowReorderOnly,
+    Page<InventoryLineDto> browseInventory(@Param("belowReorderOnly") boolean belowReorderOnly,
                                             @Param("q") String q,
                                             Pageable pageable);
 
     /**
-     * Sellable quantity per variant (on-hand minus reserved, physical
-     * locations only) — backs the public catalogue's inStock flag without
-     * exposing the numbers themselves. Variants with no balance row at all
-     * simply don't appear in the result (treated as zero by callers).
+     * Sellable quantity per variant (on-hand minus reserved, SHOP only) — backs
+     * the public catalogue's inStock flag without exposing the numbers
+     * themselves. Variants with no balance row at all simply don't appear in
+     * the result (treated as zero by callers).
      */
     @Query("""
-            SELECT b.variant.id AS variantId, SUM(b.onHandQty - b.reservedQty) AS available
+            SELECT b.variant.id AS variantId, (b.onHandQty - b.reservedQty) AS available
             FROM StockBalance b
-            JOIN b.location loc
-            WHERE loc.isInternal = true AND b.variant.id IN :variantIds
-            GROUP BY b.variant.id
+            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP AND b.variant.id IN :variantIds
             """)
     List<VariantAvailability> availabilityForVariants(@Param("variantIds") java.util.Collection<UUID> variantIds);
 
@@ -118,8 +117,8 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
     @Query("""
             SELECT COUNT(b) FROM StockBalance b
             JOIN b.variant v
-            JOIN b.location loc
-            WHERE loc.isInternal = true AND v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel
+            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+              AND v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel
             """)
     long countBelowReorderLevel();
 }

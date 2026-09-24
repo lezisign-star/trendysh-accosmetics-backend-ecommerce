@@ -1,16 +1,10 @@
 package com.nbh.backend.order.service;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.cart.entity.Cart;
 import com.nbh.backend.cart.entity.CartItem;
 import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.common.event.OrderPlacedEvent;
-import com.nbh.backend.common.exception.ConfigurationException;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.entity.CustomerOrder;
@@ -23,11 +17,8 @@ import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.payment.service.BankPaymentSettings;
 import com.nbh.backend.payment.service.PaymentReferenceGenerator;
-import com.nbh.backend.catalog.entity.ProductVariant;
-import com.nbh.backend.stock.entity.StockBalance;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.service.StockReservationService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.context.ApplicationEventPublisher;
@@ -49,6 +40,14 @@ import java.util.List;
  * (architecture doc §4.5's lifecycle table: "Begin checkout / M-Pesa STK
  * sent -> ACTIVE, ONLINE_CART, expires_at = now()+15min").
  *
+ * <p>Branches were removed 2026-09-24 (founder decision — see HANDOFF.md).
+ * This service used to try the main branch first and fall back to another
+ * active branch if it was short, then reserve there — a real defect, since
+ * {@code OrderFulfilmentService.fulfil} always dispatched from the order's
+ * nominal fulfilment branch regardless of which branch the reservation
+ * actually landed on. There is now exactly one place to reserve from (SHOP),
+ * so that class of bug is gone, not just fixed for today's data.
+ *
  * Selling prices are treated as VAT-inclusive (the Kenyan retail norm — the
  * shelf/display price already includes VAT), so vatTotal here is the VAT
  * COMPONENT of the subtotal, extracted for reporting, not an amount added on
@@ -63,9 +62,6 @@ public class CheckoutService {
 
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
-    private final BranchRepository branchRepository;
-    private final StockLocationRepository locationRepository;
-    private final StockBalanceRepository balanceRepository;
     private final CustomerOrderRepository orderRepository;
     private final PaymentRecordRepository paymentRecordRepository;
     private final StockReservationService reservationService;
@@ -77,9 +73,6 @@ public class CheckoutService {
 
     public CheckoutService(CartRepository cartRepository,
                             CartItemRepository cartItemRepository,
-                            BranchRepository branchRepository,
-                            StockLocationRepository locationRepository,
-                            StockBalanceRepository balanceRepository,
                             CustomerOrderRepository orderRepository,
                             PaymentRecordRepository paymentRecordRepository,
                             StockReservationService reservationService,
@@ -90,9 +83,6 @@ public class CheckoutService {
                             BankPaymentSettings paymentSettings) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
-        this.branchRepository = branchRepository;
-        this.locationRepository = locationRepository;
-        this.balanceRepository = balanceRepository;
         this.orderRepository = orderRepository;
         this.paymentRecordRepository = paymentRecordRepository;
         this.reservationService = reservationService;
@@ -122,24 +112,12 @@ public class CheckoutService {
             throw new IllegalStateException("Cannot check out an empty cart");
         }
 
-        // §4 C7: this is a deployment/seed-data problem, not something the
-        // customer's request got wrong — 500, not 422 (a customer seeing
-        // "422 — no branch configured" can't do anything with that, and
-        // GlobalExceptionHandler previously logged nothing, so it wouldn't
-        // even page anyone).
-        Branch fulfilmentBranch = branchRepository.findByIsDefaultOnlineFulfilmentTrue()
-                .orElseThrow(() -> new ConfigurationException("No branch is configured as the default online-fulfilment branch"));
-        StockLocation salesFloor = locationRepository
-                .findByBranchIdAndLocationType(fulfilmentBranch.getId(), LocationType.SALES_FLOOR)
-                .orElseThrow();
-
         CustomerOrder order = new CustomerOrder();
         order.setOrderNo(orderNoGenerator.next());
         order.setCustomerAccount(customer);
         order.setCustomerName(request.customerName().trim());
         order.setGuestEmail(request.guestEmail());
         order.setGuestPhone(PhoneNumbers.normalize(request.guestPhone()));
-        order.setFulfilmentBranch(fulfilmentBranch);
         order.setFulfilmentType(request.fulfilmentType());
         order.setDeliveryAddress(request.deliveryAddress());
         // Pickup has no courier leg, so a stray method on a pickup order is dropped, not stored.
@@ -160,25 +138,17 @@ public class CheckoutService {
                 : java.time.Duration.ofMinutes(MPESA_RESERVATION_TTL_MINUTES));
 
         for (CartItem cartItem : cartItems) {
-            // The main branch takes the line unless it's short, in which case the first other
-            // active branch with enough stock covers it instead (owner's confirmed rule — not a
-            // full nearest/cheapest allocator, just a fallback). Reserving here — not at
-            // add-to-cart — is the exact "hold starts at checkout" decision. If this throws
-            // (insufficient availability everywhere), the whole @Transactional method rolls back,
-            // including the order row saved above — nothing is left half-created.
-            StockLocation sourceLocation = resolveSourceLocation(
-                    cartItem.getVariant(), cartItem.getQty(), salesFloor, fulfilmentBranch);
+            // Reserving here — not at add-to-cart — is the exact "hold starts at
+            // checkout" decision. If this throws (insufficient availability), the
+            // whole @Transactional method rolls back, including the order row
+            // saved above — nothing is left half-created.
             StockReservation reservation;
             try {
                 reservation = reservationService.reserve(
-                        cartItem.getVariant(), sourceLocation, cartItem.getQty(),
+                        cartItem.getVariant(), cartItem.getQty(),
                         StockReservation.ReservationSource.ONLINE_CART,
                         "CUSTOMER_ORDER", order.getId(), expiresAt);
             } catch (InsufficientAvailabilityException e) {
-                // The customer only ever needs to know an item ran out, never which branch/location
-                // came up short — resolveSourceLocation already tried every active branch, so
-                // reaching here means it's genuinely unavailable everywhere (see this method's
-                // and resolveSourceLocation's own javadoc for why nothing further to try remains).
                 throw new InsufficientAvailabilityException(
                         cartItem.getVariant().getProduct().getName()
                                 + (cartItem.getVariant().getVariantName().equalsIgnoreCase("Default")
@@ -239,39 +209,6 @@ public class CheckoutService {
                 order.getGrandTotal(), cartItems.size()));
 
         return new CheckoutResult(order, paymentRecord);
-    }
-
-    /**
-     * Main-branch-first-with-fallback: the main branch's Sales Floor covers this line if it has
-     * enough on hand right now; otherwise the first other active branch (by code, for a
-     * deterministic order — not "nearest" or "cheapest") that has enough covers it instead. If
-     * nobody has enough, falls back to the main branch anyway so the caller's
-     * {@code reservationService.reserve} throws its normal {@code InsufficientAvailabilityException}
-     * with its normal message — this is a read-only pre-check, not a hold, so it can't itself
-     * guarantee the location it picks still has stock by the time {@code reserve} actually locks
-     * it; a lost race there is a genuine (rare) checkout failure, same as today's single-branch flow.
-     */
-    private StockLocation resolveSourceLocation(ProductVariant variant, BigDecimal qty,
-                                                 StockLocation mainSalesFloor, Branch mainBranch) {
-        if (availableAt(variant, mainSalesFloor).compareTo(qty) >= 0) {
-            return mainSalesFloor;
-        }
-        for (Branch other : branchRepository.findByIsActiveTrueOrderByCode()) {
-            if (other.getId().equals(mainBranch.getId())) continue;
-            StockLocation otherFloor = locationRepository
-                    .findByBranchIdAndLocationType(other.getId(), LocationType.SALES_FLOOR)
-                    .orElse(null);
-            if (otherFloor != null && availableAt(variant, otherFloor).compareTo(qty) >= 0) {
-                return otherFloor;
-            }
-        }
-        return mainSalesFloor;
-    }
-
-    private BigDecimal availableAt(ProductVariant variant, StockLocation location) {
-        return balanceRepository.findByVariantIdAndLocationId(variant.getId(), location.getId())
-                .map(StockBalance::getAvailableQty)
-                .orElse(BigDecimal.ZERO);
     }
 
     /** 30^6 combinations makes a clash rare; the unique index is the real guard, this just avoids a 500 on the odd hit. */

@@ -1,7 +1,5 @@
 package com.nbh.backend.order;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.repository.BranchRepository;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductRepository;
@@ -43,7 +41,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 class OrderReadQueryCountTest {
 
-    @Autowired private BranchRepository branchRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductVariantRepository variantRepository;
     @Autowired private CustomerOrderRepository orderRepository;
@@ -53,14 +50,11 @@ class OrderReadQueryCountTest {
     @Test
     @Transactional
     void readingAnOrderWithMultipleItemsTakesAFlatNumberOfQueriesNotOnePerItem() {
-        Branch branch = branchRepository.findByCode("BR-A").orElseThrow();
-
         CustomerOrder order = new CustomerOrder();
         order.setOrderNo("QCOUNT-" + UUID.randomUUID().toString().substring(0, 8));
         order.setGuestEmail("qcount@example.com");
         order.setGuestPhone("254700000000");
-        order.setFulfilmentBranch(branch);
-        order.setFulfilmentType(FulfilmentType.BRANCH_PICKUP);
+        order.setFulfilmentType(FulfilmentType.PICKUP);
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(new BigDecimal("1500.00"));
         order.setVatTotal(BigDecimal.ZERO);
@@ -101,7 +95,7 @@ class OrderReadQueryCountTest {
         statistics.clear();
 
         CustomerOrder fetched = orderRepository.findById(orderId).orElseThrow();
-        OrderDto dto = OrderDto.from(fetched); // realises items + each item's variant + fulfilmentBranch
+        OrderDto dto = OrderDto.from(fetched); // realises items + each item's variant
 
         assertThat(dto.items()).hasSize(3);
         long queryCount = statistics.getPrepareStatementCount();

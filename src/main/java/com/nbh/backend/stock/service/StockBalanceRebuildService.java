@@ -1,5 +1,6 @@
 package com.nbh.backend.stock.service;
 
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.repository.StockLedgerEntryRepository;
@@ -21,10 +22,12 @@ import java.util.*;
  * findLatestQtyAfter, which reads the SAME denormalised running balance the
  * write path already wrote. That can never disagree with itself; it is not a
  * consistency check. This version does a real single-pass reconciliation via
- * SUM(qty_change) grouped by (variant, location) — one query, not one query
+ * SUM(qty_change) grouped by (variant, account) — one query, not one query
  * per balance row — and also checks the double-entry invariant (§4.2):
- * summed across every location, each variant's total qty_change must be
- * exactly zero.
+ * summed across every account, each variant's total qty_change must be
+ * exactly zero. "Account" replaced "location" 2026-09-24 when branches were
+ * removed (founder decision — see HANDOFF.md); the reconciliation logic and
+ * its guarantees are unchanged, only the key.
  */
 @Service
 public class StockBalanceRebuildService {
@@ -40,34 +43,34 @@ public class StockBalanceRebuildService {
 
     @Transactional(readOnly = true)
     public RebuildReport check() {
-        Map<VariantLocation, BigDecimal> ledgerOnHand = new HashMap<>();
-        for (Object[] row : ledgerRepository.sumQtyChangeByVariantAndLocation()) {
-            ledgerOnHand.put(new VariantLocation((UUID) row[0], (UUID) row[1]), (BigDecimal) row[2]);
+        Map<VariantAccount, BigDecimal> ledgerOnHand = new HashMap<>();
+        for (Object[] row : ledgerRepository.sumQtyChangeByVariantAndAccount()) {
+            ledgerOnHand.put(new VariantAccount((UUID) row[0], (StockAccount) row[1]), (BigDecimal) row[2]);
         }
 
         List<StockBalance> balances = balanceRepository.findAll();
-        Map<VariantLocation, StockBalance> balanceByKey = new HashMap<>();
+        Map<VariantAccount, StockBalance> balanceByKey = new HashMap<>();
         for (StockBalance b : balances) {
-            balanceByKey.put(new VariantLocation(b.getVariant().getId(), b.getLocation().getId()), b);
+            balanceByKey.put(new VariantAccount(b.getVariant().getId(), b.getAccount()), b);
         }
 
         List<Mismatch> mismatches = new ArrayList<>();
 
         // Every ledger-derived pair must match its cached balance exactly.
-        for (Map.Entry<VariantLocation, BigDecimal> entry : ledgerOnHand.entrySet()) {
+        for (Map.Entry<VariantAccount, BigDecimal> entry : ledgerOnHand.entrySet()) {
             StockBalance balance = balanceByKey.get(entry.getKey());
             BigDecimal expected = entry.getValue();
             BigDecimal actual = balance != null ? balance.getOnHandQty() : BigDecimal.ZERO;
             if (expected.compareTo(actual) != 0) {
-                mismatches.add(new Mismatch(entry.getKey().variantId(), entry.getKey().locationId(), expected, actual));
+                mismatches.add(new Mismatch(entry.getKey().variantId(), entry.getKey().account(), expected, actual));
             }
         }
 
         // Any cached balance with no ledger entries at all is itself a mismatch
         // (it should not exist, or should be exactly zero).
-        for (Map.Entry<VariantLocation, StockBalance> entry : balanceByKey.entrySet()) {
+        for (Map.Entry<VariantAccount, StockBalance> entry : balanceByKey.entrySet()) {
             if (!ledgerOnHand.containsKey(entry.getKey()) && entry.getValue().getOnHandQty().signum() != 0) {
-                mismatches.add(new Mismatch(entry.getKey().variantId(), entry.getKey().locationId(),
+                mismatches.add(new Mismatch(entry.getKey().variantId(), entry.getKey().account(),
                         BigDecimal.ZERO, entry.getValue().getOnHandQty()));
             }
         }
@@ -83,9 +86,9 @@ public class StockBalanceRebuildService {
         return new RebuildReport(mismatches, doubleEntryViolations);
     }
 
-    private record VariantLocation(UUID variantId, UUID locationId) {}
+    private record VariantAccount(UUID variantId, StockAccount account) {}
 
-    public record Mismatch(UUID variantId, UUID locationId, BigDecimal ledgerOnHand, BigDecimal cachedOnHand) {}
+    public record Mismatch(UUID variantId, StockAccount account, BigDecimal ledgerOnHand, BigDecimal cachedOnHand) {}
 
     public record RebuildReport(List<Mismatch> balanceMismatches, List<UUID> doubleEntryViolations) {
         public boolean isConsistent() {

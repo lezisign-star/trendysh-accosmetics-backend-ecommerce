@@ -27,15 +27,16 @@ public interface StockReservationRepository extends JpaRepository<StockReservati
      * Locked in a deterministic order (id ASC) after the balance row lock, per
      * ERPNext's make_sl_entries (L143-145) deadlock-avoidance pattern: any two
      * transactions that need overlapping rows must acquire them in the same order.
+     * No location dimension any more — a reservation is always against SHOP.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
         select r from StockReservation r
-        where r.variant.id = :variantId and r.location.id = :locationId
+        where r.variant.id = :variantId
           and r.status = com.nbh.backend.stock.entity.StockReservation.ReservationStatus.ACTIVE
         order by r.id asc
         """)
-    List<StockReservation> lockActiveByVariantAndLocation(UUID variantId, UUID locationId);
+    List<StockReservation> lockActiveByVariant(UUID variantId);
 
     List<StockReservation> findByReferenceTypeAndReferenceId(String referenceType, UUID referenceId);
 

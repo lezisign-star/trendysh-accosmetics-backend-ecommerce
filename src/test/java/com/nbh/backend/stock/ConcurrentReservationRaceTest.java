@@ -1,14 +1,10 @@
 package com.nbh.backend.stock;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
@@ -38,14 +34,14 @@ import static org.junit.jupiter.api.Assertions.*;
  * Exactly one may win; on_hand must never go negative; and a from-ledger rebuild
  * must reproduce the balance exactly. This is the direct proof that the
  * omnichannel oversell Moments Packaging never guarded against (its
- * reservedCount column was written nowhere) cannot happen here.
+ * reservedCount column was written nowhere) cannot happen here. Branches/
+ * locations were removed 2026-09-24 (founder decision — see HANDOFF.md); a
+ * reservation is always against SHOP.
  */
 @SpringBootTest
 @ActiveProfiles("test")
 class ConcurrentReservationRaceTest {
 
-    @Autowired private BranchRepository branchRepository;
-    @Autowired private StockLocationRepository locationRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductVariantRepository variantRepository;
     @Autowired private StockDocumentRepository documentRepository;
@@ -53,15 +49,9 @@ class ConcurrentReservationRaceTest {
     @Autowired private StockReservationService reservationService;
 
     private ProductVariant variant;
-    private StockLocation salesFloor;
 
     @BeforeEach
     void seedOneUnitOfStock() {
-        Branch branch = branchRepository.findByCode("BR-A").orElseThrow();
-        salesFloor = locationRepository.findByBranchIdAndLocationType(branch.getId(), LocationType.SALES_FLOOR)
-                .orElseThrow();
-        StockLocation supplier = locationRepository.findByCode("SUPPLIER").orElseThrow();
-
         Product product = new Product();
         product.setSlug("race-test-product-" + UUID.randomUUID());
         product.setName("Race Test Product");
@@ -78,14 +68,13 @@ class ConcurrentReservationRaceTest {
         StockDocument receipt = new StockDocument();
         receipt.setDocumentNo("GRN-RACE-" + UUID.randomUUID().toString().substring(0, 8));
         receipt.setDocumentType(StockDocumentType.GOODS_RECEIPT);
-        receipt.setBranch(branch);
 
         StockDocumentLine line = new StockDocumentLine();
         line.setDocument(receipt);
         line.setLineNo(1);
         line.setVariant(variant);
-        line.setSourceLocation(supplier);
-        line.setTargetLocation(salesFloor);
+        line.setSourceAccount(StockAccount.SUPPLIER);
+        line.setTargetAccount(StockAccount.SHOP);
         line.setQty(BigDecimal.ONE);
         line.setUnitCost(new BigDecimal("500.00"));
         receipt.getLines().add(line);
@@ -111,7 +100,7 @@ class ConcurrentReservationRaceTest {
                 try {
                     go.await();
                     reservationService.reserve(
-                            variant, salesFloor, BigDecimal.ONE, source,
+                            variant, BigDecimal.ONE, source,
                             "TEST_RACE", UUID.randomUUID(), null);
                     succeeded.incrementAndGet();
                 } catch (InsufficientAvailabilityException e) {

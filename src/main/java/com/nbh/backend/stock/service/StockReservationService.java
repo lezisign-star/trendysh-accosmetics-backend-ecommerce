@@ -1,9 +1,9 @@
 package com.nbh.backend.stock.service;
 
 import com.nbh.backend.common.exception.NotFoundException;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
 import com.nbh.backend.stock.entity.StockReservation;
-import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
@@ -19,9 +19,13 @@ import java.util.UUID;
 
 /**
  * The anti-oversell mechanism. An online checkout and a POS sale both call
- * {@link #reserve} for the same (variant, location) — this is the exact
- * omnichannel hazard Moments Packaging never solved (its Product.reservedCount
- * column exists but is never written to anywhere in the codebase).
+ * {@link #reserve} for the same variant — this is the exact omnichannel hazard
+ * Moments Packaging never solved (its Product.reservedCount column exists but
+ * is never written to anywhere in the codebase).
+ *
+ * <p>A reservation always holds SHOP stock — there is nowhere else to hold it
+ * since branches/locations were removed (2026-09-24, founder decision; see
+ * HANDOFF.md).
  *
  * Adopted from ERPNext's stock_reservation_entry.py get_available_qty_to_reserve
  * (L726) and its Postgres-specific locking note (L749-753): lock the
@@ -49,14 +53,13 @@ public class StockReservationService {
     }
 
     /**
-     * Attempts to reserve {@code qty} of {@code variant} at {@code location}.
-     * Throws {@link InsufficientAvailabilityException} if the requested quantity
-     * exceeds on-hand minus every other currently-active reservation.
+     * Attempts to reserve {@code qty} of {@code variant} at SHOP. Throws
+     * {@link InsufficientAvailabilityException} if the requested quantity exceeds
+     * on-hand minus every other currently-active reservation.
      */
     @Transactional
     public StockReservation reserve(
             ProductVariant variant,
-            StockLocation location,
             BigDecimal qty,
             StockReservation.ReservationSource source,
             String referenceType,
@@ -65,13 +68,13 @@ public class StockReservationService {
     ) {
         // 1. Balance row lock first — see class javadoc.
         StockBalance balance = balanceRepository
-                .lockByVariantIdAndLocationId(variant.getId(), location.getId())
+                .lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP)
                 .orElseThrow(() -> new InsufficientAvailabilityException(
-                        "No stock has ever been received for " + variant.getSku() + " at " + location.getCode()));
+                        "No stock has ever been received for " + variant.getSku()));
 
         // 2. Active reservation rows, locked in a deterministic order.
         List<StockReservation> activeReservations =
-                reservationRepository.lockActiveByVariantAndLocation(variant.getId(), location.getId());
+                reservationRepository.lockActiveByVariant(variant.getId());
 
         Instant now = Instant.now(clock);
         BigDecimal reservedOutstanding = activeReservations.stream()
@@ -83,13 +86,12 @@ public class StockReservationService {
 
         if (available.compareTo(qty) < 0) {
             throw new InsufficientAvailabilityException(
-                    "Requested " + qty + " of " + variant.getSku() + " at " + location.getCode()
+                    "Requested " + qty + " of " + variant.getSku()
                             + " but only " + available + " is available");
         }
 
         StockReservation reservation = new StockReservation();
         reservation.setVariant(variant);
-        reservation.setLocation(location);
         reservation.setQty(qty);
         reservation.setSource(source);
         reservation.setReferenceType(referenceType);
@@ -204,7 +206,7 @@ public class StockReservationService {
         }
 
         StockBalance balance = balanceRepository
-                .lockByVariantIdAndLocationId(snapshot.getVariant().getId(), snapshot.getLocation().getId())
+                .lockByVariantIdAndAccount(snapshot.getVariant().getId(), StockAccount.SHOP)
                 .orElseThrow();
 
         StockReservation reservation = reservationRepository.lockById(reservationId).orElseThrow();

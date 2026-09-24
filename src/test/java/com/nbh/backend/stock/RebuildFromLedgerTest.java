@@ -1,10 +1,5 @@
 package com.nbh.backend.stock;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductRepository;
@@ -25,18 +20,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The third Phase-1 gate clause the audit (session 3, gap-check §3) found
  * completely uncovered: "a rebuild-from-ledger reproduces balances exactly."
- * Posts a mixed sequence — receipt, sale (write-off standing in for a sale
- * since Phase 2 doesn't exist yet), and a transfer-shaped pair of adjustments
- * across two locations — then asserts StockBalanceRebuildService's from-ledger
- * recomputation matches the live cache exactly, including the double-entry
- * invariant (SUM(qty_change) per variant across every location = 0).
+ * Posts a mixed sequence — two receipts, a sale, and a write-off, all against
+ * the single SHOP account (branches/locations were removed 2026-09-24,
+ * founder decision — see HANDOFF.md) — then asserts StockBalanceRebuildService's
+ * from-ledger recomputation matches the live cache exactly, including the
+ * double-entry invariant (SUM(qty_change) per variant across every account = 0).
  */
 @SpringBootTest
 @ActiveProfiles("test")
 class RebuildFromLedgerTest {
 
-    @Autowired private BranchRepository branchRepository;
-    @Autowired private StockLocationRepository locationRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductVariantRepository variantRepository;
     @Autowired private StockPostingService postingService;
@@ -44,13 +37,6 @@ class RebuildFromLedgerTest {
 
     @Test
     void rebuildFromLedgerMatchesTheLiveCacheAfterAMixedSequence() {
-        Branch branchA = branchRepository.findByCode("BR-A").orElseThrow();
-        Branch branchB = branchRepository.findByCode("BR-B").orElseThrow();
-        StockLocation salesFloorA = locationRepository.findByBranchIdAndLocationType(branchA.getId(), LocationType.SALES_FLOOR).orElseThrow();
-        StockLocation salesFloorB = locationRepository.findByBranchIdAndLocationType(branchB.getId(), LocationType.SALES_FLOOR).orElseThrow();
-        StockLocation supplier = locationRepository.findByCode("SUPPLIER").orElseThrow();
-        StockLocation adjustment = locationRepository.findByCode("ADJUSTMENT").orElseThrow();
-
         Product product = new Product();
         product.setSlug("rebuild-test-" + UUID.randomUUID());
         product.setName("Rebuild Test Product");
@@ -63,16 +49,16 @@ class RebuildFromLedgerTest {
         variant.setSellingPrice(new BigDecimal("1000.00"));
         variant = variantRepository.save(variant);
 
-        // Receive 20 at Branch A.
-        post(StockDocumentType.GOODS_RECEIPT, variant, supplier, salesFloorA, new BigDecimal("20"), new BigDecimal("400.00"));
-        // Sell (write off, standing in for a sale) 5 at Branch A.
-        post(StockDocumentType.WRITE_OFF, variant, salesFloorA, adjustment, new BigDecimal("5"), null);
-        // Transfer 8 from Branch A to Branch B directly (one line, both sides real internal locations).
-        post(StockDocumentType.TRANSFER, variant, salesFloorA, salesFloorB, new BigDecimal("8"), null);
-        // Receive 3 more directly at Branch B (e.g. a separate local supplier).
-        post(StockDocumentType.GOODS_RECEIPT, variant, supplier, salesFloorB, new BigDecimal("3"), new BigDecimal("410.00"));
+        // Receive 20.
+        post(StockDocumentType.GOODS_RECEIPT, variant, StockAccount.SUPPLIER, StockAccount.SHOP, new BigDecimal("20"), new BigDecimal("400.00"));
+        // Sell 5 (SHOP -> CUSTOMER, standing in for a real sale since Phase 2 wiring is separate).
+        post(StockDocumentType.SALE_ONLINE, variant, StockAccount.SHOP, StockAccount.CUSTOMER, new BigDecimal("5"), null);
+        // Write off 2 (shrinkage/damage).
+        post(StockDocumentType.WRITE_OFF, variant, StockAccount.SHOP, StockAccount.ADJUSTMENT, new BigDecimal("2"), null);
+        // Receive 3 more.
+        post(StockDocumentType.GOODS_RECEIPT, variant, StockAccount.SUPPLIER, StockAccount.SHOP, new BigDecimal("3"), new BigDecimal("410.00"));
 
-        // Expected: Branch A = 20 - 5 - 8 = 7; Branch B = 8 + 3 = 11.
+        // Expected SHOP balance: 20 - 5 - 2 + 3 = 16.
         StockBalanceRebuildService.RebuildReport report = rebuildService.check();
 
         assertTrue(report.isConsistent(),
@@ -80,19 +66,18 @@ class RebuildFromLedgerTest {
                         + " doubleEntryViolations=" + report.doubleEntryViolations());
     }
 
-    private void post(StockDocumentType type, ProductVariant variant, StockLocation source, StockLocation target,
+    private void post(StockDocumentType type, ProductVariant variant, StockAccount source, StockAccount target,
                        BigDecimal qty, BigDecimal unitCost) {
         StockDocument doc = new StockDocument();
         doc.setDocumentNo(type.name() + "-" + UUID.randomUUID().toString().substring(0, 8));
         doc.setDocumentType(type);
-        doc.setBranch(source.getBranch() != null ? source.getBranch() : target.getBranch());
 
         StockDocumentLine line = new StockDocumentLine();
         line.setDocument(doc);
         line.setLineNo(1);
         line.setVariant(variant);
-        line.setSourceLocation(source);
-        line.setTargetLocation(target);
+        line.setSourceAccount(source);
+        line.setTargetAccount(target);
         line.setQty(qty);
         line.setUnitCost(unitCost);
         doc.getLines().add(line);

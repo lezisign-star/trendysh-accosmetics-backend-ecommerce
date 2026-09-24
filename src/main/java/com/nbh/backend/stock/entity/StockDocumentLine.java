@@ -1,6 +1,5 @@
 package com.nbh.backend.stock.entity;
 
-import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.common.entity.BaseEntity;
 import jakarta.persistence.*;
@@ -28,13 +27,13 @@ public class StockDocumentLine extends BaseEntity {
     private ProductVariant variant;
 
     /** At least one of source/target must be set — see the DB check constraint. */
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "source_location_id")
-    private StockLocation sourceLocation;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source_account", length = 20)
+    private StockAccount sourceAccount;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "target_location_id")
-    private StockLocation targetLocation;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "target_account", length = 20)
+    private StockAccount targetAccount;
 
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qty;
@@ -53,9 +52,10 @@ public class StockDocumentLine extends BaseEntity {
     /**
      * When set, this outbound movement fulfils this hold — StockPostingService
      * decrements its reservedQty and closes it in the same transaction as the
-     * ledger append (audit finding F3, session 3). When null, the movement is
-     * unreserved and must not dip on_hand below what OTHER active holds still
-     * need — see StockPostingService.applyMovement.
+     * ledger append (audit finding F3, session 3), and requires
+     * {@code sourceAccount == StockAccount.SHOP} (a reservation only ever holds
+     * SHOP stock). When null, the movement is unreserved and must not dip on_hand
+     * below what OTHER active holds still need — see StockPostingService.applyMovement.
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reservation_id")

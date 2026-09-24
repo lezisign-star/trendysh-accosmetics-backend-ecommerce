@@ -26,8 +26,6 @@ public record AdminOrderDetailDto(
         String guestEmail,
         String guestPhone,
         String deliveryAddress,
-        UUID mainBranchId,
-        String mainBranchName,
         BigDecimal subtotal,
         BigDecimal vatTotal,
         BigDecimal deliveryFee,
@@ -37,21 +35,12 @@ public record AdminOrderDetailDto(
         List<Line> items,
         List<Payment> payments
 ) {
-    /**
-     * {@code branchId}/{@code branchName} are which branch's stock this specific line is actually
-     * coming from — usually {@code mainBranchId}, but a line falls back to another branch when the
-     * main one was short (see {@code CheckoutService.resolveSourceLocation}). Derived from the
-     * line's own stock reservation, not stored redundantly.
-     */
     public record Line(UUID variantId, String sku, String productName, String variantName,
-                       BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal,
-                       UUID branchId, String branchName) {
+                       BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal) {
         static Line from(CustomerOrderItem i) {
-            var branch = i.getReservation() != null ? i.getReservation().getLocation().getBranch() : null;
             return new Line(i.getVariant().getId(), i.getVariant().getSku(),
                     i.getVariant().getProduct().getName(), i.getVariant().getVariantName(),
-                    i.getQty(), i.getUnitPrice(), i.getLineTotal(),
-                    branch != null ? branch.getId() : null, branch != null ? branch.getName() : null);
+                    i.getQty(), i.getUnitPrice(), i.getLineTotal());
         }
     }
 
@@ -66,7 +55,6 @@ public record AdminOrderDetailDto(
         return new AdminOrderDetailDto(
                 o.getId(), o.getOrderNo(), o.getStatus(), o.getFulfilmentType().name(),
                 o.getDeliveryMethod(), o.getCustomerName(), o.getGuestEmail(), o.getGuestPhone(), o.getDeliveryAddress(),
-                o.getFulfilmentBranch().getId(), o.getFulfilmentBranch().getName(),
                 o.getSubtotal(), o.getVatTotal(), o.getDeliveryFee(), o.getGrandTotal(),
                 o.getCreatedAt(), o.getPlacedAt(),
                 o.getItems().stream().map(Line::from).toList(),

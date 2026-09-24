@@ -1,6 +1,5 @@
 package com.nbh.backend.stock.entity;
 
-import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.common.entity.BaseEntity;
 import jakarta.persistence.*;
@@ -10,7 +9,7 @@ import lombok.Setter;
 import java.math.BigDecimal;
 
 /**
- * The derived, cached per-(variant, location) balance — ERPNext's Bin / Odoo's
+ * The derived, cached per-(variant, account) balance — ERPNext's Bin / Odoo's
  * quant. Always reconstructible from {@link StockLedgerEntry} alone; that
  * reconciliation producing byte-identical results is this subsystem's
  * acceptance test (see StockRebuildService, Phase 1 gate).
@@ -22,7 +21,7 @@ import java.math.BigDecimal;
 @Setter
 @Entity
 @Table(name = "stock_balance", uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"variant_id", "location_id"})
+        @UniqueConstraint(columnNames = {"variant_id", "account"})
 })
 public class StockBalance extends BaseEntity {
 
@@ -30,9 +29,9 @@ public class StockBalance extends BaseEntity {
     @JoinColumn(name = "variant_id", nullable = false)
     private ProductVariant variant;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "location_id", nullable = false)
-    private StockLocation location;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private StockAccount account;
 
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal onHandQty = BigDecimal.ZERO;

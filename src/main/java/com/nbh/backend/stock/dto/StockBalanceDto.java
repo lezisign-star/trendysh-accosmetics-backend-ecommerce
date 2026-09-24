@@ -8,8 +8,7 @@ import java.util.UUID;
 public record StockBalanceDto(
         UUID variantId,
         String sku,
-        UUID locationId,
-        String locationCode,
+        String account,
         BigDecimal onHandQty,
         BigDecimal reservedQty,
         BigDecimal availableQty,
@@ -17,8 +16,7 @@ public record StockBalanceDto(
 ) {
     public static StockBalanceDto from(StockBalance b) {
         return new StockBalanceDto(
-                b.getVariant().getId(), b.getVariant().getSku(),
-                b.getLocation().getId(), b.getLocation().getCode(),
+                b.getVariant().getId(), b.getVariant().getSku(), b.getAccount().name(),
                 b.getOnHandQty(), b.getReservedQty(), b.getAvailableQty(), b.getAvgCost());
     }
 }

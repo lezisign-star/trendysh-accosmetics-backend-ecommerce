@@ -1,8 +1,5 @@
 package com.nbh.backend.order.service;
 
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.common.event.OrderCancelledEvent;
 import com.nbh.backend.common.event.OrderDeliveredEvent;
 import com.nbh.backend.common.event.OrderFulfilledEvent;
@@ -13,11 +10,12 @@ import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
 import com.nbh.backend.stock.entity.StockReservation;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.stock.service.StockReservationService;
@@ -38,6 +36,16 @@ import java.util.Set;
  * finding F3, session 3). No separate call to StockReservationService is
  * needed or correct here; going through the document line is what makes this
  * atomic.
+ *
+ * <p>Before branches were removed (2026-09-24, founder decision — see
+ * HANDOFF.md), this method looked up a "sales floor" location keyed by the
+ * order's fulfilment branch — which was NOT necessarily the branch
+ * {@code StockReservationService.reserve} actually reserved from, since
+ * checkout's branch-fallback logic could reserve at a different branch than
+ * the order's nominal fulfilment branch. That mismatch is now structurally
+ * impossible: a reservation only ever holds SHOP stock (enforced in
+ * {@code StockPostingService.post}), and dispatch always sources from SHOP —
+ * there is nowhere else it could come from.
  *
  * {@code fulfil} still does the one real stock movement (PAID/PICKING/READY
  * -> DISPATCHED) — that's unchanged and deliberate, since nothing physically
@@ -77,23 +85,20 @@ public class OrderFulfilmentService {
             EnumSet.of(OrderStatus.PENDING_PAYMENT, OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY);
 
     private final CustomerOrderRepository orderRepository;
-    private final StockLocationRepository locationRepository;
-    private final StockBalanceRepository balanceRepository;
+    private final StockAvailabilityService availabilityService;
     private final StockPostingService postingService;
     private final StockDocumentNoGenerator documentNoGenerator;
     private final StockReservationService reservationService;
     private final ApplicationEventPublisher eventPublisher;
 
     public OrderFulfilmentService(CustomerOrderRepository orderRepository,
-                                   StockLocationRepository locationRepository,
-                                   StockBalanceRepository balanceRepository,
+                                   StockAvailabilityService availabilityService,
                                    StockPostingService postingService,
                                    StockDocumentNoGenerator documentNoGenerator,
                                    StockReservationService reservationService,
                                    ApplicationEventPublisher eventPublisher) {
         this.orderRepository = orderRepository;
-        this.locationRepository = locationRepository;
-        this.balanceRepository = balanceRepository;
+        this.availabilityService = availabilityService;
         this.postingService = postingService;
         this.documentNoGenerator = documentNoGenerator;
         this.reservationService = reservationService;
@@ -109,15 +114,9 @@ public class OrderFulfilmentService {
                     "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot fulfil it");
         }
 
-        StockLocation salesFloor = locationRepository
-                .findByBranchIdAndLocationType(order.getFulfilmentBranch().getId(), LocationType.SALES_FLOOR)
-                .orElseThrow();
-        StockLocation customer = locationRepository.findByCode("CUSTOMER").orElseThrow();
-
         StockDocument document = new StockDocument();
         document.setDocumentNo(documentNoGenerator.next(StockDocumentType.SALE_ONLINE));
         document.setDocumentType(StockDocumentType.SALE_ONLINE);
-        document.setBranch(order.getFulfilmentBranch());
         document.setReferenceType("CUSTOMER_ORDER");
         document.setReferenceId(order.getId());
         document.setPostedByUserId(staffUserId);
@@ -127,15 +126,14 @@ public class OrderFulfilmentService {
             // Snapshot the current average cost BEFORE posting — an outbound
             // movement doesn't change it, so this is exactly the figure
             // StockPostingService will use as the ledger entry's unit_cost.
-            balanceRepository.findByVariantIdAndLocationId(item.getVariant().getId(), salesFloor.getId())
-                    .ifPresent(b -> item.setUnitCostAtSale(b.getAvgCost()));
+            item.setUnitCostAtSale(availabilityService.avgCost(item.getVariant().getId()));
 
             StockDocumentLine line = new StockDocumentLine();
             line.setDocument(document);
             line.setLineNo(lineNo++);
             line.setVariant(item.getVariant());
-            line.setSourceLocation(salesFloor);
-            line.setTargetLocation(customer);
+            line.setSourceAccount(StockAccount.SHOP);
+            line.setTargetAccount(StockAccount.CUSTOMER);
             line.setQty(item.getQty());
             line.setUnitPrice(item.getUnitPrice());
             line.setReservation(item.getReservation());
@@ -154,8 +152,7 @@ public class OrderFulfilmentService {
         // InsufficientStockException if stock moved underneath, which would have
         // already rolled back everything before this line ever ran.
         eventPublisher.publishEvent(new OrderFulfilledEvent(
-                order.getId(), order.getOrderNo(), order.getFulfilmentBranch().getId(),
-                order.getFulfilmentType(), order.getDeliveryAddress()));
+                order.getId(), order.getOrderNo(), order.getFulfilmentType(), order.getDeliveryAddress()));
 
         return order;
     }

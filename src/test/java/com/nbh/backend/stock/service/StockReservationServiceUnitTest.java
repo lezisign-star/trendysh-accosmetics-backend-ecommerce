@@ -1,7 +1,7 @@
 package com.nbh.backend.stock.service;
 
-import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.catalog.entity.ProductVariant;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
@@ -32,6 +32,9 @@ import static org.mockito.Mockito.*;
  * caller wins under real Postgres locking; it does not pin what "available"
  * actually means at the boundary, or the expiry-filtering semantics — that is
  * what this class covers instead, in milliseconds with no database.
+ *
+ * <p>Branches/locations were removed 2026-09-24 (founder decision — see
+ * HANDOFF.md); a reservation is always against SHOP.
  */
 @ExtendWith(MockitoExtension.class)
 class StockReservationServiceUnitTest {
@@ -43,7 +46,6 @@ class StockReservationServiceUnitTest {
     private StockReservationService reservationService;
 
     private ProductVariant variant;
-    private StockLocation location;
 
     @BeforeEach
     void setUp() {
@@ -54,10 +56,6 @@ class StockReservationServiceUnitTest {
         variant.setSku("RESV-TEST-SKU");
         variant.setVariantName("Test variant");
         variant.setSellingPrice(new BigDecimal("500.00"));
-
-        location = new StockLocation();
-        location.setId(UUID.randomUUID());
-        location.setCode("BR-A/SALES_FLOOR");
 
         lenient().when(reservationRepository.save(any(StockReservation.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(balanceRepository.save(any(StockBalance.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -83,13 +81,13 @@ class StockReservationServiceUnitTest {
 
     @Test
     void reservationExactlyMatchingAvailableSucceedsAndOneMoreThrows() {
-        when(balanceRepository.lockByVariantIdAndLocationId(variant.getId(), location.getId()))
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))
                 .thenReturn(Optional.of(balanceWithOnHand(BigDecimal.TEN)));
-        when(reservationRepository.lockActiveByVariantAndLocation(variant.getId(), location.getId()))
+        when(reservationRepository.lockActiveByVariant(variant.getId()))
                 .thenReturn(List.of(activeHold(new BigDecimal("4"), BigDecimal.ZERO, null)));
 
         StockReservation result = reservationService.reserve(
-                variant, location, new BigDecimal("6"), StockReservation.ReservationSource.ONLINE_CART,
+                variant, new BigDecimal("6"), StockReservation.ReservationSource.ONLINE_CART,
                 "CUSTOMER_ORDER", UUID.randomUUID(), null);
 
         assertThat(result.getQty()).isEqualByComparingTo("6");
@@ -98,13 +96,13 @@ class StockReservationServiceUnitTest {
 
         // Symmetric case: one more than available must throw, pinning the boundary from both sides.
         StockBalance failBalance = balanceWithOnHand(BigDecimal.TEN);
-        when(balanceRepository.lockByVariantIdAndLocationId(variant.getId(), location.getId()))
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))
                 .thenReturn(Optional.of(failBalance));
-        when(reservationRepository.lockActiveByVariantAndLocation(variant.getId(), location.getId()))
+        when(reservationRepository.lockActiveByVariant(variant.getId()))
                 .thenReturn(List.of(activeHold(new BigDecimal("4"), BigDecimal.ZERO, null)));
 
         assertThatThrownBy(() -> reservationService.reserve(
-                variant, location, new BigDecimal("7"), StockReservation.ReservationSource.ONLINE_CART,
+                variant, new BigDecimal("7"), StockReservation.ReservationSource.ONLINE_CART,
                 "CUSTOMER_ORDER", UUID.randomUUID(), null))
                 .isInstanceOf(InsufficientAvailabilityException.class)
                 .hasMessageContaining("6")
@@ -113,14 +111,14 @@ class StockReservationServiceUnitTest {
 
     @Test
     void anExpiredHoldDoesNotConsumeAvailability() {
-        when(balanceRepository.lockByVariantIdAndLocationId(variant.getId(), location.getId()))
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))
                 .thenReturn(Optional.of(balanceWithOnHand(BigDecimal.TEN)));
         Instant expiredInThePast = fixedClock.instant().minusSeconds(60);
-        when(reservationRepository.lockActiveByVariantAndLocation(variant.getId(), location.getId()))
+        when(reservationRepository.lockActiveByVariant(variant.getId()))
                 .thenReturn(List.of(activeHold(new BigDecimal("8"), BigDecimal.ZERO, expiredInThePast)));
 
         StockReservation result = reservationService.reserve(
-                variant, location, new BigDecimal("9"), StockReservation.ReservationSource.ONLINE_CART,
+                variant, new BigDecimal("9"), StockReservation.ReservationSource.ONLINE_CART,
                 "CUSTOMER_ORDER", UUID.randomUUID(), null);
 
         assertThat(result.getQty()).isEqualByComparingTo("9");
@@ -128,40 +126,40 @@ class StockReservationServiceUnitTest {
 
     @Test
     void aNullExpiryHoldAlwaysConsumesAvailability() {
-        when(balanceRepository.lockByVariantIdAndLocationId(variant.getId(), location.getId()))
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))
                 .thenReturn(Optional.of(balanceWithOnHand(BigDecimal.TEN)));
-        when(reservationRepository.lockActiveByVariantAndLocation(variant.getId(), location.getId()))
+        when(reservationRepository.lockActiveByVariant(variant.getId()))
                 .thenReturn(List.of(activeHold(new BigDecimal("8"), BigDecimal.ZERO, null)));
 
         assertThatThrownBy(() -> reservationService.reserve(
-                variant, location, new BigDecimal("3"), StockReservation.ReservationSource.ONLINE_ORDER,
+                variant, new BigDecimal("3"), StockReservation.ReservationSource.ONLINE_ORDER,
                 "CUSTOMER_ORDER", UUID.randomUUID(), null))
                 .isInstanceOf(InsufficientAvailabilityException.class);
     }
 
     @Test
     void aHoldExpiringExactlyNowIsTreatedAsExpired() {
-        when(balanceRepository.lockByVariantIdAndLocationId(variant.getId(), location.getId()))
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))
                 .thenReturn(Optional.of(balanceWithOnHand(BigDecimal.TEN)));
-        when(reservationRepository.lockActiveByVariantAndLocation(variant.getId(), location.getId()))
+        when(reservationRepository.lockActiveByVariant(variant.getId()))
                 .thenReturn(List.of(activeHold(new BigDecimal("8"), BigDecimal.ZERO, fixedClock.instant())));
 
         // isAfter(now) is false for an exactly-equal instant, so this hold is
         // treated as already expired — the full 10 is available, not 2.
         StockReservation result = reservationService.reserve(
-                variant, location, BigDecimal.TEN, StockReservation.ReservationSource.ONLINE_CART,
+                variant, BigDecimal.TEN, StockReservation.ReservationSource.ONLINE_CART,
                 "CUSTOMER_ORDER", UUID.randomUUID(), null);
 
         assertThat(result.getQty()).isEqualByComparingTo("10");
     }
 
     @Test
-    void neverStockedPairThrowsInsufficientAvailabilityNotAnNpe() {
-        when(balanceRepository.lockByVariantIdAndLocationId(variant.getId(), location.getId()))
+    void neverStockedVariantThrowsInsufficientAvailabilityNotAnNpe() {
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> reservationService.reserve(
-                variant, location, BigDecimal.ONE, StockReservation.ReservationSource.ONLINE_CART,
+                variant, BigDecimal.ONE, StockReservation.ReservationSource.ONLINE_CART,
                 "CUSTOMER_ORDER", UUID.randomUUID(), null))
                 .isInstanceOf(InsufficientAvailabilityException.class)
                 .hasMessageContaining("No stock has ever been received");
@@ -171,14 +169,14 @@ class StockReservationServiceUnitTest {
 
     @Test
     void partiallyFulfilledHoldCountsOnlyItsOutstandingQty() {
-        when(balanceRepository.lockByVariantIdAndLocationId(variant.getId(), location.getId()))
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))
                 .thenReturn(Optional.of(balanceWithOnHand(BigDecimal.TEN)));
         // qty=10, fulfilledQty=6 -> outstanding=4, not 10.
-        when(reservationRepository.lockActiveByVariantAndLocation(variant.getId(), location.getId()))
+        when(reservationRepository.lockActiveByVariant(variant.getId()))
                 .thenReturn(List.of(activeHold(new BigDecimal("10"), new BigDecimal("6"), null)));
 
         StockReservation result = reservationService.reserve(
-                variant, location, new BigDecimal("6"), StockReservation.ReservationSource.ONLINE_CART,
+                variant, new BigDecimal("6"), StockReservation.ReservationSource.ONLINE_CART,
                 "CUSTOMER_ORDER", UUID.randomUUID(), null);
 
         assertThat(result.getQty()).isEqualByComparingTo("6");

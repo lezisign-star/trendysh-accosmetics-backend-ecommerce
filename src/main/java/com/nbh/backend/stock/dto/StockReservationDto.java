@@ -9,7 +9,6 @@ import java.util.UUID;
 public record StockReservationDto(
         UUID id,
         UUID variantId,
-        UUID locationId,
         BigDecimal qty,
         String source,
         String status,
@@ -17,7 +16,7 @@ public record StockReservationDto(
 ) {
     public static StockReservationDto from(StockReservation r) {
         return new StockReservationDto(
-                r.getId(), r.getVariant().getId(), r.getLocation().getId(), r.getQty(),
+                r.getId(), r.getVariant().getId(), r.getQty(),
                 r.getSource().name(), r.getStatus().name(), r.getExpiresAt());
     }
 }

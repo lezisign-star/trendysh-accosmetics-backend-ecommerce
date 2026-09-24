@@ -1,6 +1,5 @@
 package com.nbh.backend.stock.entity;
 
-import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.common.entity.BaseEntity;
 import jakarta.persistence.*;
@@ -17,6 +16,10 @@ import java.util.UUID;
  * the other one is mid-way through selling. See
  * {@link com.nbh.backend.stock.service.StockReservationService} for the
  * locking protocol that makes this race-safe.
+ *
+ * <p>No account/location column: a reservation always holds SHOP stock (the only
+ * physical account) — {@link com.nbh.backend.stock.service.StockPostingService}
+ * enforces that any line fulfilling one has {@code sourceAccount == SHOP}.
  */
 @Getter
 @Setter
@@ -27,10 +30,6 @@ public class StockReservation extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "variant_id", nullable = false)
     private ProductVariant variant;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "location_id", nullable = false)
-    private StockLocation location;
 
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qty;
@@ -59,7 +58,7 @@ public class StockReservation extends BaseEntity {
 
     private UUID createdByUserId;
 
-    public enum ReservationSource { ONLINE_CART, ONLINE_ORDER, POS_TICKET, TRANSFER_OUT, MANUAL_HOLD }
+    public enum ReservationSource { ONLINE_CART, ONLINE_ORDER, POS_TICKET, MANUAL_HOLD }
 
     public enum ReservationStatus { ACTIVE, FULFILLED, RELEASED, EXPIRED }
 

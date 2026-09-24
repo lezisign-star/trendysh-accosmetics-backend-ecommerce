@@ -1,6 +1,5 @@
 package com.nbh.backend.order.service;
 
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.common.event.OrderCancelledEvent;
 import com.nbh.backend.common.event.OrderDeliveredEvent;
 import com.nbh.backend.common.event.OrderPickingStartedEvent;
@@ -11,7 +10,7 @@ import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.stock.entity.StockReservation;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.stock.service.StockReservationService;
@@ -43,8 +42,7 @@ import static org.mockito.Mockito.*;
 class OrderFulfilmentServiceUnitTest {
 
     @Mock private CustomerOrderRepository orderRepository;
-    @Mock private StockLocationRepository locationRepository;
-    @Mock private StockBalanceRepository balanceRepository;
+    @Mock private StockAvailabilityService availabilityService;
     @Mock private StockPostingService postingService;
     @Mock private StockDocumentNoGenerator documentNoGenerator;
     @Mock private StockReservationService reservationService;
@@ -55,7 +53,7 @@ class OrderFulfilmentServiceUnitTest {
 
     @BeforeEach
     void setUp() {
-        fulfilmentService = new OrderFulfilmentService(orderRepository, locationRepository, balanceRepository,
+        fulfilmentService = new OrderFulfilmentService(orderRepository, availabilityService,
                 postingService, documentNoGenerator, reservationService, eventPublisher);
     }
 

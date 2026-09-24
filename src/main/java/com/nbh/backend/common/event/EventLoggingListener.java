@@ -61,8 +61,7 @@ public class EventLoggingListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onOrderFulfilled(OrderFulfilledEvent event) {
-        log.info("Order fulfilled: {} dispatched from branch {} ({})",
-                event.orderNo(), event.branchId(), event.fulfilmentType());
+        log.info("Order fulfilled: {} dispatched ({})", event.orderNo(), event.fulfilmentType());
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -82,8 +81,8 @@ public class EventLoggingListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onLowStockThresholdCrossed(LowStockThresholdCrossedEvent event) {
-        log.warn("Low stock: {} at location {} dropped from {} to {} (reorder level {})",
-                event.sku(), event.locationId(), event.onHandBefore(), event.onHandAfter(), event.reorderLevel());
+        log.warn("Low stock: {} dropped from {} to {} (reorder level {})",
+                event.sku(), event.onHandBefore(), event.onHandAfter(), event.reorderLevel());
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

@@ -1,10 +1,5 @@
 package com.nbh.backend.payment;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductRepository;
@@ -17,6 +12,7 @@ import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.payment.service.PaymentService;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
@@ -25,7 +21,6 @@ import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.repository.StockReservationRepository;
 import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.stock.service.StockReservationService;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -60,8 +55,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ActiveProfiles("test")
 class ConcurrentPaymentConfirmationRaceTest {
 
-    @Autowired private BranchRepository branchRepository;
-    @Autowired private StockLocationRepository locationRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductVariantRepository variantRepository;
     @Autowired private StockPostingService postingService;
@@ -72,33 +65,20 @@ class ConcurrentPaymentConfirmationRaceTest {
     @Autowired private PaymentRecordRepository paymentRecordRepository;
     @Autowired private PaymentService paymentService;
 
-    private Branch branchA;
-    private StockLocation salesFloor;
-    private StockLocation supplier;
-
-    @BeforeEach
-    void setUp() {
-        branchA = branchRepository.findByCode("BR-A").orElseThrow();
-        salesFloor = locationRepository.findByBranchIdAndLocationType(branchA.getId(), LocationType.SALES_FLOOR)
-                .orElseThrow();
-        supplier = locationRepository.findByCode("SUPPLIER").orElseThrow();
-    }
-
     @Test
     void concurrentConfirmSuccessAndMarkFailedOnTheSamePaymentNeverCorruptStockOrOrderState() throws Exception {
         ProductVariant variant = newVariant();
         receiveOneUnit(variant);
 
         StockReservation reservation = reservationService.reserve(
-                variant, salesFloor, BigDecimal.ONE, StockReservation.ReservationSource.ONLINE_CART,
+                variant, BigDecimal.ONE, StockReservation.ReservationSource.ONLINE_CART,
                 "ORDER", UUID.randomUUID(), null);
 
         CustomerOrder order = new CustomerOrder();
         order.setOrderNo("RACE-" + UUID.randomUUID().toString().substring(0, 8));
         order.setGuestEmail("racer@example.com");
         order.setGuestPhone("254700000000");
-        order.setFulfilmentBranch(branchA);
-        order.setFulfilmentType(FulfilmentType.BRANCH_PICKUP);
+        order.setFulfilmentType(FulfilmentType.PICKUP);
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(new BigDecimal("500.00"));
         order.setVatTotal(BigDecimal.ZERO);
@@ -185,7 +165,7 @@ class ConcurrentPaymentConfirmationRaceTest {
         PaymentRecord finalPayment = paymentRecordRepository.findById(paymentId).orElseThrow();
         CustomerOrder finalOrder = orderRepository.findById(orderId).orElseThrow();
         StockReservation finalReservation = reservationRepository.findById(reservation.getId()).orElseThrow();
-        var finalBalance = balanceRepository.findByVariantIdAndLocationId(variant.getId(), salesFloor.getId())
+        var finalBalance = balanceRepository.findByVariantIdAndAccount(variant.getId(), StockAccount.SHOP)
                 .orElseThrow();
 
         assertTrue(
@@ -244,14 +224,13 @@ class ConcurrentPaymentConfirmationRaceTest {
         StockDocument receipt = new StockDocument();
         receipt.setDocumentNo("GRN-PAYRACE-" + UUID.randomUUID().toString().substring(0, 8));
         receipt.setDocumentType(StockDocumentType.GOODS_RECEIPT);
-        receipt.setBranch(branchA);
 
         StockDocumentLine line = new StockDocumentLine();
         line.setDocument(receipt);
         line.setLineNo(1);
         line.setVariant(variant);
-        line.setSourceLocation(supplier);
-        line.setTargetLocation(salesFloor);
+        line.setSourceAccount(StockAccount.SUPPLIER);
+        line.setTargetAccount(StockAccount.SHOP);
         line.setQty(BigDecimal.ONE);
         line.setUnitCost(new BigDecimal("300.00"));
         receipt.getLines().add(line);

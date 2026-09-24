@@ -98,7 +98,7 @@ class AdminSettingsIntegrationTest {
         manager.setPassword(passwordEncoder.encode("irrelevant-password"));
         manager.setFirstName("Branch");
         manager.setLastName("Manager");
-        manager.setStaffRole(staffRoles.findByName("BRANCH_MANAGER").orElseThrow());
+        manager.setStaffRole(staffRoles.findByName("MANAGER").orElseThrow());
         staffUsers.save(manager);
         String token = jwtService.generateAccessToken(manager);
 

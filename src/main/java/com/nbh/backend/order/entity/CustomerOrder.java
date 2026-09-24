@@ -1,6 +1,5 @@
 package com.nbh.backend.order.entity;
 
-import com.nbh.backend.branch.entity.Branch;
 import com.nbh.backend.common.entity.BaseEntity;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -12,11 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Guest checkout only, per architecture doc §4.7 and the current lack of a
- * customer account system. fulfilmentBranch is required from day one — for
- * now it is always the founder-confirmed default branch (session 5); smarter
- * assignment (nearest-to-address, whichever-has-stock) is deferred, not
- * decided against.
+ * Guest checkout is still supported alongside signed-in accounts (§4.7).
+ * Branches were removed 2026-09-24 (founder decision — see HANDOFF.md); there
+ * is one shop, so an order no longer names a fulfilment branch.
  */
 @Getter
 @Setter
@@ -40,10 +37,6 @@ public class CustomerOrder extends BaseEntity {
 
     @Column(name = "guest_phone", nullable = false, length = 20)
     private String guestPhone;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "fulfilment_branch_id", nullable = false)
-    private Branch fulfilmentBranch;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "fulfilment_type", nullable = false, length = 20)

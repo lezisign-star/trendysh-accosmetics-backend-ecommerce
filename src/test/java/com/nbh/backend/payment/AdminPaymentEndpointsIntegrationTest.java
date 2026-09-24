@@ -1,6 +1,5 @@
 package com.nbh.backend.payment;
 
-import com.nbh.backend.branch.repository.BranchRepository;
 import com.nbh.backend.common.security.JwtService;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.FulfilmentType;
@@ -38,7 +37,6 @@ class AdminPaymentEndpointsIntegrationTest {
     @Autowired private MockMvc mvc;
     @Autowired private JwtService jwtService;
     @Autowired private StaffUserRepository staffUsers;
-    @Autowired private BranchRepository branchRepository;
     @Autowired private CustomerOrderRepository orderRepository;
     @Autowired private PaymentRecordRepository paymentRecordRepository;
     @Autowired private PaymentReferenceGenerator referenceGenerator;
@@ -58,8 +56,7 @@ class AdminPaymentEndpointsIntegrationTest {
         order.setOrderNo(orderNo);
         order.setGuestEmail("payer@example.com");
         order.setGuestPhone("254700000000");
-        order.setFulfilmentBranch(branchRepository.findByCode("BR-A").orElseThrow());
-        order.setFulfilmentType(FulfilmentType.BRANCH_PICKUP);
+        order.setFulfilmentType(FulfilmentType.PICKUP);
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(new BigDecimal("500.00"));
         order.setVatTotal(BigDecimal.ZERO);

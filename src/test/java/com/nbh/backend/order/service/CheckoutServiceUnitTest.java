@@ -1,17 +1,11 @@
 package com.nbh.backend.order.service;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.cart.entity.Cart;
 import com.nbh.backend.cart.entity.CartItem;
 import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
-import com.nbh.backend.common.exception.ConfigurationException;
 import com.nbh.backend.order.dto.CheckoutRequest;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
@@ -20,7 +14,6 @@ import com.nbh.backend.payment.service.BankPaymentSettings;
 import com.nbh.backend.payment.service.PaymentReferenceGenerator;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.service.StockReservationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,15 +42,16 @@ import static org.mockito.Mockito.*;
  * property itself (the actual transactional guarantee) is NOT re-proven
  * here — that needs a real transaction and belongs to an integration test;
  * this only pins that the exception propagates unchanged out of checkout().
+ *
+ * <p>Branches were removed 2026-09-24 (founder decision — see HANDOFF.md):
+ * there is no branch/location setup here any more, and reservation always
+ * targets SHOP implicitly.
  */
 @ExtendWith(MockitoExtension.class)
 class CheckoutServiceUnitTest {
 
     @Mock private CartRepository cartRepository;
     @Mock private CartItemRepository cartItemRepository;
-    @Mock private BranchRepository branchRepository;
-    @Mock private StockLocationRepository locationRepository;
-    @Mock private StockBalanceRepository balanceRepository;
     @Mock private CustomerOrderRepository orderRepository;
     @Mock private PaymentRecordRepository paymentRecordRepository;
     @Mock private StockReservationService reservationService;
@@ -69,13 +63,11 @@ class CheckoutServiceUnitTest {
 
     private static final String SESSION_ID = "session-under-test";
     private Cart cart;
-    private Branch fulfilmentBranch;
-    private StockLocation salesFloor;
 
     @BeforeEach
     void setUp() {
-        checkoutService = new CheckoutService(cartRepository, cartItemRepository, branchRepository,
-                locationRepository, balanceRepository, orderRepository, paymentRecordRepository, reservationService,
+        checkoutService = new CheckoutService(cartRepository, cartItemRepository,
+                orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK));
 
         cart = new Cart();
@@ -83,18 +75,6 @@ class CheckoutServiceUnitTest {
         cart.setSessionId(SESSION_ID);
         cart.setStatus(Cart.CartStatus.ACTIVE);
         lenient().when(cartRepository.findWithLockBySessionId(SESSION_ID)).thenReturn(Optional.of(cart));
-
-        fulfilmentBranch = new Branch();
-        fulfilmentBranch.setId(UUID.randomUUID());
-        fulfilmentBranch.setCode("BR-A");
-        fulfilmentBranch.setDefaultOnlineFulfilment(true);
-        lenient().when(branchRepository.findByIsDefaultOnlineFulfilmentTrue()).thenReturn(Optional.of(fulfilmentBranch));
-
-        salesFloor = new StockLocation();
-        salesFloor.setId(UUID.randomUUID());
-        salesFloor.setCode("BR-A/SALES_FLOOR");
-        lenient().when(locationRepository.findByBranchIdAndLocationType(fulfilmentBranch.getId(), LocationType.SALES_FLOOR))
-                .thenReturn(Optional.of(salesFloor));
 
         lenient().when(orderNoGenerator.next()).thenReturn("SO-TEST-000001");
         lenient().when(orderRepository.save(any())).thenAnswer(inv -> {
@@ -105,7 +85,7 @@ class CheckoutServiceUnitTest {
             return order;
         });
         lenient().when(paymentRecordRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        lenient().when(reservationService.reserve(any(), any(), any(), any(), any(), any(), any()))
+        lenient().when(reservationService.reserve(any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> new StockReservation());
     }
 
@@ -130,14 +110,14 @@ class CheckoutServiceUnitTest {
         assertThat(new PaymentReferenceGenerator().normaliseAndValidate(payment.getPaymentReference()))
                 .isEqualTo(payment.getPaymentReference());
         assertThat(payment.getExpiresAt()).isEqualTo(Instant.parse("2026-01-01T00:45:00Z"));
-        verify(reservationService).reserve(any(), any(), any(), any(), any(), any(),
+        verify(reservationService).reserve(any(), any(), any(), any(), any(),
                 org.mockito.ArgumentMatchers.eq(Instant.parse("2026-01-01T00:45:00Z")));
     }
 
     @Test
     void mpesaModeKeepsTheDarajaRecordAndTheShortFifteenMinuteHold() {
-        checkoutService = new CheckoutService(cartRepository, cartItemRepository, branchRepository,
-                locationRepository, balanceRepository, orderRepository, paymentRecordRepository, reservationService,
+        checkoutService = new CheckoutService(cartRepository, cartItemRepository,
+                orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
                 bankSettings(BankPaymentSettings.CollectionMode.MPESA));
         when(cartItemRepository.findByCartId(cart.getId()))
@@ -147,7 +127,7 @@ class CheckoutServiceUnitTest {
 
         assertThat(payment.getProvider()).isEqualTo("DARAJA");
         assertThat(payment.getPaymentReference()).isNull();
-        verify(reservationService).reserve(any(), any(), any(), any(), any(), any(),
+        verify(reservationService).reserve(any(), any(), any(), any(), any(),
                 org.mockito.ArgumentMatchers.eq(Instant.parse("2026-01-01T00:15:00Z")));
     }
 
@@ -176,7 +156,7 @@ class CheckoutServiceUnitTest {
     }
 
     private CheckoutRequest request() {
-        return new CheckoutRequest("Test Customer", "customer@example.com", "254700000000", FulfilmentType.BRANCH_PICKUP, null, null);
+        return new CheckoutRequest("Test Customer", "customer@example.com", "254700000000", FulfilmentType.PICKUP, null, null);
     }
 
     @Test
@@ -208,7 +188,7 @@ class CheckoutServiceUnitTest {
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 
         var request = new CheckoutRequest("Test Customer", "n@example.com", "254700000000",
-                FulfilmentType.BRANCH_PICKUP, null, "VEHICLE");
+                FulfilmentType.PICKUP, null, "VEHICLE");
 
         assertThat(checkoutService.checkout(SESSION_ID, request).order().getDeliveryMethod()).isNull();
     }
@@ -273,36 +253,22 @@ class CheckoutServiceUnitTest {
     }
 
     @Test
-    void noDefaultFulfilmentBranchConfiguredThrows() {
-        when(cartItemRepository.findByCartId(cart.getId()))
-                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
-        when(branchRepository.findByIsDefaultOnlineFulfilmentTrue()).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
-                .isInstanceOf(ConfigurationException.class)
-                .hasMessageContaining("default online-fulfilment branch");
-    }
-
-    @Test
     void aLineThatCannotBeReservedAbortsTheWholeCheckoutByPropagatingACustomerFriendlyException() {
         when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(
                 cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false),
                 cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 
-        when(reservationService.reserve(any(), any(), any(), any(), any(), any(), any()))
+        when(reservationService.reserve(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new StockReservation())
-                .thenThrow(new InsufficientAvailabilityException(
-                        "Requested 1 of SKU-1234 at BR-A/SALES_FLOOR but only 0 is available"));
+                .thenThrow(new InsufficientAvailabilityException("Requested 1 of SKU-1234 but only 0 is available"));
 
-        // The whole point of CheckoutService's catch block: the raw, location-code-bearing
-        // message from StockReservationService never reaches whoever sees this exception —
-        // a customer only needs to know an item ran out, not which internal branch/location.
+        // The whole point of CheckoutService's catch block: the raw stock-service message never
+        // reaches whoever sees this exception — a customer only needs to know an item ran out.
         assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
                 .isInstanceOf(InsufficientAvailabilityException.class)
                 .hasMessageContaining("Test product")
                 .hasMessageContaining("out of stock")
-                .hasMessageNotContaining("SALES_FLOOR")
-                .hasMessageNotContaining("BR-A");
+                .hasMessageNotContaining("SKU-1234");
     }
 
     @Test

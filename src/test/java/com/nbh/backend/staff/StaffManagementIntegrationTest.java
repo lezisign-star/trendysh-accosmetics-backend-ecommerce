@@ -55,14 +55,14 @@ class StaffManagementIntegrationTest {
         return "invitee-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com";
     }
 
-    /** BRANCH_MANAGER has USER_VIEW but not USER_CREATE — can see the staff list, can't invite. */
-    private String branchManagerToken() {
+    /** MANAGER has USER_VIEW but not USER_CREATE — can see the staff list, can't invite. */
+    private String managerToken() {
         StaffUser manager = new StaffUser();
         manager.setEmail("manager-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com");
         manager.setPassword(passwordEncoder.encode("irrelevant-password"));
         manager.setFirstName("Branch");
         manager.setLastName("Manager");
-        manager.setStaffRole(staffRoles.findByName("BRANCH_MANAGER").orElseThrow());
+        manager.setStaffRole(staffRoles.findByName("MANAGER").orElseThrow());
         staffUsers.save(manager);
         return jwtService.generateAccessToken(manager);
     }
@@ -76,7 +76,7 @@ class StaffManagementIntegrationTest {
 
     @Test
     void aRoleWithoutUserCreateCannotInviteButCanStillList() throws Exception {
-        String token = branchManagerToken();
+        String token = managerToken();
         mvc.perform(get("/api/v1/admin/staff").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
 

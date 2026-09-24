@@ -1,5 +1,94 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Inventory redesign Phase 1 — branches eliminated completely, backend (2026-09-24)
+
+**Founder decision, not a refactor of convenience:** after a UX audit found the admin
+product/variant/category screens confusing, and a further audit found the branch/
+location model genuinely buggy (see below), the founder chose full removal of
+branches/locations over hiding them — see the session's Opus audit trail for the
+full reasoning. This entry covers the backend half; frontend is next (Phase 2), not
+started yet as of this entry.
+
+**What replaced Branch/StockLocation:** a 4-value enum, `stock.entity.StockAccount`
+(`SHOP` physical; `SUPPLIER`/`CUSTOMER`/`ADJUSTMENT` virtual, unchanged in meaning
+from the old `LocationType`). No table, no rows — the double-entry ledger's
+correctness (every movement has two sides; `StockBalanceRebuildService`'s
+"everything sums to zero" check) is fully intact, just keyed by account instead of
+location. `V26__single_stock_account.sql` (migration order matters — read its own
+comments; it merges SALES_FLOOR/BACKSTORE/DAMAGED into SHOP, keeps SUPPLIER/
+CUSTOMER/ADJUSTMENT as-is, and has guards that refuse to run if DAMAGED/IN_TRANSIT
+hold stock or any TRANSFER document/reservation exists — none did on this project).
+
+**Two real bugs this closes, not just hides:**
+1. Checkout's old branch-fallback logic could reserve stock at a different branch
+   than `OrderFulfilmentService.fulfil` actually dispatched from — depending on
+   timing this either failed dispatch outright or silently corrupted both
+   branches' balances. With one account, "reserve here, dispatch from there" is no
+   longer expressible — `StockPostingService.post` now hard-rejects (with a unit
+   test) any line fulfilling a reservation whose source isn't SHOP, or whose
+   variant doesn't match the reservation's.
+2. The shop page, add-to-cart and checkout could each compute "in stock"
+   differently (shop summed all branches including damaged locations; cart only
+   checked the main branch). There is now exactly one definition, in the new
+   `stock.service.StockAvailabilityService`, and a new ArchUnit rule in
+   `SingleWritePathArchitectureTest` forbids any class outside
+   `com.nbh.backend.stock.service` from depending on `StockBalanceRepository` or
+   `StockReservationRepository` at all — not just their mutating methods, reads too.
+   (Known gap, pre-existing and not closed by this rule: `ProductRepository
+   .searchAdmin`'s stock-filter subquery still reaches into `StockBalance` directly
+   via JPQL, bypassing the service — it was already doing this before today, just
+   against `location` instead of `account`; worth folding into Phase 3's rewrite.)
+
+**Also removed:** `staff_branch_assignment`, `StaffBranchAccessService`, the
+`BRANCH_MANAGE`/`STOCK_TRANSFER_INITIATE`/`STOCK_TRANSFER_APPROVE` permissions, the
+`TRANSFER` stock-document type and `TRANSFER_OUT` reservation source (designed,
+never built), the `BranchController`/Branches admin screen (frontend, Phase 2), and
+`FulfilmentType.BRANCH_PICKUP` → renamed `PICKUP`. `BRANCH_MANAGER` role renamed
+`MANAGER` (`StaffRoleSeeder` re-syncs by name on boot — the seeder's key had to move
+too, or it would have created a stray duplicate `BRANCH_MANAGER` role next to the
+renamed `MANAGER` row).
+
+**Verified, not just tested:** the migration was dry-run against a full copy of dev
+(`pg_dump`/`pg_restore`) before touching the real database — balances matched the
+pre-migration totals exactly, the append-only ledger trigger still rejected a test
+UPDATE, and the double-entry sum-to-zero check passed for every variant. Applied to
+real dev **through Flyway** (not by hand — see the note below), then live-verified
+end to end via curl against the running app: add-to-cart → checkout → confirm
+payment → dispatch → mark-delivered (stock moved exactly as expected: SHOP -1,
+reservation released, CUSTOMER +1), a `PICKUP` checkout (and confirmed the old
+`BRANCH_PICKUP` value is now correctly rejected), a direct receive, a write-off, and
+a full purchase-order send→receive cycle. `GET /api/v1/admin/stock/consistency-check`
+reported `{"balanceMismatches":[],"doubleEntryViolations":[],"consistent":true}`
+after all of that. Backend suite: **197/197** on a fresh test database.
+
+**Pitfall hit and worth recording:** the first attempt applied V26 directly via
+`psql -f` against the real dev database to be extra careful/fast — this works, but
+Flyway never finds out, so `flyway_schema_history` has no row for version 26 and the
+next app boot tries to run V26 again against a database where it's already half
+irreversible (tables already dropped) → boot fails. Fixed by restoring dev from the
+pre-migration `pg_dump` and letting Flyway apply V26 itself, the normal way. **Never
+hand-apply a migration to a database Flyway also manages** — always let Flyway run
+it, even in a hurry; dry-run against a disposable restored copy first instead.
+
+**Not yet done, in order:**
+- Phase 0's production pre-flight (the same DAMAGED/IN_TRANSIT/TRANSFER row-count
+  checks run against dev above) has **not** been run against the live production
+  database. **Do not push this to `main` until that's done** — `main` auto-deploys
+  and this migration drops tables; the guards inside V26 will refuse to run if
+  production has data that doesn't fit the assumptions, but that should be
+  confirmed deliberately, not discovered by a failed deploy.
+- Phase 2 (frontend): remove the Branches screen, the branch/location pickers in
+  Restock and Purchase Orders, `BRANCH_PICKUP` → `PICKUP` everywhere in the
+  frontend, the "Fulfilled from…" branch line in admin order detail. Ships together
+  with this backend change — a frontend still sending `BRANCH_PICKUP` or a
+  `locationId` will get 400s.
+- Phase 3+ (plain variant model, product editor redesign, storefront variant
+  cards) — see the full build plan from this session's planning pass for the
+  complete phase-by-phase spec; not started.
+
+This commit is **local only as of this entry** — reviewed but not pushed, per the
+production pre-flight gap above.
+
 ## Bank/paybill/WhatsApp settings become admin-editable, not static config (2026-09-24, later same day)
 
 **Phase G of the admin-dashboard rework** (Phase F was frontend-only — quick-edit camera capture,

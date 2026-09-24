@@ -6,7 +6,6 @@ public enum StockDocumentType {
     SALE_POS,
     CUSTOMER_RETURN,
     SUPPLIER_RETURN,
-    TRANSFER,
     ADJUSTMENT,
     STOCK_COUNT,
     WRITE_OFF

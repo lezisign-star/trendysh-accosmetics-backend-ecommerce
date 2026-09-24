@@ -1,8 +1,8 @@
 package com.nbh.backend.stock.service;
 
-import com.nbh.backend.branch.entity.StockLocation;
 import com.nbh.backend.common.event.LowStockThresholdCrossedEvent;
 import com.nbh.backend.common.exception.NotFoundException;
+import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
@@ -26,21 +26,33 @@ import java.util.*;
 /**
  * The ONLY class in this codebase permitted to write {@link StockLedgerEntry} or
  * {@link StockBalance} rows. Every stock-affecting event in the system — online
- * sale, POS sale, goods receipt, inter-branch transfer, adjustment, stock count —
- * is expressed as a {@link StockDocument} and posted through here.
+ * sale, POS sale, goods receipt, adjustment, stock count — is expressed as a
+ * {@link StockDocument} and posted through here.
  *
  * This is the direct structural fix for Moments Packaging's confirmed production
  * bug: {@code RisellerSyncService.syncStock()} performed a bare
  * {@code UPDATE product SET stock_count = :newCount}, an unconditional absolute
- * assignment with no ledger, no location, and no concurrency protection. That is
+ * assignment with no ledger, no account and no concurrency protection. That is
  * precisely the class of write this service exists to make structurally
- * impossible — see the ArchUnit rule in stock/architecture that enforces no other
- * class may call StockLedgerEntryRepository.save or StockBalanceRepository.save.
+ * impossible — enforced by the ArchUnit rule in {@code SingleWritePathArchitectureTest}
+ * that no class outside {@code com.nbh.backend.stock.service} may depend on
+ * {@link StockBalanceRepository} or {@link StockReservationRepository} at all
+ * (not just their mutating methods), so every reader goes through
+ * {@link StockAvailabilityService} and every writer goes through here.
+ *
+ * <p>Branches/locations were removed 2026-09-24 (founder decision — see
+ * HANDOFF.md). There is exactly one physical account, {@link StockAccount#SHOP};
+ * the other three ({@code SUPPLIER}/{@code CUSTOMER}/{@code ADJUSTMENT}) are the
+ * same virtual double-entry counterparts the old branch-scoped locations had.
+ * This also makes two real bugs the old branch-fallback design had structurally
+ * impossible rather than just unlikely: a reservation can now only ever be
+ * fulfilled from SHOP (enforced below), and there is only one place "in stock"
+ * can be computed, so no two callers can disagree about it.
  *
  * Locking protocol (adopted from ERPNext stock_reservation_entry.py
  * get_available_qty_to_reserve, L726/L749-753, and stock_ledger.py
  * make_sl_entries, L143-145):
- *   1. Collect every distinct (variantId, locationId) pair touched by the
+ *   1. Collect every distinct (variantId, account) pair touched by the
  *      document's lines.
  *   2. Sort the pairs into a deterministic order before locking any of them —
  *      this is what prevents two concurrent documents that touch an overlapping
@@ -80,7 +92,7 @@ public class StockPostingService {
     }
 
     /**
-     * Posts a DRAFT document: locks every (variant, location) pair it touches in
+     * Posts a DRAFT document: locks every (variant, account) pair it touches in
      * a fixed order, appends one ledger entry per line-side, and updates the
      * derived balance. Idempotent on {@code document.idempotencyKey} — posting an
      * already-posted document (matched by idempotency key) is a no-op, which is
@@ -106,6 +118,28 @@ public class StockPostingService {
             throw new IllegalStateException("Cannot post a stock document with no lines");
         }
 
+        // A reservation only ever holds SHOP stock (there is nowhere else to hold
+        // it). Enforcing this here — not just trusting the caller — is what makes
+        // "reserve at one place, dispatch from another" a structural impossibility
+        // instead of a bug that only shows up when a fallback path is taken (this
+        // is exactly the class of defect the old branch-fallback design had).
+        for (StockDocumentLine line : document.getLines()) {
+            StockReservation reservation = line.getReservation();
+            if (reservation == null) {
+                continue;
+            }
+            if (line.getSourceAccount() != StockAccount.SHOP) {
+                throw new IllegalArgumentException(
+                        "Line fulfilling reservation " + reservation.getId() + " must source from SHOP, was "
+                                + line.getSourceAccount());
+            }
+            if (!reservation.getVariant().getId().equals(line.getVariant().getId())) {
+                throw new IllegalArgumentException(
+                        "Reservation " + reservation.getId() + " is for variant " + reservation.getVariant().getId()
+                                + " but the line fulfilling it is for variant " + line.getVariant().getId());
+            }
+        }
+
         // Persist the document and its lines FIRST (still DRAFT) so they have
         // real ids before any StockLedgerEntry references them — a ledger entry's
         // document/documentLine FKs are NOT NULL and Hibernate cannot resolve a
@@ -128,21 +162,21 @@ public class StockPostingService {
         // maps it to 409 — a caller-visible "please retry", not a silent 500.
         document = documentRepository.saveAndFlush(document);
 
-        // Step 1-2: every distinct (variant, location) pair this document touches,
+        // Step 1-2: every distinct (variant, account) pair this document touches,
         // in one deterministic order shared by every concurrent poster.
-        Set<VariantLocationKey> pairs = new TreeSet<>();
+        Set<VariantAccountKey> pairs = new TreeSet<>();
         for (StockDocumentLine line : document.getLines()) {
-            if (line.getSourceLocation() != null) {
-                pairs.add(new VariantLocationKey(line.getVariant().getId(), line.getSourceLocation().getId()));
+            if (line.getSourceAccount() != null) {
+                pairs.add(new VariantAccountKey(line.getVariant().getId(), line.getSourceAccount()));
             }
-            if (line.getTargetLocation() != null) {
-                pairs.add(new VariantLocationKey(line.getVariant().getId(), line.getTargetLocation().getId()));
+            if (line.getTargetAccount() != null) {
+                pairs.add(new VariantAccountKey(line.getVariant().getId(), line.getTargetAccount()));
             }
         }
 
         // Step 3: lock every balance row up front, before any writes, in that order.
-        Map<VariantLocationKey, StockBalance> lockedBalances = new HashMap<>();
-        for (VariantLocationKey key : pairs) {
+        Map<VariantAccountKey, StockBalance> lockedBalances = new HashMap<>();
+        for (VariantAccountKey key : pairs) {
             lockedBalances.put(key, lockOrCreateBalance(key));
         }
 
@@ -175,22 +209,22 @@ public class StockPostingService {
 
         Instant postedAt = Instant.now(clock);
 
-        // Step 4: apply every line. A transfer line has both a source and a
-        // target, producing two ledger entries (one negative, one positive) —
-        // the double-entry property that makes SUM(qty_change) per variant
-        // always zero across the whole ledger.
+        // Step 4: apply every line. A line with both a source and a target produces
+        // two ledger entries (one negative, one positive) — the double-entry
+        // property that makes SUM(qty_change) per variant always zero across the
+        // whole ledger.
         for (StockDocumentLine line : document.getLines()) {
             StockReservation fulfils = line.getReservation() != null
                     ? lockedReservations.get(line.getReservation().getId())
                     : null;
-            if (line.getSourceLocation() != null) {
-                applyMovement(document, line, line.getSourceLocation(), line.getQty().negate(),
-                        lockedBalances.get(new VariantLocationKey(line.getVariant().getId(), line.getSourceLocation().getId())),
+            if (line.getSourceAccount() != null) {
+                applyMovement(document, line, line.getSourceAccount(), line.getQty().negate(),
+                        lockedBalances.get(new VariantAccountKey(line.getVariant().getId(), line.getSourceAccount())),
                         postedAt, fulfils);
             }
-            if (line.getTargetLocation() != null) {
-                applyMovement(document, line, line.getTargetLocation(), line.getQty(),
-                        lockedBalances.get(new VariantLocationKey(line.getVariant().getId(), line.getTargetLocation().getId())),
+            if (line.getTargetAccount() != null) {
+                applyMovement(document, line, line.getTargetAccount(), line.getQty(),
+                        lockedBalances.get(new VariantAccountKey(line.getVariant().getId(), line.getTargetAccount())),
                         postedAt, null); // a reservation is only consumed on the outbound/source side
             }
         }
@@ -200,8 +234,8 @@ public class StockPostingService {
         return documentRepository.save(document);
     }
 
-    private StockBalance lockOrCreateBalance(VariantLocationKey key) {
-        Optional<StockBalance> locked = balanceRepository.lockByVariantIdAndLocationId(key.variantId(), key.locationId());
+    private StockBalance lockOrCreateBalance(VariantAccountKey key) {
+        Optional<StockBalance> locked = balanceRepository.lockByVariantIdAndAccount(key.variantId(), key.account());
         if (locked.isPresent()) {
             return locked.get();
         }
@@ -220,14 +254,14 @@ public class StockPostingService {
         // transaction carries on normally, so the locking SELECT immediately
         // after always finds a row — its own insert if it won, the winner's row
         // if it lost — with no exception on either path.
-        balanceRepository.insertZeroIfAbsent(key.variantId(), key.locationId());
-        return balanceRepository.lockByVariantIdAndLocationId(key.variantId(), key.locationId()).orElseThrow();
+        balanceRepository.insertZeroIfAbsent(key.variantId(), key.account().name());
+        return balanceRepository.lockByVariantIdAndAccount(key.variantId(), key.account()).orElseThrow();
     }
 
     private void applyMovement(
             StockDocument document,
             StockDocumentLine line,
-            StockLocation location,
+            StockAccount account,
             BigDecimal signedQty,
             StockBalance balance,
             Instant postedAt,
@@ -236,37 +270,36 @@ public class StockPostingService {
         BigDecimal onHandBefore = balance.getOnHandQty();
         BigDecimal newOnHand = onHandBefore.add(signedQty);
 
-        // The negative-stock guard applies ONLY to internal (physical) locations.
-        // Virtual locations (SUPPLIER/CUSTOMER/ADJUSTMENT/IN_TRANSIT) are the
-        // other side of every double-entry movement by design — SUPPLIER goes
-        // negative as goods are received from it, CUSTOMER goes negative as
-        // goods are sold to it, etc. (architecture doc §4.2). Phase-1 default
-        // for physical locations: hard-blocked (§8 Q5).
-        boolean negativeAllowed = !location.isInternal();
+        // The negative-stock guard applies ONLY to the physical account (SHOP).
+        // Virtual accounts (SUPPLIER/CUSTOMER/ADJUSTMENT) are the other side of
+        // every double-entry movement by design — SUPPLIER goes negative as goods
+        // are received from it, CUSTOMER goes negative as goods are sold to it,
+        // etc. (architecture doc §4.2). Phase-1 default for SHOP: hard-blocked
+        // (§8 Q5).
+        boolean negativeAllowed = !account.isPhysical();
         if (newOnHand.signum() < 0 && !negativeAllowed) {
             throw new InsufficientStockException(
                     "Insufficient stock for variant " + line.getVariant().getSku()
-                            + " at location " + location.getCode()
                             + ": on hand " + balance.getOnHandQty() + ", requested change " + signedQty);
         }
 
         // Audit finding F3 (session 3): on_hand >= 0 is not enough — an
-        // unreserved outbound movement at an internal location must also not dip
-        // below what OTHER active holds still need, or a write-off/unreserved
-        // sale can silently eat a paying customer's already-reserved unit with no
-        // error (the exact oversell this whole ledger exists to prevent, reached
-        // through the posting path instead of the reservation path). A line that
-        // legitimately consumes ITS OWN reservation (fulfils != null) is exempt
-        // from that floor for the qty it's consuming: reservedQty and onHandQty
-        // both drop by the same amount below, so on_hand >= reserved is preserved
+        // unreserved outbound movement at SHOP must also not dip below what OTHER
+        // active holds still need, or a write-off/unreserved sale can silently
+        // eat a paying customer's already-reserved unit with no error (the exact
+        // oversell this whole ledger exists to prevent, reached through the
+        // posting path instead of the reservation path). A line that legitimately
+        // consumes ITS OWN reservation (fulfils != null) is exempt from that
+        // floor for the qty it's consuming: reservedQty and onHandQty both drop
+        // by the same amount below, so on_hand >= reserved is preserved
         // automatically — see the arithmetic note below.
-        if (location.isInternal() && signedQty.signum() < 0) {
+        if (account.isPhysical() && signedQty.signum() < 0) {
             BigDecimal reservedFloor = fulfils != null
                     ? balance.getReservedQty().subtract(fulfils.getOutstandingQty())
                     : balance.getReservedQty();
             if (newOnHand.compareTo(reservedFloor) < 0) {
                 throw new InsufficientStockException(
-                        "Cannot post: variant " + line.getVariant().getSku() + " at location " + location.getCode()
+                        "Cannot post: variant " + line.getVariant().getSku()
                                 + " would leave on_hand " + newOnHand + " below " + reservedFloor
                                 + " still reserved by other holds (on hand " + balance.getOnHandQty()
                                 + ", requested change " + signedQty + ")");
@@ -299,7 +332,7 @@ public class StockPostingService {
 
         StockLedgerEntry entry = new StockLedgerEntry();
         entry.setVariant(line.getVariant());
-        entry.setLocation(location);
+        entry.setAccount(account);
         entry.setPostedAt(postedAt);
         entry.setQtyChange(signedQty);
         entry.setQtyAfter(newOnHand);
@@ -320,17 +353,16 @@ public class StockPostingService {
         // §2: edge-triggered, not level-triggered — fires exactly once on the
         // movement that CROSSES the threshold, never on every subsequent sale of
         // an already-low SKU (that would be dozens of identical alerts per hour
-        // during a promotion). Restricted to internal locations: reorderLevel
-        // exists to trigger restocking real shelf stock, and a virtual location
-        // (SUPPLIER/CUSTOMER/ADJUSTMENT/IN_TRANSIT) going more negative is not a
-        // "running low" event by that definition — it's the designed other side
-        // of every double-entry movement.
+        // during a promotion). Restricted to SHOP: reorderLevel exists to trigger
+        // restocking real shelf stock, and a virtual account (SUPPLIER/CUSTOMER/
+        // ADJUSTMENT) going more negative is not a "running low" event by that
+        // definition — it's the designed other side of every double-entry movement.
         BigDecimal reorderLevel = line.getVariant().getReorderLevel();
-        if (location.isInternal() && reorderLevel != null
+        if (account.isPhysical() && reorderLevel != null
                 && onHandBefore.compareTo(reorderLevel) >= 0
                 && newOnHand.compareTo(reorderLevel) < 0) {
             eventPublisher.publishEvent(new LowStockThresholdCrossedEvent(
-                    line.getVariant().getId(), line.getVariant().getSku(), location.getId(),
+                    line.getVariant().getId(), line.getVariant().getSku(),
                     onHandBefore, newOnHand, reorderLevel));
         }
 
@@ -348,11 +380,11 @@ public class StockPostingService {
         balanceRepository.save(balance);
     }
 
-    private record VariantLocationKey(UUID variantId, UUID locationId) implements Comparable<VariantLocationKey> {
+    private record VariantAccountKey(UUID variantId, StockAccount account) implements Comparable<VariantAccountKey> {
         @Override
-        public int compareTo(VariantLocationKey other) {
+        public int compareTo(VariantAccountKey other) {
             int cmp = this.variantId.compareTo(other.variantId);
-            return cmp != 0 ? cmp : this.locationId.compareTo(other.locationId);
+            return cmp != 0 ? cmp : this.account.compareTo(other.account);
         }
     }
 }

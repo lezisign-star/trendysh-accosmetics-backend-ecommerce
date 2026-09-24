@@ -58,24 +58,27 @@ public class StaffRoleSeeder {
 
         roles.put("SUPER_ADMIN", new RoleDefinition(
                 "Super Admin",
-                "Full access across both branches — every permission.",
+                "Full access — every permission.",
                 EnumSet.allOf(Permission.class)));
 
         // Functionally identical to SUPER_ADMIN (same full permission set) — only the name differs,
         // for the engineering/maintenance account(s) seeded alongside the shop owner's.
         roles.put("DEVELOPER", new RoleDefinition(
                 "Developer",
-                "Full access across both branches — every permission. For engineering/maintenance accounts.",
+                "Full access — every permission. For engineering/maintenance accounts.",
                 EnumSet.allOf(Permission.class)));
 
-        roles.put("BRANCH_MANAGER", new RoleDefinition(
-                "Branch Manager",
-                "Runs day-to-day operations for their assigned branch(es): stock, POS, orders, staff view.",
+        // Renamed from BRANCH_MANAGER 2026-09-24 when branches were removed (founder decision —
+        // see HANDOFF.md); same responsibilities, minus the two transfer permissions that no
+        // longer mean anything with one shop and nothing to transfer between.
+        roles.put("MANAGER", new RoleDefinition(
+                "Manager",
+                "Runs day-to-day operations: stock, POS, orders, staff view.",
                 EnumSet.of(
                         Permission.ORDER_VIEW, Permission.ORDER_MANAGE_ALL,
                         Permission.PRODUCT_VIEW, Permission.PRODUCT_MANAGE,
                         Permission.STOCK_VIEW, Permission.STOCK_RECEIVE, Permission.STOCK_ADJUST,
-                        Permission.STOCK_COUNT, Permission.STOCK_TRANSFER_INITIATE, Permission.STOCK_TRANSFER_APPROVE,
+                        Permission.STOCK_COUNT,
                         Permission.POS_SELL, Permission.POS_OPEN_SESSION, Permission.POS_CLOSE_SESSION,
                         Permission.POS_DISCOUNT, Permission.POS_VOID,
                         Permission.PAYMENT_VIEW,
@@ -97,11 +100,11 @@ public class StaffRoleSeeder {
 
         roles.put("STOCK_CONTROLLER", new RoleDefinition(
                 "Stock Controller",
-                "Receives goods, runs stock-takes and inter-branch transfers. No POS, no order/refund access.",
+                "Receives goods and runs stock-takes. No POS, no order/refund access.",
                 EnumSet.of(
                         Permission.PRODUCT_VIEW, Permission.PRODUCT_MANAGE,
                         Permission.STOCK_VIEW, Permission.STOCK_RECEIVE, Permission.STOCK_ADJUST,
-                        Permission.STOCK_COUNT, Permission.STOCK_TRANSFER_INITIATE
+                        Permission.STOCK_COUNT
                 )));
 
         roles.put("VIEWER", new RoleDefinition(

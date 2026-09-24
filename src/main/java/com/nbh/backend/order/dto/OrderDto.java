@@ -11,7 +11,6 @@ public record OrderDto(
         String orderNo,
         String status,
         String fulfilmentType,
-        UUID fulfilmentBranchId,
         BigDecimal subtotal,
         BigDecimal vatTotal,
         BigDecimal deliveryFee,
@@ -22,7 +21,7 @@ public record OrderDto(
     public static OrderDto from(CustomerOrder order) {
         return new OrderDto(
                 order.getId(), order.getOrderNo(), order.getStatus().name(), order.getFulfilmentType().name(),
-                order.getFulfilmentBranch().getId(), order.getSubtotal(), order.getVatTotal(),
+                order.getSubtotal(), order.getVatTotal(),
                 order.getDeliveryFee(), order.getGrandTotal(),
                 order.getItems().stream().map(OrderItemDto::from).toList(),
                 order.getCreatedAt());

@@ -1,10 +1,5 @@
 package com.nbh.backend.cart.service;
 
-import com.nbh.backend.branch.entity.Branch;
-import com.nbh.backend.branch.entity.LocationType;
-import com.nbh.backend.branch.entity.StockLocation;
-import com.nbh.backend.branch.repository.BranchRepository;
-import com.nbh.backend.branch.repository.StockLocationRepository;
 import com.nbh.backend.cart.dto.CartDto;
 import com.nbh.backend.cart.dto.CartItemDto;
 import com.nbh.backend.cart.entity.Cart;
@@ -15,7 +10,7 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PromoCampaignService;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,26 +35,20 @@ public class CartService {
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
     private final ProductVariantRepository variantRepository;
-    private final BranchRepository branchRepository;
-    private final StockLocationRepository locationRepository;
-    private final StockBalanceRepository balanceRepository;
+    private final StockAvailabilityService availabilityService;
     private final EffectivePriceResolver priceResolver;
     private final PromoCampaignService promoCampaignService;
 
     public CartService(CartRepository cartRepository,
                         CartItemRepository cartItemRepository,
                         ProductVariantRepository variantRepository,
-                        BranchRepository branchRepository,
-                        StockLocationRepository locationRepository,
-                        StockBalanceRepository balanceRepository,
+                        StockAvailabilityService availabilityService,
                         EffectivePriceResolver priceResolver,
                         PromoCampaignService promoCampaignService) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.variantRepository = variantRepository;
-        this.branchRepository = branchRepository;
-        this.locationRepository = locationRepository;
-        this.balanceRepository = balanceRepository;
+        this.availabilityService = availabilityService;
         this.priceResolver = priceResolver;
         this.promoCampaignService = promoCampaignService;
     }
@@ -153,16 +142,7 @@ public class CartService {
     }
 
     private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty) {
-        Branch defaultBranch = branchRepository.findByIsDefaultOnlineFulfilmentTrue()
-                .orElseThrow(() -> new IllegalStateException("No branch is configured as the default online-fulfilment branch"));
-        StockLocation salesFloor = locationRepository
-                .findByBranchIdAndLocationType(defaultBranch.getId(), LocationType.SALES_FLOOR)
-                .orElseThrow();
-
-        BigDecimal available = balanceRepository.findByVariantIdAndLocationId(variant.getId(), salesFloor.getId())
-                .map(b -> b.getOnHandQty().subtract(b.getReservedQty()))
-                .orElse(BigDecimal.ZERO);
-
+        BigDecimal available = availabilityService.available(variant.getId());
         if (available.compareTo(requestedQty) < 0) {
             throw new IllegalArgumentException(
                     "Only " + available + " of " + variant.getSku() + " is currently available");

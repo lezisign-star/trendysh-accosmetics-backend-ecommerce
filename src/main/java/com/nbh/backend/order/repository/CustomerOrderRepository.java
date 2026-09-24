@@ -22,21 +22,20 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
 
     /**
      * §4 C5 fix: without this, {@code OrderDto.from} (iterating {@code
-     * items} then, per item, {@code item.getVariant().getSku()}) and the
-     * lazy {@code fulfilmentBranch} reference each incur their own N+1 query
-     * — 1 for the order, 1 for the items collection, N for the variants —
-     * on every order read. Hit at three call sites:
+     * items} then, per item, {@code item.getVariant().getSku()}) incurs its
+     * own N+1 query — 1 for the order, 1 for the items collection, N for the
+     * variants — on every order read. Hit at three call sites:
      * {@code OrderController.get}/{@code .track} and
      * {@code OrderFulfilmentService.fulfil}. One query instead, via a LEFT
      * JOIN FETCH per attribute path.
      */
-    @EntityGraph(attributePaths = {"items", "items.variant", "fulfilmentBranch"})
+    @EntityGraph(attributePaths = {"items", "items.variant"})
     Optional<CustomerOrder> findByOrderNo(String orderNo);
 
     // items.variant.product: the staff detail view names each line's product;
     // fetching it here keeps that in the one query instead of one per line.
     @Override
-    @EntityGraph(attributePaths = {"items", "items.variant", "items.variant.product", "fulfilmentBranch"})
+    @EntityGraph(attributePaths = {"items", "items.variant", "items.variant.product"})
     Optional<CustomerOrder> findById(UUID id);
 
     /**

@@ -74,7 +74,6 @@ public class StockDocumentNoGenerator {
             case SALE_POS -> "POS";
             case CUSTOMER_RETURN -> "CR";
             case SUPPLIER_RETURN -> "SR";
-            case TRANSFER -> "TRF";
             case ADJUSTMENT -> "ADJ";
             case STOCK_COUNT -> "SC";
             case WRITE_OFF -> "WO";
