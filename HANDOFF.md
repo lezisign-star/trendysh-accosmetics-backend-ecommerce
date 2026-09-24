@@ -1,5 +1,31 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Inventory redesign Phase 3.0 — plain-variant/multi-category pre-flight (2026-09-24, later same day)
+
+Read-only pre-flight for the next redesign phase (plain variants — name/photo/price/description
+only, no attribute concept — and products in several categories; full Opus-authored plan covers
+3a–3f, not written to disk, see this session). Ran on both dev and production, same connection
+method as the Phase 0 branch-removal pre-flight (production via the Railway public TCP proxy, never
+the internal hostname).
+
+**Attribute data — the one real risk the plan flagged — turned out to be a non-issue:** production
+has 1 attribute definition, 0 attribute values, 0 variant links. Dev has 1 attribute/2 values/1
+variant link, and that one linked variant's name already fully contains its attribute's value
+(`ILIKE` check), so nothing meaningful would be lost by dropping the attribute tables later in 3f.
+
+**Other checks, all clean:** no product has a subcategory whose parent disagrees with its category
+(the guard the planned `V27` migration will also re-check). Production: 0 products with no category.
+Dev: 4 products with no category, 4 variants named blank/`Default` — pre-existing test/seed data,
+not a migration blocker; the new editor's warning system (Phase 3a) will just surface these once
+built. Scale is tiny either way — production is 2 products/7 variants, dev is 27 products/31
+variants — no near-term risk from the storefront's client-side-filtered catalogue (flagged in the
+plan as a later follow-up regardless, once variant count grows past ~2000).
+
+**Conclusion: clear to start Phase 3a** (backend: plain-variant model, one-page-editor API,
+product↔category many-to-many, bulk actions, duplicate). Phase 3a/3b ship additively (old frontend
+keeps working via compatibility fields) — the destructive `V28` cleanup migration only happens in
+Phase 3f, after 3a–3e are live and re-verified.
+
 ## Inventory redesign Phase 1 — branches eliminated completely, backend (2026-09-24)
 
 **Founder decision, not a refactor of convenience:** after a UX audit found the admin
