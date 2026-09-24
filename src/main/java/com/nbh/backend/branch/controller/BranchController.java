@@ -8,6 +8,7 @@ import com.nbh.backend.branch.repository.StockLocationRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -31,7 +32,7 @@ public class BranchController {
     @GetMapping
     @Transactional(readOnly = true)
     public List<BranchDto> list() {
-        return branchRepository.findAll().stream().map(BranchDto::from).toList();
+        return branchRepository.findAllByOrderByName().stream().map(BranchDto::from).toList();
     }
 
     @GetMapping("/{id}")
@@ -53,10 +54,50 @@ public class BranchController {
     public BranchDto create(@Valid @RequestBody CreateBranchRequest request) {
         Branch branch = new Branch();
         branch.setCode(request.code());
-        branch.setName(request.name());
-        branch.setCity(request.city());
         branch.setActive(true);
+        applyFields(branch, request.name(), request.addressLine1(), request.addressLine2(),
+                request.city(), request.phone(), request.email());
         return BranchDto.from(branchRepository.save(branch));
+    }
+
+    /**
+     * Full-replace update. Setting {@code isDefaultOnlineFulfilment} true here atomically clears it
+     * off whichever branch currently holds it — the DB's partial unique index only allows one, and
+     * this is the one place in the whole app that's allowed to flip it (see {@code CheckoutService},
+     * which trusts there's always exactly one main branch and would 500 if that were ever untrue).
+     */
+    @PreAuthorize("hasAuthority('PERM_BRANCH_MANAGE')")
+    @PatchMapping("/{id}")
+    @Transactional
+    public BranchDto update(@PathVariable UUID id, @Valid @RequestBody UpdateBranchRequest request) {
+        Branch branch = findBranchOrThrow(id);
+        applyFields(branch, request.name(), request.addressLine1(), request.addressLine2(),
+                request.city(), request.phone(), request.email());
+        branch.setActive(request.isActive());
+
+        if (request.isDefaultOnlineFulfilment() && !branch.isDefaultOnlineFulfilment()) {
+            branchRepository.findByIsDefaultOnlineFulfilmentTrue().ifPresent(current -> {
+                current.setDefaultOnlineFulfilment(false);
+                branchRepository.save(current);
+            });
+        }
+        branch.setDefaultOnlineFulfilment(request.isDefaultOnlineFulfilment());
+
+        return BranchDto.from(branchRepository.save(branch));
+    }
+
+    private void applyFields(Branch branch, String name, String addressLine1, String addressLine2,
+                              String city, String phone, String email) {
+        branch.setName(name);
+        branch.setAddressLine1(blankToNull(addressLine1));
+        branch.setAddressLine2(blankToNull(addressLine2));
+        branch.setCity(blankToNull(city));
+        branch.setPhone(blankToNull(phone));
+        branch.setEmail(blankToNull(email));
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private Branch findBranchOrThrow(UUID id) {
@@ -67,6 +108,21 @@ public class BranchController {
     public record CreateBranchRequest(
             @NotBlank String code,
             @NotBlank String name,
-            String city
+            String addressLine1,
+            String addressLine2,
+            String city,
+            String phone,
+            String email
+    ) {}
+
+    public record UpdateBranchRequest(
+            @NotBlank String name,
+            String addressLine1,
+            String addressLine2,
+            String city,
+            String phone,
+            String email,
+            @NotNull Boolean isActive,
+            @NotNull Boolean isDefaultOnlineFulfilment
     ) {}
 }

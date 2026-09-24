@@ -20,6 +20,7 @@ import com.nbh.backend.payment.service.BankPaymentSettings;
 import com.nbh.backend.payment.service.PaymentReferenceGenerator;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
+import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.service.StockReservationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,7 @@ class CheckoutServiceUnitTest {
     @Mock private CartItemRepository cartItemRepository;
     @Mock private BranchRepository branchRepository;
     @Mock private StockLocationRepository locationRepository;
+    @Mock private StockBalanceRepository balanceRepository;
     @Mock private CustomerOrderRepository orderRepository;
     @Mock private PaymentRecordRepository paymentRecordRepository;
     @Mock private StockReservationService reservationService;
@@ -73,7 +75,7 @@ class CheckoutServiceUnitTest {
     @BeforeEach
     void setUp() {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository, branchRepository,
-                locationRepository, orderRepository, paymentRecordRepository, reservationService,
+                locationRepository, balanceRepository, orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK));
 
         cart = new Cart();
@@ -133,7 +135,7 @@ class CheckoutServiceUnitTest {
     @Test
     void mpesaModeKeepsTheDarajaRecordAndTheShortFifteenMinuteHold() {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository, branchRepository,
-                locationRepository, orderRepository, paymentRecordRepository, reservationService,
+                locationRepository, balanceRepository, orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
                 bankSettings(BankPaymentSettings.CollectionMode.MPESA));
         when(cartItemRepository.findByCartId(cart.getId()))
@@ -150,6 +152,7 @@ class CheckoutServiceUnitTest {
     private CartItem cartItem(BigDecimal unitPrice, BigDecimal qty, BigDecimal vatRate, boolean vatExempt) {
         Product product = new Product();
         product.setId(UUID.randomUUID());
+        product.setName("Test product");
 
         ProductVariant variant = new ProductVariant();
         variant.setId(UUID.randomUUID());
@@ -279,18 +282,25 @@ class CheckoutServiceUnitTest {
     }
 
     @Test
-    void aLineThatCannotBeReservedAbortsTheWholeCheckoutByPropagatingTheException() {
+    void aLineThatCannotBeReservedAbortsTheWholeCheckoutByPropagatingACustomerFriendlyException() {
         when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(
                 cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false),
                 cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 
         when(reservationService.reserve(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new StockReservation())
-                .thenThrow(new InsufficientAvailabilityException("not enough stock"));
+                .thenThrow(new InsufficientAvailabilityException(
+                        "Requested 1 of SKU-1234 at BR-A/SALES_FLOOR but only 0 is available"));
 
+        // The whole point of CheckoutService's catch block: the raw, location-code-bearing
+        // message from StockReservationService never reaches whoever sees this exception —
+        // a customer only needs to know an item ran out, not which internal branch/location.
         assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
                 .isInstanceOf(InsufficientAvailabilityException.class)
-                .hasMessageContaining("not enough stock");
+                .hasMessageContaining("Test product")
+                .hasMessageContaining("out of stock")
+                .hasMessageNotContaining("SALES_FLOOR")
+                .hasMessageNotContaining("BR-A");
     }
 
     @Test
