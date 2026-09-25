@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -56,6 +57,20 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Object> handleNotFound(EntityNotFoundException e) {
         log.warn("404: {}", e.getMessage());
         return body(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    /**
+     * A request against a URL no controller maps (found live, 2026-09-25: a stale Railway
+     * deployment made every request to two brand-new endpoints hit this path instead of their
+     * real handlers — but the bug was here regardless, since it fell through to
+     * {@link #handleUnexpected} and returned a 500 for what is really just "not found").
+     * Spring's own default for this is already 404; this handler only exists so the response
+     * body matches this API's own JSON error shape instead of Boot's default HTML/JSON page.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Object> handleNoResourceFound(NoResourceFoundException e) {
+        log.warn("404: no mapping for {} {}", e.getHttpMethod(), e.getResourcePath());
+        return body(HttpStatus.NOT_FOUND, "No such endpoint: " + e.getResourcePath());
     }
 
     @ExceptionHandler(BadCredentialsException.class)

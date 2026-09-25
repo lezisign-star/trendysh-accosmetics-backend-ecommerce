@@ -1,5 +1,21 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## GlobalExceptionHandler: an unmapped route now returns 404, not 500 (2026-09-25, later same day)
+
+Found live right after Phase 3b's deploy: a stale Railway build made every request to the two new
+`/catalog/variants*` endpoints fall through to Spring's static-resource handler (the route wasn't
+in that build yet), which threw `NoResourceFoundException` — and `GlobalExceptionHandler` had no
+handler for that type, so it fell to the `Exception.class` catch-all and came back as a 500 "An
+unexpected error occurred". Restarting the deployment picked up the real build and fixed the
+immediate symptom, but the handler gap itself was real and independent of that stale-build
+coincidence: any future typo'd or removed route under a public prefix (`/catalog/**`, etc.) would
+hit the same catch-all and look like a server error instead of a plain 404.
+
+Added `@ExceptionHandler(NoResourceFoundException.class)` mapping it to 404 with this API's normal
+JSON error shape. Verified live: `GET /api/v1/catalog/this-route-does-not-exist` (a path under the
+public prefix, so it reaches the dispatcher instead of being rejected by security first) now
+returns `404 {"error":"No such endpoint: ..."}` instead of a 500. Full suite **213/213** unaffected.
+
 ## Inventory redesign Phase 3b — storefront API, one card per variant (2026-09-25)
 
 Backend half of the storefront redesign: every SELLABLE VARIANT gets its own catalogue card now,
