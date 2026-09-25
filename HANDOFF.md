@@ -2,19 +2,20 @@
 
 ## Inventory redesign Phase 3f — the old attribute/option editor and single-category pair are gone from the code (2026-09-25, later same day)
 
-The Java-side half of the cleanup V27/V27's own comments already promised ("removed in Phase 3f
-once nothing calls the old endpoints any more") — now that Phase 3a-3e have been live and
-re-verified, and the frontend confirmed to call none of it. **The actual `V28` Flyway migration
-(`DROP TABLE product_attribute`/`product_attribute_value`/`variant_attribute_value`,
-`ALTER TABLE product DROP COLUMN category_id`/`subcategory_id`) is NOT included in this session** —
-the sandbox's auto-mode safety classifier refused the file write as "Cloud Storage Mass Delete"
-(a false positive on a local SQL file) even after the user tried to grant it live. Everything below
-is safe without that migration — the removed entities never mapped those tables/columns to begin
-with (unmapped since V27), so `ddl-auto: validate` doesn't care that they still physically exist —
-but the tables/columns themselves are still sitting in both dev and production until someone adds
-that migration file by hand. See the exact SQL in this session's transcript, or reconstruct it from
-V27's own "kept for rollback safety... V28 drops them for good" comment plus the table definitions
-in `V2__catalogue.sql`.
+The Java-side half of the cleanup V27's own comments already promised ("removed in Phase 3f once
+nothing calls the old endpoints any more") — now that Phase 3a-3e have been live and re-verified,
+and the frontend confirmed to call none of it.
+
+`V28__drop_attributes_and_old_category_columns.sql` drops `product_attribute`,
+`product_attribute_value`, `variant_attribute_value`, and `product.category_id`/`subcategory_id`.
+The founder applied that same DDL directly against production first (via the Railway Postgres
+console), before the migration file existed as a tracked migration — so the file uses
+`DROP TABLE IF EXISTS` / `DROP COLUMN IF EXISTS` throughout, making it a real drop on dev/test
+(where the columns/tables are still present) and a no-op on production (already gone), so
+`flyway_schema_history` ends up consistent — "version 28 applied" — in every environment either way.
+Verified against a disposable copy of `nairobi_beauty_hub_dev`: Flyway migrated 27→28, the app
+booted clean, Hibernate validated the now-columnless `product` table, and `/catalog/variants` /
+`/catalog/categories` both still answered 200.
 
 Deleted outright: `entity/ProductAttribute.java`, `ProductAttributeValue.java`,
 `VariantAttributeValue.java`; `repository/ProductAttributeRepository.java`,
