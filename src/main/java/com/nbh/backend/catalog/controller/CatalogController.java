@@ -42,6 +42,26 @@ public class CatalogController {
         this.clock = clock;
     }
 
+    /**
+     * The storefront's browse grid, one card per sellable variant (Phase 3, 2026-09-24). Replaces
+     * {@link #browse} for the frontend; that endpoint stays working until Phase 3f.
+     */
+    @GetMapping("/variants")
+    public Page<CatalogVariantCardDto> browseVariants(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) Boolean deal,
+            @RequestParam(required = false) Boolean popular,
+            @RequestParam(name = "new", required = false) Boolean newArrival,
+            @PageableDefault(size = 48) Pageable pageable) {
+        return catalogService.browseCards(q, category, deal, popular, newArrival, pageable);
+    }
+
+    @GetMapping("/variants/{variantId}")
+    public CatalogVariantDetailDto variantDetail(@PathVariable UUID variantId) {
+        return catalogService.variantDetail(variantId);
+    }
+
     @GetMapping("/products")
     public Page<CatalogProductSummaryDto> browse(
             @RequestParam(required = false) String q,

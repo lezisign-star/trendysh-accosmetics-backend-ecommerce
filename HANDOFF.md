@@ -1,5 +1,64 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Inventory redesign Phase 3b — storefront API, one card per variant (2026-09-25)
+
+Backend half of the storefront redesign: every SELLABLE VARIANT gets its own catalogue card now,
+not one card per product with a shade picker. Purely additive — no migration, no schema change —
+so it ships alongside the old `/catalog/products*` endpoints (kept working, removed in Phase 3f)
+with zero risk to the current frontend, which hasn't been switched over yet (Phase 3e).
+
+**New public endpoints:**
+- `GET /catalog/variants` — the browse grid. Same filters as the old `/catalog/products`
+  (`q`, `category`, `deal`, `popular`, `new`), same category-parent-rollup behaviour, but returns
+  `CatalogVariantCardDto` (one row per sellable variant) via `ProductVariantRepository.searchSellable`.
+- `GET /catalog/variants/{variantId}` — a variant's own product-detail page:
+  `CatalogVariantDetailDto` = the card + this variant's own description + the product's shared
+  description/ingredients/how-to-use + images (this variant's own photos first, then the
+  product's shared ones) + `siblings` (every sellable variant of the same product, including
+  itself, in display order — the "also available" strip) + primary-category/parent for
+  breadcrumbs.
+
+**The name-hiding rule** (`CatalogVariantCardDto.isMeaninglessName`): `variantName` is null — the
+card just shows the product name — when the product has only one sellable variant, or the
+variant's own name is blank or the auto-assigned placeholder `"Default"`. Matches the rule
+`CheckoutService` already used for order-confirmation text, so the storefront and order history
+never disagree about what a single-variant product is "called".
+
+**R2 from the Phase 3 plan, finally closed:** `CatalogService.browse`/`getDetail`/`related` now
+all filter to sellable variants only (not deleted, active, priced — `ProductVariant.isSellable()`)
+via new `deleted=false AND isActive=true AND sellingPrice IS NOT NULL` repository finders, instead
+of the old unfiltered `findByProductId`/`findByProductIdIn`. A variant an admin just soft-deleted
+or hid could previously still appear on the storefront read side (checkout's own guard already
+closed the *buy* path in Phase 3a — this closes the *see it at all* path). Also switched
+`CatalogService` off `StockBalanceRepository` onto `StockAvailabilityService` (the single
+"available" definition every other reader already goes through) — closes this class out of the
+gap `ProductRepository.searchAdmin`'s old JPQL left in the Phase 1 HANDOFF entry's ArchUnit note.
+
+**Same landmine, caught before shipping this time:** the new `searchSellable` JPQL used
+`parent.slug`/`c.parent.slug` navigation — the exact implicit-inner-join trap `ProductRepository`'s
+queries already had fixed once in Phase 3a. Written with the explicit `LEFT JOIN c.parent parent`
+from the start here, so it never broke in the first place; flagged in this entry only so the
+pattern is recorded somewhere obvious for the next query someone adds against `categories`.
+
+**Tests:** `CatalogVariantCardsIntegrationTest` (3 cases — unpublished/hidden/priceless/deleted
+variants never appear while their sellable siblings do; a product in two categories is found by
+both slugs and their shared parent's slug; the sibling list and name-hiding rule are both
+correct), plus `CatalogServiceInStockUnitTest` updated for the `StockAvailabilityService` swap and
+the new sellable-filtered finder. Full suite **213/213** green (210 + these 3) on a fresh test
+database.
+
+**Verified live** against a real dev boot: `/catalog/variants` returns real cards with correct
+images (a variant's own photo, falling back to the product's cover), prices (deals resolve
+correctly), and stock status; `/catalog/products` (the old endpoint) still works unchanged;
+category-slug and its parent's slug both find the same product; a variant's own detail page
+returns its real siblings with correct `siblingCount`; a nonexistent/unsellable variant id 404s.
+`GET /admin/stock/consistency-check` stayed `consistent: true` throughout.
+
+**Not yet done, in order:** Phase 3c (the actual one-page editor frontend — nothing in the
+frontend uses any of Phase 3a's new endpoints yet), 3d (product list redesign), 3e (storefront
+frontend — nothing uses Phase 3b's new endpoints yet either), 3f (drop the attribute tables +
+`V28`, only once 3a–3e are live and re-verified).
+
 ## Inventory redesign Phase 3a — plain variants, multi-category, one-page editor API (2026-09-24, later same day)
 
 Backend half of the actual UX fix the audit was for (Phase 1/2 were branches; this is the real

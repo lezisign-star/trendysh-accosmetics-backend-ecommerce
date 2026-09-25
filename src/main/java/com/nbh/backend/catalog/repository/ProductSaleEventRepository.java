@@ -30,6 +30,20 @@ public interface ProductSaleEventRepository extends JpaRepository<ProductSaleEve
         BigDecimal getTotalQty();
     }
 
+    /** Same batching as {@link #aggregateUnitsSold}, but per variant — the storefront card's "N sold". */
+    @Query("""
+            SELECT s.variant.id AS variantId, COALESCE(SUM(s.qty), 0) AS totalQty
+            FROM ProductSaleEvent s
+            WHERE s.variant.id IN :variantIds
+            GROUP BY s.variant.id
+            """)
+    List<VariantSoldSummary> aggregateUnitsSoldByVariant(@Param("variantIds") List<UUID> variantIds);
+
+    interface VariantSoldSummary {
+        UUID getVariantId();
+        BigDecimal getTotalQty();
+    }
+
     /**
      * The admin analytics "top sellers" list — {@code since} is REQUIRED
      * (never null; pass {@code Instant.EPOCH} for "all time"), same reason

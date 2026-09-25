@@ -5,7 +5,7 @@ import com.nbh.backend.catalog.dto.CatalogVariantDto;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.*;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,10 +15,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -38,7 +40,7 @@ class CatalogServiceInStockUnitTest {
     @Mock private ProductSaleEventRepository saleEventRepository;
     @Mock private ProductViewEventRepository viewEventRepository;
     @Mock private CategoryRepository categoryRepository;
-    @Mock private StockBalanceRepository balanceRepository;
+    @Mock private StockAvailabilityService availabilityService;
     @Mock private PromoCampaignService promoCampaignService;
 
     private CatalogService catalogService;
@@ -56,7 +58,7 @@ class CatalogServiceInStockUnitTest {
         org.mockito.Mockito.lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         catalogService = new CatalogService(productRepository, variantRepository, imageRepository,
                 variantAttributeValueRepository, reviewRepository, saleEventRepository, viewEventRepository,
-                categoryRepository, balanceRepository, new EffectivePriceResolver(Clock.systemUTC()),
+                categoryRepository, availabilityService, new EffectivePriceResolver(Clock.systemUTC()),
                 promoCampaignService, Clock.systemUTC());
 
         product = new Product();
@@ -79,10 +81,10 @@ class CatalogServiceInStockUnitTest {
 
     @Test
     void onlyVariantsWithStrictlyPositiveSellableQuantityAreInStockAndProductFollowsAnyVariant() {
-        when(variantRepository.findByProductId(product.getId()))
+        when(variantRepository.findByProductIdAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNullOrderBySortOrderAsc(product.getId()))
                 .thenReturn(List.of(inStockVariant, zeroVariant, noBalanceVariant));
-        when(balanceRepository.availabilityForVariants(any())).thenReturn(List.of(
-                availability(inStockVariant, "5"), availability(zeroVariant, "0")));
+        when(availabilityService.available(anyCollection())).thenReturn(Map.of(
+                inStockVariant.getId(), new BigDecimal("5"), zeroVariant.getId(), BigDecimal.ZERO));
 
         CatalogProductDetailDto detail = catalogService.getDetail("test-product");
 
@@ -96,9 +98,9 @@ class CatalogServiceInStockUnitTest {
 
     @Test
     void productIsOutOfStockWhenNoVariantHasSellableQuantity() {
-        when(variantRepository.findByProductId(product.getId())).thenReturn(List.of(zeroVariant, noBalanceVariant));
-        when(balanceRepository.availabilityForVariants(any())).thenReturn(List.of(
-                availability(zeroVariant, "-2")));
+        when(variantRepository.findByProductIdAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNullOrderBySortOrderAsc(product.getId()))
+                .thenReturn(List.of(zeroVariant, noBalanceVariant));
+        when(availabilityService.available(anyCollection())).thenReturn(Map.of(zeroVariant.getId(), new BigDecimal("-2")));
 
         CatalogProductDetailDto detail = catalogService.getDetail("test-product");
 
@@ -114,12 +116,5 @@ class CatalogServiceInStockUnitTest {
         v.setVariantName(sku);
         v.setSellingPrice(new BigDecimal("100.00"));
         return v;
-    }
-
-    private StockBalanceRepository.VariantAvailability availability(ProductVariant v, String qty) {
-        return new StockBalanceRepository.VariantAvailability() {
-            @Override public UUID getVariantId() { return v.getId(); }
-            @Override public BigDecimal getAvailable() { return new BigDecimal(qty); }
-        };
     }
 }
