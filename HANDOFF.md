@@ -59,12 +59,26 @@ duplicate, the soft-deleted-variant cart rejection above, and all of `ADJUST_PRI
 `RESTORE` via `/products/bulk`. `GET /admin/stock/consistency-check` stayed `consistent: true`
 throughout. Test data cleaned up afterward.
 
-**Known gap, not yet closed:** no dedicated JUnit coverage for `saveProduct`/`duplicate`/`bulk`
-yet (the existing 197 cover everything they already covered, now against the new schema/entity
-shape) — the plan calls for `ProductSaveIntegrationTest`/`ProductBulkActionsIntegrationTest`/
-`ProductDuplicateIntegrationTest`; live curl verification stands in for now, tests are a follow-up
-before this is considered fully done. This commit is **local only as of this entry** — not yet
-pushed pending that gap and a look at the diff.
+**Gap closed same day:** `ProductSaveIntegrationTest` (6 cases: blank draft, full round-trip,
+variant removal soft-deletes, stale `expectedUpdatedAt` 409, multi-category rollup, publish-with-
+warnings), `ProductBulkActionsIntegrationTest` (5 cases: publish/unpublish, delete/restore,
+add-vs-replace categories, price-adjust clearing an invalidated sale, price-adjust skipping a
+priceless variant), `ProductDuplicateIntegrationTest` (2 cases) — 13 new tests, all against the
+real security chain and database like this file's other integration tests.
+
+**A real bug the new tests caught, already live in production at the time:** the optimistic-
+concurrency check compared `expectedUpdatedAt` to the stored value with exact `Instant.equals()`.
+The JVM auditing clock sets `updatedAt` with nanosecond precision, but Postgres's `timestamptz`
+only keeps microseconds and the JDBC driver *rounds* (not truncates) to the nearest one on write —
+a value like `.022999900` can round up to `.023000000` on storage. That meant a solo, uncontested
+save had a real chance of getting a spurious 409 "Someone else changed this product" on its very
+next edit. Fixed by truncating both sides to whole seconds before comparing — a same-second
+double-save by two different staff going undetected is an acceptable trade-off for a low-traffic
+admin tool; a spurious block on ordinary solo saves was not. **This fix needs its own push and
+production verification** (see below) — it was live and wrong from the moment 3a first deployed
+until this fix.
+
+Full suite now **210/210** green (197 + these 13) on a fresh test database.
 
 **Not yet done, in order:** Phase 3b (storefront API: one card per variant, sibling
 recommendations), 3c (the actual one-page editor frontend), 3d (product list redesign), 3e

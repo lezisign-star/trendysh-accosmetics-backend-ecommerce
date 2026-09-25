@@ -242,7 +242,17 @@ public class ProductService {
         } else {
             product = productRepository.findById(productId)
                     .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-            if (request.expectedUpdatedAt() != null && !request.expectedUpdatedAt().equals(product.getUpdatedAt())) {
+            // Truncated to whole seconds on both sides — found live: the JVM auditing clock sets
+            // updatedAt with nanosecond precision, but Postgres's timestamptz only keeps
+            // microseconds and the JDBC driver ROUNDS (not truncates) to the nearest one on
+            // write. A value like .022999900 can round up to .023000000 on storage, so even
+            // truncating both sides to microseconds still falsely conflicted right at that
+            // boundary. A same-second double-save by two different staff going undetected is an
+            // acceptable trade-off for a low-traffic admin tool — the alternative was a spurious
+            // 409 on a large fraction of ordinary solo saves.
+            if (request.expectedUpdatedAt() != null
+                    && !request.expectedUpdatedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                            .equals(product.getUpdatedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS))) {
                 throw new ConflictException("Someone else changed this product — reload to see their changes");
             }
         }
