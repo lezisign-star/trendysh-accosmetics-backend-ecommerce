@@ -75,13 +75,18 @@ class ProductEditorIntegrationTest {
         return ok(post("/api/v1/categories"), body).get("id").asText();
     }
 
+    /**
+     * A subcategory is more specific than its category, so it becomes the one stored (and
+     * primary, position 0) — mirrors the old single category/subcategory pair's own convention,
+     * now expressed as {@code categoryIds} (Phase 3f).
+     */
     private JsonNode newProduct(String name, String categoryId, String subcategoryId) throws Exception {
-        String body = "{\"name\":\"" + name + "\""
-                + (categoryId != null ? ",\"categoryId\":\"" + categoryId + "\"" : "")
-                + (subcategoryId != null ? ",\"subcategoryId\":\"" + subcategoryId + "\"" : "")
-                + ",\"variants\":[{\"sku\":\"SKU-" + UUID.randomUUID().toString().substring(0, 8)
-                + "\",\"variantName\":\"Default\",\"sellingPrice\":\"500\",\"vatExempt\":false}]}";
-        return ok(post("/api/v1/products"), body);
+        String primary = subcategoryId != null ? subcategoryId : categoryId;
+        String body = "{\"name\":\"" + name + "\","
+                + "\"categoryIds\":" + (primary != null ? "[\"" + primary + "\"]" : "[]") + ","
+                + "\"published\":false,"
+                + "\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"500\",\"isActive\":true}]}";
+        return ok(post("/api/v1/products/draft"), body);
     }
 
     @Test
@@ -116,20 +121,12 @@ class ProductEditorIntegrationTest {
     }
 
     @Test
-    void aSubcategoryMustBelongToTheChosenCategory() throws Exception {
+    void choosingOnlyTheSubcategoryFilesTheProductUnderItsParentToo() throws Exception {
         String nails = newCategory(unique("Nails"), null);
-        String lashes = newCategory(unique("Lashes"), null);
         String gel = newCategory(unique("Gel"), nails);
 
-        assertThat(status(post("/api/v1/products"), "{\"name\":\"Wrong pair\",\"categoryId\":\"" + lashes
-                + "\",\"subcategoryId\":\"" + gel + "\",\"variants\":[{\"sku\":\"X-" + UUID.randomUUID()
-                + "\",\"variantName\":\"D\",\"sellingPrice\":\"1\",\"vatExempt\":false}]}")).isEqualTo(400);
-        // A top-level category can't be used as a subcategory, nor a subcategory as the category.
-        assertThat(status(post("/api/v1/products"), "{\"name\":\"Top as sub\",\"categoryId\":\"" + nails
-                + "\",\"subcategoryId\":\"" + lashes + "\",\"variants\":[{\"sku\":\"Y-" + UUID.randomUUID()
-                + "\",\"variantName\":\"D\",\"sellingPrice\":\"1\",\"vatExempt\":false}]}")).isEqualTo(400);
-        // Choosing only the subcategory files the product under its parent.
         JsonNode p = newProduct(unique("Only sub"), null, gel);
+        assertThat(p.get("subcategoryId").asText()).isEqualTo(gel);
         assertThat(p.get("categoryId").asText()).isEqualTo(nails);
     }
 

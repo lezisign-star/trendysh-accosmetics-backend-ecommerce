@@ -1,5 +1,66 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## Inventory redesign Phase 3f — the old attribute/option editor and single-category pair are gone from the code (2026-09-25, later same day)
+
+The Java-side half of the cleanup V27/V27's own comments already promised ("removed in Phase 3f
+once nothing calls the old endpoints any more") — now that Phase 3a-3e have been live and
+re-verified, and the frontend confirmed to call none of it. **The actual `V28` Flyway migration
+(`DROP TABLE product_attribute`/`product_attribute_value`/`variant_attribute_value`,
+`ALTER TABLE product DROP COLUMN category_id`/`subcategory_id`) is NOT included in this session** —
+the sandbox's auto-mode safety classifier refused the file write as "Cloud Storage Mass Delete"
+(a false positive on a local SQL file) even after the user tried to grant it live. Everything below
+is safe without that migration — the removed entities never mapped those tables/columns to begin
+with (unmapped since V27), so `ddl-auto: validate` doesn't care that they still physically exist —
+but the tables/columns themselves are still sitting in both dev and production until someone adds
+that migration file by hand. See the exact SQL in this session's transcript, or reconstruct it from
+V27's own "kept for rollback safety... V28 drops them for good" comment plus the table definitions
+in `V2__catalogue.sql`.
+
+Deleted outright: `entity/ProductAttribute.java`, `ProductAttributeValue.java`,
+`VariantAttributeValue.java`; `repository/ProductAttributeRepository.java`,
+`ProductAttributeValueRepository.java`, `VariantAttributeValueRepository.java`;
+`controller/AttributeController.java`; `dto/ProductAttributeDto.java`. Also deleted the old
+single-category-pair create/update surface entirely, since nothing called it any more (confirmed
+by grepping the frontend, which finished migrating off it in Phase 3c/3e): `dto/CreateProductRequest.java`,
+`UpdateProductRequest.java`, `UpdateVariantRequest.java`, and `ProductController`'s
+`POST /products`, `PATCH /products/{id}`, `POST /products/{id}/variants`,
+`PATCH /products/{id}/variants/{variantId}` — along with `ProductService`'s `createProduct`,
+`updateProduct`, `addVariant`, `updateVariant`, `createVariant`, and `applyCategories` methods.
+Also removed `VariantBarcodeRepository` from `ProductService`'s constructor — barcode-linking only
+ever existed on the now-deleted old `createVariant`, so the field had gone completely unused; the
+`VariantBarcode` entity/table/repository themselves are untouched, ready if barcode support comes
+back through the new editor later.
+
+The old public storefront surface (`CatalogProductSummaryDto`, `CatalogProductDetailDto`,
+`CatalogVariantDto`, and `CatalogController`'s `GET /catalog/products`, `GET /catalog/products/{slug}`,
+`GET /catalog/products/{id}/related`) is also gone — Phase 3e confirmed the frontend calls none of
+it any more (`/catalog/variants*` replaced all of it). `ProductVariantDto` lost its `attributes`
+field and the 3-arg `from(...)` overload that populated it; every caller already only used the
+1-arg or 2-arg form except the two now-deleted admin endpoints.
+
+Test suite: `VariantSkuAndAttributesIntegrationTest.java` deleted outright (its 4 tests all
+exercised the now-gone `POST /products` + `/attributes` endpoints) — its 2 genuinely valuable SKU-
+generation assertions (category-prefixed, sequential-and-unique) were ported into
+`ProductSaveIntegrationTest.java` against the modern `POST /products/draft`. `CatalogServiceInStockUnitTest.java`
+rewritten to call `variantDetail()` instead of the deleted `getDetail()`, same in-stock-rollup
+concern. `MerchandisingIntegrationTest.java`'s `newProduct`/`catalogueEntryByName` helpers switched
+to the modern endpoints (field names changed: `minPrice`→`price`, `originalMinPrice`→`originalPrice`
+on `CatalogVariantCardDto`); its "flags round-trip" test rewritten against `PUT .../full`; its
+"partial PATCH preserves omitted description fields" regression test deleted outright — that
+concern was specific to the old PATCH endpoint's deliberate merge-only semantics, which don't exist
+on the new full-replace `saveFull` endpoint (the one-page editor always sends the complete current
+form state, so there's nothing to preserve). `ProductEditorIntegrationTest.java`'s
+`aSubcategoryMustBelongToTheChosenCategory` test deleted — its premise (cross-validating a
+category/subcategory pair) doesn't exist in the new flat `categoryIds` model, by design; its one
+still-valid assertion (choosing only a subcategory files the product under its parent too) kept as
+its own smaller test. `ProductImageGalleryUnitTest.java` and `PurchaseOrderIntegrationTest.java`
+adjusted for the new `ProductService` constructor shape and draft-endpoint test fixtures
+respectively.
+
+Verified: full `mvn test` green — 42 test classes, zero failures, run against the local
+`nairobi_beauty_hub_test` database (schema still at V27; unaffected since none of the removed code
+was ever mapped to the columns/tables the pending V28 will drop).
+
 ## GlobalExceptionHandler: an unmapped route now returns 404, not 500 (2026-09-25, later same day)
 
 Found live right after Phase 3b's deploy: a stale Railway build made every request to the two new

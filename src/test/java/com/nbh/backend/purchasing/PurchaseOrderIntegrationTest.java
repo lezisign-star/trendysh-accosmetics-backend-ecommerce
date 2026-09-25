@@ -84,9 +84,9 @@ class PurchaseOrderIntegrationTest {
     }
 
     private String newVariant() throws Exception {
-        String body = "{\"name\":\"" + unique("PO test product") + "\","
-                + "\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"500\",\"vatExempt\":false}]}";
-        return ok(post("/api/v1/products"), body).get("variants").get(0).get("id").asText();
+        String body = "{\"name\":\"" + unique("PO test product") + "\",\"categoryIds\":[],\"published\":false,"
+                + "\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"500\",\"isActive\":true}]}";
+        return ok(post("/api/v1/products/draft"), body).get("variants").get(0).get("id").asText();
     }
 
     @Test

@@ -4,12 +4,9 @@ import com.nbh.backend.catalog.dto.AttachImageRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionResult;
 import com.nbh.backend.catalog.dto.CatalogImageDto;
-import com.nbh.backend.catalog.dto.CreateProductRequest;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
 import com.nbh.backend.catalog.dto.SaveProductRequest;
-import com.nbh.backend.catalog.dto.UpdateProductRequest;
-import com.nbh.backend.catalog.dto.UpdateVariantRequest;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
 import com.nbh.backend.common.exception.ConflictException;
@@ -55,9 +52,6 @@ public class ProductService {
     private final ProductVariantRepository variantRepository;
     private final BrandRepository brandRepository;
     private final CategoryRepository categoryRepository;
-    private final ProductAttributeValueRepository attributeValueRepository;
-    private final VariantAttributeValueRepository variantAttributeValueRepository;
-    private final VariantBarcodeRepository variantBarcodeRepository;
     private final ProductImageRepository imageRepository;
     private final StockBalanceRepository balanceRepository;
 
@@ -65,120 +59,14 @@ public class ProductService {
                            ProductVariantRepository variantRepository,
                            BrandRepository brandRepository,
                            CategoryRepository categoryRepository,
-                           ProductAttributeValueRepository attributeValueRepository,
-                           VariantAttributeValueRepository variantAttributeValueRepository,
-                           VariantBarcodeRepository variantBarcodeRepository,
                            ProductImageRepository imageRepository,
                            StockBalanceRepository balanceRepository) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
         this.brandRepository = brandRepository;
         this.categoryRepository = categoryRepository;
-        this.attributeValueRepository = attributeValueRepository;
-        this.variantAttributeValueRepository = variantAttributeValueRepository;
-        this.variantBarcodeRepository = variantBarcodeRepository;
         this.imageRepository = imageRepository;
         this.balanceRepository = balanceRepository;
-    }
-
-    @Transactional
-    public ProductDto createProduct(CreateProductRequest request) {
-        Product product = new Product();
-        product.setName(request.name());
-        product.setSlug(generateUniqueSlug(request.name()));
-        product.setShortDescription(request.shortDescription());
-        product.setDescription(request.description());
-        product.setIngredients(request.ingredients());
-        product.setHowToUse(request.howToUse());
-        product.setPublished(false); // staff publishes explicitly once photos/pricing are ready
-        product.setPopular(request.isPopular() != null && request.isPopular());
-        product.setNewArrival(request.isNewArrival() != null && request.isNewArrival());
-
-        if (request.brandId() != null) {
-            product.setBrand(brandRepository.findById(request.brandId())
-                    .orElseThrow(() -> new EntityNotFoundException("No brand: " + request.brandId())));
-        }
-        applyCategories(product, request.categoryId(), request.subcategoryId());
-
-        Product savedProduct = productRepository.save(product);
-
-        List<ProductVariantDto> variantDtos = request.variants().stream()
-                .map(vr -> createVariant(savedProduct, vr))
-                .toList();
-
-        return ProductDto.from(savedProduct, variantDtos);
-    }
-
-    /**
-     * Updates a product's own fields. {@code name}/{@code brandId}/category-subcategory are
-     * full-replace (send what you want, null clears it — their established contract). The text
-     * fields and the two merchandising flags are merge-only (null = leave unchanged) — see
-     * {@link UpdateProductRequest}'s javadoc for why: a plain full-replace here used to let the
-     * admin's Quick-edit panel silently wipe a product's description/ingredients/how-to-use to
-     * null on every quick save, since that panel only ever sends a handful of fields. Found live
-     * 2026-09-22, fixed here rather than by making every caller resend every field, which would
-     * only invite the same bug again the next time a new partial-save screen is added.
-     */
-    @Transactional
-    public ProductDto updateProduct(UUID productId, UpdateProductRequest request) {
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-
-        product.setName(request.name());
-        if (request.shortDescription() != null) product.setShortDescription(request.shortDescription());
-        if (request.description() != null) product.setDescription(request.description());
-        if (request.ingredients() != null) product.setIngredients(request.ingredients());
-        if (request.howToUse() != null) product.setHowToUse(request.howToUse());
-        if (request.isPopular() != null) product.setPopular(request.isPopular());
-        if (request.isNewArrival() != null) product.setNewArrival(request.isNewArrival());
-        product.setBrand(request.brandId() != null
-                ? brandRepository.findById(request.brandId())
-                        .orElseThrow(() -> new EntityNotFoundException("No brand: " + request.brandId()))
-                : null);
-        applyCategories(product, request.categoryId(), request.subcategoryId());
-
-        productRepository.save(product);
-        return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));
-    }
-
-    /**
-     * Compatibility path for the pre-Phase-3 category/subcategory pair (old create/update
-     * endpoints, still used by the old frontend until Phase 3c ships) — translates it into the
-     * new many-to-many {@code categories} list. A subcategory is more specific than its category,
-     * so it becomes the one stored (and primary, position 0); a category alone is fine; neither
-     * clears the list. Removed in Phase 3f once nothing calls the old endpoints any more.
-     */
-    private void applyCategories(Product product, UUID categoryId, UUID subcategoryId) {
-        Category category = categoryId != null
-                ? categoryRepository.findById(categoryId)
-                        .orElseThrow(() -> new EntityNotFoundException("No category: " + categoryId))
-                : null;
-        Category subcategory = subcategoryId != null
-                ? categoryRepository.findById(subcategoryId)
-                        .orElseThrow(() -> new EntityNotFoundException("No subcategory: " + subcategoryId))
-                : null;
-        if (subcategory != null) {
-            Category parent = subcategory.getParent();
-            if (parent == null) {
-                throw new IllegalArgumentException("\"" + subcategory.getName() + "\" is a top-level category, not a subcategory");
-            }
-            if (category == null) {
-                category = parent;
-            } else if (!parent.getId().equals(category.getId())) {
-                throw new IllegalArgumentException(
-                        "\"" + subcategory.getName() + "\" is not a subcategory of \"" + category.getName() + "\"");
-            }
-        }
-        if (category != null && category.getParent() != null) {
-            throw new IllegalArgumentException("\"" + category.getName() + "\" is a subcategory - choose it as the subcategory instead");
-        }
-        List<Category> categories = new java.util.ArrayList<>();
-        if (subcategory != null) {
-            categories.add(subcategory);
-        } else if (category != null) {
-            categories.add(category);
-        }
-        product.setCategories(categories);
     }
 
     /**
@@ -198,19 +86,14 @@ public class ProductService {
         product.setCategories(categories);
     }
 
-    /** A product's live (non-deleted) variants with their sellable stock and selected attribute values filled in. */
+    /** A product's live (non-deleted) variants with their sellable stock filled in. */
     private List<ProductVariantDto> variantDtos(UUID productId) {
         List<ProductVariant> variants = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
         List<UUID> variantIds = variants.stream().map(ProductVariant::getId).toList();
         Map<UUID, BigDecimal> available = availability(variantIds);
-        List<VariantAttributeValue> attrs = attributesFor(variantIds);
         return variants.stream()
-                .map(v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO), attrs))
+                .map(v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)))
                 .toList();
-    }
-
-    private List<VariantAttributeValue> attributesFor(Collection<UUID> variantIds) {
-        return variantIds.isEmpty() ? List.of() : variantAttributeValueRepository.findByVariantIdIn(variantIds);
     }
 
     private Map<UUID, BigDecimal> availability(Collection<UUID> variantIds) {
@@ -522,81 +405,11 @@ public class ProductService {
         return result;
     }
 
-    @Transactional
-    public ProductVariantDto addVariant(UUID productId, CreateProductRequest.CreateVariantRequest vr) {
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-        return createVariant(product, vr);
-    }
-
-    /** Partial update — {@code sku} isn't editable, see {@link UpdateVariantRequest}'s javadoc. */
-    @Transactional
-    public ProductVariantDto updateVariant(UUID productId, UUID variantId, UpdateVariantRequest request) {
-        ProductVariant variant = variantRepository.findById(variantId)
-                .orElseThrow(() -> new EntityNotFoundException("No variant: " + variantId));
-        if (!variant.getProduct().getId().equals(productId)) {
-            throw new EntityNotFoundException("No variant " + variantId + " on product " + productId);
-        }
-
-        if (request.variantName() != null) variant.setVariantName(request.variantName());
-        if (request.sellingPrice() != null) variant.setSellingPrice(new BigDecimal(request.sellingPrice()));
-        if (request.compareAtPrice() != null) variant.setCompareAtPrice(new BigDecimal(request.compareAtPrice()));
-        if (request.standardCost() != null) variant.setStandardCost(new BigDecimal(request.standardCost()));
-        if (request.uom() != null) variant.setUom(request.uom());
-        if (request.vatRate() != null) variant.setVatRate(new BigDecimal(request.vatRate()));
-        if (request.vatExempt() != null) variant.setVatExempt(request.vatExempt());
-        if (request.reorderLevel() != null) variant.setReorderLevel(new BigDecimal(request.reorderLevel()));
-        if (request.isActive() != null) variant.setActive(request.isActive());
-
-        variant = variantRepository.save(variant);
-        return ProductVariantDto.from(variant, null, attributesFor(List.of(variant.getId())));
-    }
-
-    private ProductVariantDto createVariant(Product product, CreateProductRequest.CreateVariantRequest vr) {
-        ProductVariant variant = new ProductVariant();
-        variant.setProduct(product);
-        variant.setSku(vr.sku() != null && !vr.sku().isBlank() ? vr.sku().trim() : generateSku(product));
-        variant.setVariantName(vr.variantName());
-        variant.setSellingPrice(new BigDecimal(vr.sellingPrice()));
-        if (vr.compareAtPrice() != null) variant.setCompareAtPrice(new BigDecimal(vr.compareAtPrice()));
-        if (vr.standardCost() != null) variant.setStandardCost(new BigDecimal(vr.standardCost()));
-        if (vr.uom() != null) variant.setUom(vr.uom());
-        if (vr.vatRate() != null) variant.setVatRate(new BigDecimal(vr.vatRate()));
-        variant.setVatExempt(vr.vatExempt());
-        if (vr.reorderLevel() != null) variant.setReorderLevel(new BigDecimal(vr.reorderLevel()));
-
-        variant = variantRepository.save(variant);
-
-        if (vr.attributeValueIds() != null) {
-            for (UUID attrValueId : vr.attributeValueIds()) {
-                ProductAttributeValue attrValue = attributeValueRepository.findById(attrValueId)
-                        .orElseThrow(() -> new EntityNotFoundException("No attribute value: " + attrValueId));
-                VariantAttributeValue join = new VariantAttributeValue();
-                join.setVariant(variant);
-                join.setAttributeValue(attrValue);
-                variantAttributeValueRepository.save(join);
-            }
-        }
-
-        if (vr.barcodes() != null) {
-            for (String code : vr.barcodes()) {
-                VariantBarcode barcode = new VariantBarcode();
-                barcode.setVariant(variant);
-                barcode.setBarcode(code);
-                barcode.setBarcodeType(VariantBarcode.BarcodeType.INTERNAL);
-                barcode.setPrimary(variantBarcodeRepository.findByVariantId(variant.getId()).isEmpty());
-                variantBarcodeRepository.save(barcode);
-            }
-        }
-
-        return ProductVariantDto.from(variant, null, attributesFor(List.of(variant.getId())));
-    }
-
     /**
-     * Category-prefixed, sequential, auto-generated when a caller doesn't supply an explicit SKU
-     * (see {@link CreateProductRequest.CreateVariantRequest#sku}'s javadoc). Prefers the more
-     * specific subcategory over the category so e.g. "Gel polish" under "Nails" gets its own
-     * prefix rather than sharing NAIL- with every other nail product.
+     * Category-prefixed, sequential, auto-generated for every new variant — SKUs are never
+     * user-editable (see {@link #saveVariants}). Prefers the more specific subcategory over the
+     * category so e.g. "Gel polish" under "Nails" gets its own prefix rather than sharing NAIL-
+     * with every other nail product.
      */
     private String generateSku(Product product) {
         Category prefixSource = product.getCategories().isEmpty() ? null : product.getCategories().get(0);
@@ -645,12 +458,11 @@ public class ProductService {
         List<ProductVariant> allVariants = variantRepository.findByProductIdInAndDeletedFalse(productIds);
         List<UUID> allVariantIds = allVariants.stream().map(ProductVariant::getId).toList();
         Map<UUID, BigDecimal> available = availability(allVariantIds);
-        List<VariantAttributeValue> allAttrs = attributesFor(allVariantIds);
         Map<UUID, List<ProductVariantDto>> variantsByProduct = allVariants.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         v -> v.getProduct().getId(),
                         java.util.stream.Collectors.mapping(
-                                v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO), allAttrs),
+                                v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)),
                                 java.util.stream.Collectors.toList())));
 
         Map<UUID, String> primaryImageByProduct = new HashMap<>();

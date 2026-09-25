@@ -4,12 +4,9 @@ import com.nbh.backend.catalog.dto.AttachImageRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionResult;
 import com.nbh.backend.catalog.dto.CatalogImageDto;
-import com.nbh.backend.catalog.dto.CreateProductRequest;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
 import com.nbh.backend.catalog.dto.SaveProductRequest;
-import com.nbh.backend.catalog.dto.UpdateProductRequest;
-import com.nbh.backend.catalog.dto.UpdateVariantRequest;
 import com.nbh.backend.catalog.service.ProductService;
 import com.nbh.backend.catalog.service.VariantDealService;
 import com.nbh.backend.staff.entity.StaffUser;
@@ -63,18 +60,6 @@ public class ProductController {
         return productService.getProduct(id);
     }
 
-    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
-    @PostMapping
-    public ProductDto create(@Valid @RequestBody CreateProductRequest request) {
-        return productService.createProduct(request);
-    }
-
-    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
-    @PatchMapping("/{id}")
-    public ProductDto update(@PathVariable UUID id, @Valid @RequestBody UpdateProductRequest request) {
-        return productService.updateProduct(id, request);
-    }
-
     /** The one-page editor's single Save, for a brand-new draft (Phase 3, 2026-09-24). */
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
     @PostMapping("/draft")
@@ -102,20 +87,6 @@ public class ProductController {
     @PostMapping("/bulk")
     public BulkProductActionResult bulk(@RequestBody BulkProductActionRequest request) {
         return productService.bulk(request);
-    }
-
-    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
-    @PostMapping("/{id}/variants")
-    public ProductVariantDto addVariant(@PathVariable UUID id,
-                                         @Valid @RequestBody CreateProductRequest.CreateVariantRequest request) {
-        return productService.addVariant(id, request);
-    }
-
-    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
-    @PatchMapping("/{id}/variants/{variantId}")
-    public ProductVariantDto updateVariant(@PathVariable UUID id, @PathVariable UUID variantId,
-                                            @Valid @RequestBody UpdateVariantRequest request) {
-        return productService.updateVariant(id, variantId, request);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")

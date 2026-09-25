@@ -1,7 +1,6 @@
 package com.nbh.backend.catalog.service;
 
-import com.nbh.backend.catalog.dto.CatalogProductDetailDto;
-import com.nbh.backend.catalog.dto.CatalogVariantDto;
+import com.nbh.backend.catalog.dto.CatalogVariantDetailDto;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.*;
@@ -25,9 +24,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 /**
- * The public catalogue's inStock flag. Result-driven: asserts on the DTO a
- * customer would actually receive. Only a strictly positive sellable quantity
- * counts as in stock, and a product is in stock if ANY of its variants is.
+ * The public catalogue's inStock flag, at the variant-card level (Phase 3e). Result-driven:
+ * asserts on the DTO a customer would actually receive. Only a strictly positive sellable
+ * quantity counts as in stock.
  */
 @ExtendWith(MockitoExtension.class)
 class CatalogServiceInStockUnitTest {
@@ -35,7 +34,6 @@ class CatalogServiceInStockUnitTest {
     @Mock private ProductRepository productRepository;
     @Mock private ProductVariantRepository variantRepository;
     @Mock private ProductImageRepository imageRepository;
-    @Mock private VariantAttributeValueRepository variantAttributeValueRepository;
     @Mock private ProductReviewRepository reviewRepository;
     @Mock private ProductSaleEventRepository saleEventRepository;
     @Mock private ProductViewEventRepository viewEventRepository;
@@ -57,7 +55,7 @@ class CatalogServiceInStockUnitTest {
         // lenient() since not every test method necessarily reaches the code path that calls it.
         org.mockito.Mockito.lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         catalogService = new CatalogService(productRepository, variantRepository, imageRepository,
-                variantAttributeValueRepository, reviewRepository, saleEventRepository, viewEventRepository,
+                reviewRepository, saleEventRepository, viewEventRepository,
                 categoryRepository, availabilityService, new EffectivePriceResolver(Clock.systemUTC()),
                 promoCampaignService, Clock.systemUTC());
 
@@ -65,47 +63,46 @@ class CatalogServiceInStockUnitTest {
         product.setId(UUID.randomUUID());
         product.setSlug("test-product");
         product.setName("Test Product");
+        product.setPublished(true);
 
         inStockVariant = variant("SKU-IN");
         zeroVariant = variant("SKU-ZERO");
         noBalanceVariant = variant("SKU-NONE");
 
-        when(productRepository.findBySlugAndIsPublishedTrueAndDeletedFalse("test-product"))
-                .thenReturn(Optional.of(product));
-        when(variantAttributeValueRepository.findByVariantIdIn(any())).thenReturn(List.of());
         when(imageRepository.findByProductIdOrderBySortOrderAsc(product.getId())).thenReturn(List.of());
         when(reviewRepository.aggregateRatings(any(), any())).thenReturn(List.of());
-        when(reviewRepository.countByProductIdAndStatus(any(), any())).thenReturn(0L);
-        when(saleEventRepository.totalUnitsSold(product.getId())).thenReturn(BigDecimal.ZERO);
     }
 
     @Test
-    void onlyVariantsWithStrictlyPositiveSellableQuantityAreInStockAndProductFollowsAnyVariant() {
+    void onlyVariantsWithStrictlyPositiveSellableQuantityAreInStockAndTheProductsSiblingListFollowsSuit() {
+        when(variantRepository.findById(inStockVariant.getId())).thenReturn(Optional.of(inStockVariant));
         when(variantRepository.findByProductIdAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNullOrderBySortOrderAsc(product.getId()))
                 .thenReturn(List.of(inStockVariant, zeroVariant, noBalanceVariant));
         when(availabilityService.available(anyCollection())).thenReturn(Map.of(
                 inStockVariant.getId(), new BigDecimal("5"), zeroVariant.getId(), BigDecimal.ZERO));
 
-        CatalogProductDetailDto detail = catalogService.getDetail("test-product");
+        CatalogVariantDetailDto detail = catalogService.variantDetail(inStockVariant.getId());
 
-        assertThat(detail.variants()).extracting(CatalogVariantDto::sku, CatalogVariantDto::inStock)
-                .containsExactlyInAnyOrder(
-                        org.assertj.core.groups.Tuple.tuple("SKU-IN", true),
-                        org.assertj.core.groups.Tuple.tuple("SKU-ZERO", false),
-                        org.assertj.core.groups.Tuple.tuple("SKU-NONE", false));
-        assertThat(detail.inStock()).isTrue();
+        assertThat(detail.card().inStock()).isTrue();
+        assertThat(detail.siblings())
+                .filteredOn(c -> c.variantId().equals(inStockVariant.getId()))
+                .allMatch(c -> c.inStock());
+        assertThat(detail.siblings())
+                .filteredOn(c -> c.variantId().equals(zeroVariant.getId()) || c.variantId().equals(noBalanceVariant.getId()))
+                .allMatch(c -> !c.inStock());
     }
 
     @Test
-    void productIsOutOfStockWhenNoVariantHasSellableQuantity() {
+    void aVariantWithNoSellableQuantityIsOutOfStock() {
+        when(variantRepository.findById(zeroVariant.getId())).thenReturn(Optional.of(zeroVariant));
         when(variantRepository.findByProductIdAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNullOrderBySortOrderAsc(product.getId()))
                 .thenReturn(List.of(zeroVariant, noBalanceVariant));
         when(availabilityService.available(anyCollection())).thenReturn(Map.of(zeroVariant.getId(), new BigDecimal("-2")));
 
-        CatalogProductDetailDto detail = catalogService.getDetail("test-product");
+        CatalogVariantDetailDto detail = catalogService.variantDetail(zeroVariant.getId());
 
-        assertThat(detail.inStock()).isFalse();
-        assertThat(detail.variants()).allMatch(v -> !v.inStock());
+        assertThat(detail.card().inStock()).isFalse();
+        assertThat(detail.siblings()).allMatch(c -> !c.inStock());
     }
 
     private ProductVariant variant(String sku) {
@@ -115,6 +112,7 @@ class CatalogServiceInStockUnitTest {
         v.setSku(sku);
         v.setVariantName(sku);
         v.setSellingPrice(new BigDecimal("100.00"));
+        v.setActive(true);
         return v;
     }
 }

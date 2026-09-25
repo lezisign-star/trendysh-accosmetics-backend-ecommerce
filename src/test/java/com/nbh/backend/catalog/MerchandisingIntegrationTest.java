@@ -81,9 +81,9 @@ class MerchandisingIntegrationTest {
     }
 
     private JsonNode newProduct(String name, String price) throws Exception {
-        String body = "{\"name\":\"" + name + "\",\"variants\":[{\"sku\":\"SKU-" + UUID.randomUUID().toString().substring(0, 8)
-                + "\",\"variantName\":\"Default\",\"sellingPrice\":\"" + price + "\",\"vatExempt\":false}]}";
-        JsonNode product = ok(post("/api/v1/products"), body);
+        String body = "{\"name\":\"" + name + "\",\"categoryIds\":[],\"published\":false,"
+                + "\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"" + price + "\",\"isActive\":true}]}";
+        JsonNode product = ok(post("/api/v1/products/draft"), body);
         ok(post("/api/v1/products/" + product.get("id").asText() + "/publish"), null);
         // Give it real stock so it's addable to a cart and shows up as inStock on the catalogue.
         String variantId = product.get("variants").get(0).get("id").asText();
@@ -91,13 +91,13 @@ class MerchandisingIntegrationTest {
         return product;
     }
 
-    /** {@code q} searches the product NAME, not the slug — pass the name here, not the slug. */
+    /** {@code q} searches the product NAME, not the slug — pass the name here, not the slug. One card per variant (Phase 3e). */
     private JsonNode catalogueEntryByName(String name) throws Exception {
-        MvcResult result = mvc.perform(get("/api/v1/catalog/products")
+        MvcResult result = mvc.perform(get("/api/v1/catalog/variants")
                 .param("q", name).param("size", "5")).andReturn();
         JsonNode content = json.readTree(result.getResponse().getContentAsString()).get("content");
         for (JsonNode p : content) {
-            if (p.get("name").asText().equals(name)) return p;
+            if (p.get("productName").asText().equals(name)) return p;
         }
         throw new AssertionError("Product named \"" + name + "\" not found in the public catalogue: "
                 + result.getResponse().getContentAsString());
@@ -116,14 +116,14 @@ class MerchandisingIntegrationTest {
         assertThat(set.get("dealPrice").decimalValue()).isEqualByComparingTo("650");
 
         JsonNode entry = catalogueEntryByName(name);
-        assertThat(entry.get("minPrice").decimalValue()).isEqualByComparingTo("650");
-        assertThat(entry.get("originalMinPrice").decimalValue()).isEqualByComparingTo("1000.00");
+        assertThat(entry.get("price").decimalValue()).isEqualByComparingTo("650");
+        assertThat(entry.get("originalPrice").decimalValue()).isEqualByComparingTo("1000.00");
         assertThat(entry.get("onDeal").asBoolean()).isTrue();
         assertThat(entry.get("dealEndsAt").asText()).isNotBlank();
 
         ok(delete("/api/v1/products/" + productId + "/variants/" + variantId + "/deal"), null);
         JsonNode cleared = catalogueEntryByName(name);
-        assertThat(cleared.get("minPrice").decimalValue()).isEqualByComparingTo("1000.00");
+        assertThat(cleared.get("price").decimalValue()).isEqualByComparingTo("1000.00");
         assertThat(cleared.get("onDeal").asBoolean()).isFalse();
     }
 
@@ -152,7 +152,7 @@ class MerchandisingIntegrationTest {
         campaignIdsToDeactivate.add(campaign.get("id").asText());
 
         JsonNode entry = catalogueEntryByName(name);
-        assertThat(entry.get("minPrice").decimalValue()).isEqualByComparingTo("800.00");
+        assertThat(entry.get("price").decimalValue()).isEqualByComparingTo("800.00");
         assertThat(entry.get("onDeal").asBoolean()).isTrue();
 
         JsonNode publicCampaign = json.readTree(
@@ -177,7 +177,7 @@ class MerchandisingIntegrationTest {
                 "{\"dealPrice\":\"700\",\"dealEndsAt\":\"" + Instant.now().plusSeconds(1800) + "\"}");
 
         JsonNode entry = catalogueEntryByName(name);
-        assertThat(entry.get("minPrice").decimalValue()).isEqualByComparingTo("700");
+        assertThat(entry.get("price").decimalValue()).isEqualByComparingTo("700");
     }
 
     @Test
@@ -203,14 +203,19 @@ class MerchandisingIntegrationTest {
     }
 
     @Test
-    void popularAndNewArrivalFlagsRoundTripThroughCreateUpdateAndTheCatalogueFilter() throws Exception {
+    void popularAndNewArrivalFlagsRoundTripThroughSaveAndTheCatalogueFilter() throws Exception {
         JsonNode created = newProduct(unique("Flags Product"), "500");
         String productId = created.get("id").asText();
         assertThat(created.get("isPopular").asBoolean()).isFalse();
         assertThat(created.get("isNewArrival").asBoolean()).isFalse();
 
-        JsonNode updated = ok(patch("/api/v1/products/" + productId),
-                "{\"name\":\"" + created.get("name").asText() + "\",\"isPopular\":true,\"isNewArrival\":true}");
+        String variantId = created.get("variants").get(0).get("id").asText();
+        JsonNode updated = ok(put("/api/v1/products/" + productId + "/full"), "{"
+                + "\"expectedUpdatedAt\":\"" + created.get("updatedAt").asText() + "\","
+                + "\"name\":\"" + created.get("name").asText() + "\",\"categoryIds\":[],"
+                + "\"published\":true,\"isPopular\":true,\"isNewArrival\":true,"
+                + "\"variants\":[{\"id\":\"" + variantId + "\",\"variantName\":\"Default\","
+                + "\"sellingPrice\":\"500\",\"isActive\":true}]}");
         assertThat(updated.get("isPopular").asBoolean()).isTrue();
         assertThat(updated.get("isNewArrival").asBoolean()).isTrue();
 
@@ -220,33 +225,6 @@ class MerchandisingIntegrationTest {
 
         assertThat(ok(get("/api/v1/products").param("q", created.get("name").asText()).param("popular", "true"), null)
                 .get("totalElements").asInt()).isEqualTo(1);
-    }
-
-    @Test
-    void updatingAProductWithoutSendingDescriptionFieldsLeavesThemUnchanged() throws Exception {
-        // Regression test for the real bug found live 2026-09-22: a partial update used to wipe
-        // shortDescription/description/ingredients/howToUse to null whenever they were omitted.
-        String name = unique("Description Preservation Product");
-        JsonNode created = ok(post("/api/v1/products"),
-                "{\"name\":\"" + name + "\",\"shortDescription\":\"Short desc\",\"description\":\"Long desc\","
-                        + "\"ingredients\":\"Water\",\"howToUse\":\"Apply daily\","
-                        + "\"variants\":[{\"sku\":\"SKU-" + UUID.randomUUID().toString().substring(0, 8)
-                        + "\",\"variantName\":\"Default\",\"sellingPrice\":\"500\",\"vatExempt\":false}]}");
-        String productId = created.get("id").asText();
-
-        // A Quick-edit-style save: only name and category, nothing else.
-        JsonNode updated = ok(patch("/api/v1/products/" + productId), "{\"name\":\"" + name + " (renamed)\"}");
-
-        assertThat(updated.get("shortDescription").asText()).isEqualTo("Short desc");
-        assertThat(updated.get("description").asText()).isEqualTo("Long desc");
-        assertThat(updated.get("ingredients").asText()).isEqualTo("Water");
-        assertThat(updated.get("howToUse").asText()).isEqualTo("Apply daily");
-
-        // An explicit empty string, on the other hand, really does clear a field.
-        JsonNode cleared = ok(patch("/api/v1/products/" + productId),
-                "{\"name\":\"" + name + "\",\"shortDescription\":\"\"}");
-        assertThat(cleared.get("shortDescription").asText()).isEmpty();
-        assertThat(cleared.get("description").asText()).isEqualTo("Long desc"); // still untouched
     }
 
     @Test

@@ -42,10 +42,7 @@ public class CatalogController {
         this.clock = clock;
     }
 
-    /**
-     * The storefront's browse grid, one card per sellable variant (Phase 3, 2026-09-24). Replaces
-     * {@link #browse} for the frontend; that endpoint stays working until Phase 3f.
-     */
+    /** The storefront's browse grid, one card per sellable variant (Phase 3, 2026-09-24). */
     @GetMapping("/variants")
     public Page<CatalogVariantCardDto> browseVariants(
             @RequestParam(required = false) String q,
@@ -62,17 +59,6 @@ public class CatalogController {
         return catalogService.variantDetail(variantId);
     }
 
-    @GetMapping("/products")
-    public Page<CatalogProductSummaryDto> browse(
-            @RequestParam(required = false) String q,
-            @RequestParam(required = false) String category,
-            @RequestParam(required = false) Boolean deal,
-            @RequestParam(required = false) Boolean popular,
-            @RequestParam(name = "new", required = false) Boolean newArrival,
-            @PageableDefault(size = 24) Pageable pageable) {
-        return catalogService.browse(q, category, deal, popular, newArrival, pageable);
-    }
-
     /** The one currently-active site-wide campaign, or 204 when none is running — drives the compact top banner. */
     @GetMapping("/promo-campaign")
     @Transactional
@@ -80,17 +66,6 @@ public class CatalogController {
         PromoCampaign active = promoCampaignService.getActiveOrNull();
         return active == null ? ResponseEntity.noContent().build()
                 : ResponseEntity.ok(PromoCampaignDto.from(active, Instant.now(clock)));
-    }
-
-    @GetMapping("/products/{slug}")
-    public CatalogProductDetailDto detail(@PathVariable String slug) {
-        return catalogService.getDetail(slug);
-    }
-
-    @GetMapping("/products/{id}/related")
-    public List<CatalogProductSummaryDto> related(
-            @PathVariable UUID id, @RequestParam(defaultValue = "4") int limit) {
-        return catalogService.related(id, Math.min(limit, 20));
     }
 
     @PostMapping("/products/{id}/view")
