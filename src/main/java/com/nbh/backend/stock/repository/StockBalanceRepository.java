@@ -73,19 +73,29 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
      * inventory figure a human should browse. Same {@code CAST(:q AS string)}
      * null-parameter fix as {@code ProductRepository.searchPublished} for the
      * same reason.
+     *
+     * <p>Phase 1 fix (2026-09-27): this used to start FROM StockBalance, so a variant that
+     * has never been received (no balance row exists at all) was invisible here — never
+     * shown in the list, and (worse) never counted as "below reorder level" even though zero
+     * stock is definitionally at or below any positive reorder level. Rewritten to start FROM
+     * ProductVariant with an explicit LEFT JOIN to the (possibly absent) SHOP balance row,
+     * COALESCEd to zero. See {@link #countBelowReorderLevel()} for the matching fix to the
+     * analytics tile that reads the same underlying gap.
      */
     @Query("""
             SELECT NEW com.nbh.backend.stock.dto.InventoryLineDto(
                 v.id, v.sku, v.variantName, p.name,
-                b.onHandQty, b.reservedQty, (b.onHandQty - b.reservedQty),
+                COALESCE(b.onHandQty, 0), COALESCE(b.reservedQty, 0),
+                COALESCE(b.onHandQty, 0) - COALESCE(b.reservedQty, 0),
                 v.reorderLevel,
-                CASE WHEN v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel THEN true ELSE false END)
-            FROM StockBalance b
-            JOIN b.variant v
+                CASE WHEN v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
+                     THEN true ELSE false END)
+            FROM ProductVariant v
             JOIN v.product p
-            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+            LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+            WHERE v.deleted = false
               AND (:belowReorderOnly = false
-                   OR (v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel))
+                   OR (v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel))
               AND (:q IS NULL
                    OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
@@ -113,12 +123,17 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
         java.math.BigDecimal getAvailable();
     }
 
-    /** The admin analytics dashboard's "low stock" tile — same eligibility as {@code browseInventory}'s filter. */
+    /**
+     * The admin analytics dashboard's "low stock" tile — same eligibility as
+     * {@code browseInventory}'s filter, including the same Phase 1 fix (2026-09-27): starts
+     * FROM ProductVariant now, so a never-received variant (zero stock, no balance row at
+     * all) is correctly counted as below its reorder level instead of silently excluded.
+     */
     @Query("""
-            SELECT COUNT(b) FROM StockBalance b
-            JOIN b.variant v
-            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
-              AND v.reorderLevel IS NOT NULL AND b.onHandQty <= v.reorderLevel
+            SELECT COUNT(v) FROM ProductVariant v
+            LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+            WHERE v.deleted = false
+              AND v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
             """)
     long countBelowReorderLevel();
 }

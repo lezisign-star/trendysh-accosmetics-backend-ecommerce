@@ -9,6 +9,9 @@ import com.nbh.backend.stock.service.StockReservationService;
 import com.nbh.backend.staff.entity.StaffUser;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +39,14 @@ public class StockReservationController {
                                        ProductVariantRepository variantRepository) {
         this.reservationService = reservationService;
         this.variantRepository = variantRepository;
+    }
+
+    /** Phase 1 (2026-09-27): the staff-facing "Holds" list — read-only, so PERM_STOCK_VIEW is enough. */
+    @PreAuthorize("hasAuthority('PERM_STOCK_VIEW')")
+    @GetMapping
+    public Page<StockReservationDto> browse(@RequestParam(required = false) StockReservation.ReservationStatus status,
+                                             @PageableDefault(size = 20) Pageable pageable) {
+        return reservationService.browse(status, pageable).map(StockReservationDto::from);
     }
 
     // Mutating operations — deliberately NOT gated on STOCK_VIEW (a read-only

@@ -2,9 +2,12 @@ package com.nbh.backend.stock.repository;
 
 import com.nbh.backend.stock.entity.StockReservation;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -93,4 +96,19 @@ public interface StockReservationRepository extends JpaRepository<StockReservati
      */
     List<StockReservation> findByStatusAndExpiresAtBefore(
             StockReservation.ReservationStatus status, java.time.Instant cutoff);
+
+    /**
+     * Phase 1 (2026-09-27): the staff-facing "Holds" browse — every reservation the checkout
+     * or a manual hold has ever created, not just the one-at-a-time {@code GET .../{id}} shape
+     * this module had before. Newest first, so a stuck old hold surfaces near the top once a
+     * status filter narrows to it.
+     */
+    @Query("""
+            SELECT r FROM StockReservation r
+            JOIN FETCH r.variant v
+            JOIN FETCH v.product
+            WHERE (:status IS NULL OR r.status = :status)
+            ORDER BY r.createdAt DESC
+            """)
+    Page<StockReservation> browse(@Param("status") StockReservation.ReservationStatus status, Pageable pageable);
 }

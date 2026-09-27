@@ -6,9 +6,12 @@ import com.nbh.backend.stock.dto.AdjustStockRequest;
 import com.nbh.backend.stock.dto.InventoryLineDto;
 import com.nbh.backend.stock.dto.ReceiveStockRequest;
 import com.nbh.backend.stock.dto.StockBalanceDto;
+import com.nbh.backend.stock.dto.StockDocumentDetailDto;
+import com.nbh.backend.stock.dto.StockMovementDto;
 import com.nbh.backend.stock.entity.*;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
+import com.nbh.backend.stock.service.StockMovementQueryService;
 import com.nbh.backend.stock.service.StockPostingService;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
@@ -21,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,15 +43,18 @@ public class StockController {
     private final StockPostingService postingService;
     private final ProductVariantRepository variantRepository;
     private final StockAvailabilityService availabilityService;
+    private final StockMovementQueryService movementQueryService;
     private final StockDocumentNoGenerator documentNoGenerator;
 
     public StockController(StockPostingService postingService,
                             ProductVariantRepository variantRepository,
                             StockAvailabilityService availabilityService,
+                            StockMovementQueryService movementQueryService,
                             StockDocumentNoGenerator documentNoGenerator) {
         this.postingService = postingService;
         this.variantRepository = variantRepository;
         this.availabilityService = availabilityService;
+        this.movementQueryService = movementQueryService;
         this.documentNoGenerator = documentNoGenerator;
     }
 
@@ -152,6 +159,28 @@ public class StockController {
                                              @RequestParam(required = false) String q,
                                              @PageableDefault(size = 20) Pageable pageable) {
         return availabilityService.browse(q, belowReorderOnly, pageable);
+    }
+
+    /**
+     * Phase 1 (2026-09-27): the movement-history view — the ledger has always had this data,
+     * nothing had ever read it back. {@code from}/{@code to} are optional; an absent one
+     * resolves to "the beginning of time" / "now" (see StockMovementQueryService).
+     */
+    @PreAuthorize("hasAuthority('PERM_STOCK_VIEW')")
+    @GetMapping("/movements")
+    public Page<StockMovementDto> movements(@RequestParam(required = false) UUID variantId,
+                                             @RequestParam(required = false) StockDocumentType documentType,
+                                             @RequestParam(required = false) Instant from,
+                                             @RequestParam(required = false) Instant to,
+                                             @PageableDefault(size = 20) Pageable pageable) {
+        return movementQueryService.search(variantId, documentType, from, to, pageable);
+    }
+
+    /** Phase 1 (2026-09-27): one document's own header plus its ledger entries. */
+    @PreAuthorize("hasAuthority('PERM_STOCK_VIEW')")
+    @GetMapping("/documents/{id}")
+    public StockDocumentDetailDto document(@PathVariable UUID id) {
+        return movementQueryService.document(id);
     }
 
     private ProductVariant findVariantOrThrow(UUID id) {

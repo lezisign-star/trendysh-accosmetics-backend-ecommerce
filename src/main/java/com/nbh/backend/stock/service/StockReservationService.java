@@ -8,6 +8,8 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.repository.StockReservationRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -103,6 +105,12 @@ public class StockReservationService {
         balanceRepository.save(balance);
 
         return reservationRepository.save(reservation);
+    }
+
+    /** Phase 1 (2026-09-27): the staff-facing "Holds" list — see the repository query's javadoc. */
+    @Transactional(readOnly = true)
+    public Page<StockReservation> browse(StockReservation.ReservationStatus status, Pageable pageable) {
+        return reservationRepository.browse(status, pageable);
     }
 
     /** Releases (cancels) an active reservation — cart expiry, payment failure. */
