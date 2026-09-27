@@ -13,5 +13,5 @@ public record CheckoutRequest(
         @NotBlank String guestPhone,
         @NotNull FulfilmentType fulfilmentType,
         String deliveryAddress,
-        @Pattern(regexp = "BODA|VEHICLE", message = "deliveryMethod must be BODA or VEHICLE") String deliveryMethod
+        @Pattern(regexp = "BODA|MATATU|COURIER", message = "deliveryMethod must be BODA, MATATU or COURIER") String deliveryMethod
 ) {}

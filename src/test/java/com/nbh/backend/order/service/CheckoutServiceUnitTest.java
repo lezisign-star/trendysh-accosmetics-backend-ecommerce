@@ -188,7 +188,7 @@ class CheckoutServiceUnitTest {
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 
         var request = new CheckoutRequest("Test Customer", "n@example.com", "254700000000",
-                FulfilmentType.PICKUP, null, "VEHICLE");
+                FulfilmentType.PICKUP, null, "COURIER");
 
         assertThat(checkoutService.checkout(SESSION_ID, request).order().getDeliveryMethod()).isNull();
     }

@@ -61,7 +61,11 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "delivery_address", columnDefinition = "TEXT")
     private String deliveryAddress;
 
-    /** BODA or VEHICLE for DELIVERY_COURIER orders; null for pickup and for orders that pre-date V14. */
+    /**
+     * BODA, MATATU or COURIER for DELIVERY_COURIER orders — the customer's preferred manually-arranged
+     * transport, all paid directly to the transporter and confirmed by phone (V33). Null for pickup and
+     * for orders that pre-date V14. Historical VEHICLE values were migrated to MATATU by V33.
+     */
     @Column(name = "delivery_method", length = 20)
     private String deliveryMethod;
 
