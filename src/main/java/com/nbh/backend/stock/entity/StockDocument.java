@@ -47,6 +47,11 @@ public class StockDocument extends BaseEntity {
     @Column(length = 1000)
     private String notes;
 
+    /** Phase 2 (2026-09-27): only WRITE_OFF documents set this — shrinkage analytics needs "why", not just "how much". */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "reason_code", length = 20)
+    private WriteOffReason reasonCode;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cancelled_by_document_id")
     private StockDocument cancelledByDocument;

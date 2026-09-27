@@ -16,12 +16,14 @@ public record StockDocumentDetailDto(
         String referenceType,
         UUID referenceId,
         String notes,
+        String reasonCode,
         List<StockMovementDto> lines
 ) {
     public static StockDocumentDetailDto from(StockDocument document, List<StockMovementDto> lines) {
         return new StockDocumentDetailDto(
                 document.getId(), document.getDocumentNo(), document.getDocumentType().name(),
                 document.getStatus().name(), document.getPostedAt(),
-                document.getReferenceType(), document.getReferenceId(), document.getNotes(), lines);
+                document.getReferenceType(), document.getReferenceId(), document.getNotes(),
+                document.getReasonCode() != null ? document.getReasonCode().name() : null, lines);
     }
 }

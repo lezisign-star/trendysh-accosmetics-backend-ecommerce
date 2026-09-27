@@ -8,6 +8,7 @@ import com.nbh.backend.stock.dto.ReceiveStockRequest;
 import com.nbh.backend.stock.dto.StockBalanceDto;
 import com.nbh.backend.stock.dto.StockDocumentDetailDto;
 import com.nbh.backend.stock.dto.StockMovementDto;
+import com.nbh.backend.stock.dto.WriteOffRequest;
 import com.nbh.backend.stock.entity.*;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
@@ -137,6 +138,43 @@ public class StockController {
             docLine.setTargetAccount(StockAccount.ADJUSTMENT);
         }
         document.getLines().add(docLine);
+
+        return StockDocumentSummary.from(postingService.post(document));
+    }
+
+    /**
+     * Phase 2 (2026-09-27): a structured, batchable alternative to {@code /adjust}'s
+     * negative-qtyChange path — a controlled reasonCode (not free text) across possibly several
+     * variants in one document, so shrinkage can actually be broken down by cause later
+     * ("28 expired, 12 damaged"), not just totalled.
+     */
+    @PreAuthorize("hasAuthority('PERM_STOCK_ADJUST')")
+    @PostMapping("/write-offs")
+    public StockDocumentSummary writeOff(@Valid @RequestBody WriteOffRequest request,
+                                          @AuthenticationPrincipal com.nbh.backend.staff.entity.StaffUser staff) {
+        StockDocument document = new StockDocument();
+        document.setDocumentNo(documentNoGenerator.next(StockDocumentType.WRITE_OFF));
+        document.setDocumentType(StockDocumentType.WRITE_OFF);
+        document.setReasonCode(request.reasonCode());
+        document.setNotes(request.notes());
+        document.setPostedByUserId(staff.getId());
+
+        int lineNo = 1;
+        for (WriteOffRequest.Line line : request.lines()) {
+            ProductVariant variant = findVariantOrThrow(line.variantId());
+            BigDecimal qty = new BigDecimal(line.qty());
+            if (qty.signum() <= 0) {
+                throw new IllegalArgumentException(variant.getSku() + ": qty must be positive");
+            }
+            StockDocumentLine docLine = new StockDocumentLine();
+            docLine.setDocument(document);
+            docLine.setLineNo(lineNo++);
+            docLine.setVariant(variant);
+            docLine.setSourceAccount(StockAccount.SHOP);
+            docLine.setTargetAccount(StockAccount.ADJUSTMENT);
+            docLine.setQty(qty);
+            document.getLines().add(docLine);
+        }
 
         return StockDocumentSummary.from(postingService.post(document));
     }
