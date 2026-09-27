@@ -51,6 +51,16 @@ public class StockBalance extends BaseEntity {
 
     private Long lastLedgerEntryId;
 
+    // Phase 0 correctness fix (2026-09-27): a PESSIMISTIC_WRITE lock request on a row already
+    // managed in this persistence context returns the stale in-memory instance, not a fresh read —
+    // Hibernate only re-validates when a @Version column exists, converting that stale return into
+    // a loud ObjectOptimisticLockingFailureException instead of silently overwriting a concurrent
+    // committed change. See StockPostingService/StockReservationService for the read-before-lock
+    // sites this closes.
+    @Version
+    @Column(nullable = false)
+    private long version;
+
     @Transient
     public BigDecimal getAvailableQty() {
         return onHandQty.subtract(reservedQty);

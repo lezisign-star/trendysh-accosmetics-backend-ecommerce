@@ -190,28 +190,38 @@ public class StockReservationService {
      * clamped the result to zero with .max(ZERO), which hid exactly this
      * corruption instead of surfacing it.
      *
-     * Fixed by locking the balance row FIRST (same order as everywhere else),
-     * THEN re-fetching the reservation under PESSIMISTIC_WRITE and re-checking
-     * status inside that lock — the loser of the race now sees a non-ACTIVE
-     * status after acquiring its lock and returns without double-touching
-     * anything, instead of acting on a stale snapshot. The zero-clamp is gone:
-     * if this ever goes negative, the DB's CHECK(reserved_qty >= 0) constraint
-     * raises loudly instead of the corruption being silently absorbed.
+     * <p><b>Phase 0 correction (2026-09-27):</b> the fix above was incomplete. Locking the
+     * balance row first, then calling {@code lockById} on the SAME reservation this method
+     * had already loaded via an unlocked {@code findById} moments earlier, does not actually
+     * re-read the reservation's columns — Hibernate's persistence context returns the
+     * already-managed Java object for that id, and only re-validates it against the database
+     * when the entity carries a {@code @Version} (confirmed against Hibernate 6.6.53's
+     * {@code EntityInitializerImpl}). The {@code SELECT ... FOR UPDATE} genuinely executes and
+     * genuinely blocks on a concurrent holder, but the STATUS this method then reads back was
+     * the pre-lock snapshot, not whatever the other transaction just committed — so the
+     * "loser sees a non-ACTIVE status" guarantee this javadoc used to claim did not actually
+     * hold for two terminations of the same reservation racing each other.
+     *
+     * <p>Fixed two ways, together: {@link StockReservation#getVersion()} now makes any
+     * surviving staleness fail loudly (an {@code ObjectOptimisticLockingFailureException}
+     * instead of a silent double-decrement) — but the real fix is not reading the reservation
+     * at all before it's locked. The variant id needed to know which balance row to lock is
+     * fetched via {@link com.nbh.backend.stock.repository.StockReservationRepository#findVariantIdById},
+     * a scalar projection that never populates the persistence context, so {@link
+     * com.nbh.backend.stock.repository.StockReservationRepository#lockById} below is this
+     * reservation's first real load — genuinely fresh, not cached.
      */
     private void terminate(UUID reservationId, StockReservation.ReservationStatus target) {
-        StockReservation snapshot = reservationRepository.findById(reservationId)
+        UUID variantId = reservationRepository.findVariantIdById(reservationId)
                 .orElseThrow(() -> new NotFoundException("No such reservation: " + reservationId));
-        if (snapshot.getStatus() != StockReservation.ReservationStatus.ACTIVE) {
-            return; // already terminal — idempotent
-        }
 
         StockBalance balance = balanceRepository
-                .lockByVariantIdAndAccount(snapshot.getVariant().getId(), StockAccount.SHOP)
+                .lockByVariantIdAndAccount(variantId, StockAccount.SHOP)
                 .orElseThrow();
 
         StockReservation reservation = reservationRepository.lockById(reservationId).orElseThrow();
         if (reservation.getStatus() != StockReservation.ReservationStatus.ACTIVE) {
-            return; // lost the race to another release/fulfill/post — nothing left to do
+            return; // already terminal, or lost the race to another release/fulfill/post — idempotent
         }
 
         BigDecimal outstanding = reservation.getOutstandingQty();

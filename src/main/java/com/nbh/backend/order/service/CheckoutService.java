@@ -111,6 +111,14 @@ public class CheckoutService {
         if (cartItems.isEmpty()) {
             throw new IllegalStateException("Cannot check out an empty cart");
         }
+        // Phase 0 fix (2026-09-27), D1: reserve in a deterministic order (variant id ASC) —
+        // the same order StockPostingService.post already locks its balance rows in. Without
+        // this, two concurrent checkouts (or a checkout racing a dispatch) that touch the same
+        // two SKUs in opposite orders can deadlock in Postgres, which surfaces to a customer as
+        // a raw 500 instead of either request simply waiting its turn.
+        cartItems = cartItems.stream()
+                .sorted(java.util.Comparator.comparing(ci -> ci.getVariant().getId()))
+                .toList();
 
         CustomerOrder order = new CustomerOrder();
         order.setOrderNo(orderNoGenerator.next());

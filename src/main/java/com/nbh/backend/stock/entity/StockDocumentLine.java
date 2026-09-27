@@ -60,4 +60,17 @@ public class StockDocumentLine extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reservation_id")
     private StockReservation reservation;
+
+    /**
+     * Not persisted — populated by {@code StockPostingService.applyMovement} with whatever
+     * unit cost SHOP's leg of this line actually posted at (the only physical account, so
+     * the only one with a moving-average cost a caller cares about). Phase 0 fix
+     * (2026-09-27): a caller that needs "what did this actually cost" (e.g.
+     * {@code OrderFulfilmentService} snapshotting a sale's COGS) must read it from here,
+     * AFTER {@code post()} returns — not from a separate pre-posting lookup, which can
+     * read a cost that's already stale by the time posting actually locks the row and
+     * commits.
+     */
+    @Transient
+    private BigDecimal postedUnitCost;
 }

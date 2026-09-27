@@ -5,8 +5,10 @@ import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.OrderStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -37,6 +39,20 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Override
     @EntityGraph(attributePaths = {"items", "items.variant", "items.variant.product"})
     Optional<CustomerOrder> findById(UUID id);
+
+    /**
+     * Phase 0 fix (2026-09-27), D2: every mutating call in {@code OrderFulfilmentService}
+     * ({@code fulfil}/{@code startPicking}/{@code markReady}/{@code markDelivered}/
+     * {@code cancel}) used to load the order unlocked before changing its status — two
+     * concurrent staff actions on the same order (or a race against a customer-facing
+     * cancel) could both pass the same status-guard check and both proceed. No
+     * {@code @EntityGraph} here on purpose: Postgres rejects {@code FOR UPDATE} on the
+     * nullable side of an outer join, and {@code items} is a collection fetch, not a
+     * to-one join, so it must load as its own query after this lock, not joined into it.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from CustomerOrder o where o.id = :id")
+    Optional<CustomerOrder> lockById(@Param("id") UUID id);
 
     /**
      * Staff order-browse list — one query, no N+1 (F12 pattern): {@code

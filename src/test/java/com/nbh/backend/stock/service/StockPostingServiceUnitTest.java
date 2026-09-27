@@ -278,6 +278,14 @@ class StockPostingServiceUnitTest {
         reservation.setVariant(otherVariant);
         reservation.setQty(BigDecimal.ONE);
         reservation.setStatus(StockReservation.ReservationStatus.ACTIVE);
+        // Phase 0 fix (2026-09-27): the variant-match check now runs after both the balance
+        // and the reservation are locked (not off the raw line.getReservation() reference —
+        // see post()'s comment on why), so this test must let posting reach that point:
+        // stub the balance lock the same generic way the other tests in this file do, and
+        // the reservation findable via lockById the same way a real one would be.
+        when(balanceRepository.lockByVariantIdAndAccount(any(), any()))
+                .thenReturn(Optional.of(balanceOf(BigDecimal.TEN, BigDecimal.ZERO, BigDecimal.ONE)));
+        when(reservationRepository.lockById(reservation.getId())).thenReturn(Optional.of(reservation));
 
         assertThatThrownBy(() -> postingService.post(outboundDoc(BigDecimal.ONE, reservation)))
                 .isInstanceOf(IllegalArgumentException.class)

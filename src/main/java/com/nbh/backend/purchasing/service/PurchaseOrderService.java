@@ -153,7 +153,7 @@ public class PurchaseOrderService {
 
     @Transactional
     public PurchaseOrderDto markSent(UUID id) {
-        PurchaseOrder po = findOrThrow(id);
+        PurchaseOrder po = lockOrThrow(id);
         if (po.getStatus() != PurchaseOrderStatus.DRAFT) {
             throw new UnprocessableException("Only a draft order can be marked sent");
         }
@@ -163,7 +163,7 @@ public class PurchaseOrderService {
 
     @Transactional
     public PurchaseOrderDto cancel(UUID id) {
-        PurchaseOrder po = findOrThrow(id);
+        PurchaseOrder po = lockOrThrow(id);
         if (po.getStatus() != PurchaseOrderStatus.DRAFT && po.getStatus() != PurchaseOrderStatus.SENT) {
             throw new UnprocessableException("Only a draft or sent order can be cancelled");
         }
@@ -178,7 +178,7 @@ public class PurchaseOrderService {
     /** Posts a real GOODS_RECEIPT stock document for the requested lines, then updates ordered-vs-received. */
     @Transactional
     public PurchaseOrderDto receive(UUID id, ReceivePurchaseOrderRequest request, StaffUser staff) {
-        PurchaseOrder po = findOrThrow(id);
+        PurchaseOrder po = lockOrThrow(id);
         if (po.getStatus() != PurchaseOrderStatus.SENT && po.getStatus() != PurchaseOrderStatus.PARTIALLY_RECEIVED) {
             throw new UnprocessableException("Order must be sent before it can be received");
         }
@@ -239,6 +239,11 @@ public class PurchaseOrderService {
 
     private PurchaseOrder findOrThrow(UUID id) {
         return purchaseOrders.findById(id).orElseThrow(() -> new NotFoundException("No purchase order: " + id));
+    }
+
+    /** Phase 0 fix (2026-09-27), D2 — see {@code PurchaseOrderRepository.lockById}'s javadoc. Used by every mutator; {@link #findOrThrow} stays for the read-only {@link #get}. */
+    private PurchaseOrder lockOrThrow(UUID id) {
+        return purchaseOrders.lockById(id).orElseThrow(() -> new NotFoundException("No purchase order: " + id));
     }
 
     private static String blankToNull(String value) {

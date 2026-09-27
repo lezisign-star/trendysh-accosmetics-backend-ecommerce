@@ -24,6 +24,20 @@ public interface StockReservationRepository extends JpaRepository<StockReservati
     Optional<StockReservation> lockById(UUID id);
 
     /**
+     * A scalar projection, not a full entity load — used by
+     * {@code StockReservationService.terminate} to find which stock_balance row to lock
+     * BEFORE touching the reservation itself. Loading the full entity here (even unlocked)
+     * would put it in this transaction's persistence context, and the later
+     * {@link #lockById} would then hand back that same stale managed instance instead of a
+     * fresh row (Hibernate only re-validates a lock request against the DB when the entity
+     * has changed identity or a @Version mismatches — it does not re-read columns into an
+     * already-managed instance). A scalar query never populates the persistence context, so
+     * it cannot poison the lock that follows it.
+     */
+    @Query("select r.variant.id from StockReservation r where r.id = :id")
+    Optional<UUID> findVariantIdById(UUID id);
+
+    /**
      * Locked in a deterministic order (id ASC) after the balance row lock, per
      * ERPNext's make_sl_entries (L143-145) deadlock-avoidance pattern: any two
      * transactions that need overlapping rows must acquire them in the same order.

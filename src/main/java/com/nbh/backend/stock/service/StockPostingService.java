@@ -123,20 +123,22 @@ public class StockPostingService {
         // "reserve at one place, dispatch from another" a structural impossibility
         // instead of a bug that only shows up when a fallback path is taken (this
         // is exactly the class of defect the old branch-fallback design had).
+        //
+        // Only .getId() is called on line.getReservation() here — it's a lazy proxy
+        // (StockDocumentLine.reservation), and .getId() answers from the already-loaded
+        // foreign-key column without initialising the proxy. Calling anything else on it
+        // (e.g. the variant-match check this used to also do here) would force a real
+        // SELECT of the StockReservation into this transaction's persistence context
+        // BEFORE the locking loop below ever runs — and Hibernate then hands that same
+        // stale managed instance back from lockById's own SELECT ... FOR UPDATE instead
+        // of a fresh one (Phase 0 finding, 2026-09-27; see StockReservationService.terminate's
+        // javadoc for the mechanism). The variant-match check moved below, after locking.
         for (StockDocumentLine line : document.getLines()) {
             StockReservation reservation = line.getReservation();
-            if (reservation == null) {
-                continue;
-            }
-            if (line.getSourceAccount() != StockAccount.SHOP) {
+            if (reservation != null && line.getSourceAccount() != StockAccount.SHOP) {
                 throw new IllegalArgumentException(
                         "Line fulfilling reservation " + reservation.getId() + " must source from SHOP, was "
                                 + line.getSourceAccount());
-            }
-            if (!reservation.getVariant().getId().equals(line.getVariant().getId())) {
-                throw new IllegalArgumentException(
-                        "Reservation " + reservation.getId() + " is for variant " + reservation.getVariant().getId()
-                                + " but the line fulfilling it is for variant " + line.getVariant().getId());
             }
         }
 
@@ -205,6 +207,20 @@ public class StockPostingService {
                         "Reservation " + id + " is " + reservation.getStatus() + ", not ACTIVE — cannot fulfil it");
             }
             lockedReservations.put(id, reservation);
+        }
+
+        // Deferred from the pre-lock validation above (see its comment): now that every
+        // touched reservation is genuinely locked and freshly loaded, it's safe to read
+        // .getVariant() off it.
+        for (StockDocumentLine line : document.getLines()) {
+            StockReservation reservation = line.getReservation() != null
+                    ? lockedReservations.get(line.getReservation().getId())
+                    : null;
+            if (reservation != null && !reservation.getVariant().getId().equals(line.getVariant().getId())) {
+                throw new IllegalArgumentException(
+                        "Reservation " + reservation.getId() + " is for variant " + reservation.getVariant().getId()
+                                + " but the line fulfilling it is for variant " + line.getVariant().getId());
+            }
         }
 
         Instant postedAt = Instant.now(clock);
@@ -349,6 +365,14 @@ public class StockPostingService {
         balance.setAvgCost(newAvgCost);
         balance.setStockValue(newStockValue);
         balance.setLastLedgerEntryId(saved.getId());
+
+        // Phase 0 fix (2026-09-27): SHOP is the only physical account, so its leg of a
+        // movement carries the one cost figure a caller might need after the fact (e.g. a
+        // sale's COGS) — captured here, under the lock, instead of a caller pre-reading an
+        // avgCost snapshot before posting even runs (see StockDocumentLine.postedUnitCost).
+        if (account == StockAccount.SHOP) {
+            line.setPostedUnitCost(unitCostForEntry);
+        }
 
         // §2: edge-triggered, not level-triggered — fires exactly once on the
         // movement that CROSSES the threshold, never on every subsequent sale of

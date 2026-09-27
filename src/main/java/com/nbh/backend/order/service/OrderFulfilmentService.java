@@ -107,7 +107,8 @@ public class OrderFulfilmentService {
 
     @Transactional
     public CustomerOrder fulfil(java.util.UUID orderId, java.util.UUID staffUserId) {
-        CustomerOrder order = orderRepository.findById(orderId)
+        // Phase 0 fix (2026-09-27), D2 — see CustomerOrderRepository.lockById's javadoc.
+        CustomerOrder order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
         if (!DISPATCHABLE_STATUSES.contains(order.getStatus())) {
             throw new UnprocessableException(
@@ -122,12 +123,8 @@ public class OrderFulfilmentService {
         document.setPostedByUserId(staffUserId);
 
         int lineNo = 1;
+        java.util.List<CustomerOrderItem> itemsInLineOrder = new java.util.ArrayList<>();
         for (CustomerOrderItem item : order.getItems()) {
-            // Snapshot the current average cost BEFORE posting — an outbound
-            // movement doesn't change it, so this is exactly the figure
-            // StockPostingService will use as the ledger entry's unit_cost.
-            item.setUnitCostAtSale(availabilityService.avgCost(item.getVariant().getId()));
-
             StockDocumentLine line = new StockDocumentLine();
             line.setDocument(document);
             line.setLineNo(lineNo++);
@@ -138,9 +135,20 @@ public class OrderFulfilmentService {
             line.setUnitPrice(item.getUnitPrice());
             line.setReservation(item.getReservation());
             document.getLines().add(line);
+            itemsInLineOrder.add(item);
         }
 
         postingService.post(document);
+
+        // Phase 0 fix (2026-09-27): the COGS snapshot now comes from what posting actually
+        // locked and used (StockDocumentLine.postedUnitCost), not a pre-posting avgCost()
+        // read — that read could already be stale by the time posting takes the lock and
+        // commits, so the snapshot could silently disagree with what the ledger recorded.
+        // document.getLines() and itemsInLineOrder were built in lockstep above, so they're
+        // index-aligned.
+        for (int i = 0; i < document.getLines().size(); i++) {
+            itemsInLineOrder.get(i).setUnitCostAtSale(document.getLines().get(i).getPostedUnitCost());
+        }
 
         order.setStatus(OrderStatus.DISPATCHED);
         order = orderRepository.save(order);
@@ -160,7 +168,8 @@ public class OrderFulfilmentService {
     /** PAID -> PICKING. No stock movement — see {@link #PICKABLE_STATUSES}. */
     @Transactional
     public CustomerOrder startPicking(java.util.UUID orderId) {
-        CustomerOrder order = orderRepository.findById(orderId)
+        // Phase 0 fix (2026-09-27), D2 — see CustomerOrderRepository.lockById's javadoc.
+        CustomerOrder order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
         if (!PICKABLE_STATUSES.contains(order.getStatus())) {
             throw new UnprocessableException(
@@ -178,7 +187,8 @@ public class OrderFulfilmentService {
     /** PAID or PICKING -> READY. No stock movement — see {@link #READYABLE_STATUSES}. */
     @Transactional
     public CustomerOrder markReady(java.util.UUID orderId) {
-        CustomerOrder order = orderRepository.findById(orderId)
+        // Phase 0 fix (2026-09-27), D2 — see CustomerOrderRepository.lockById's javadoc.
+        CustomerOrder order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
         if (!READYABLE_STATUSES.contains(order.getStatus())) {
             throw new UnprocessableException(
@@ -204,7 +214,8 @@ public class OrderFulfilmentService {
      */
     @Transactional
     public CustomerOrder markDelivered(java.util.UUID orderId) {
-        CustomerOrder order = orderRepository.findById(orderId)
+        // Phase 0 fix (2026-09-27), D2 — see CustomerOrderRepository.lockById's javadoc.
+        CustomerOrder order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
         if (order.getStatus() != OrderStatus.DISPATCHED) {
             throw new UnprocessableException(
@@ -230,7 +241,8 @@ public class OrderFulfilmentService {
      */
     @Transactional
     public CustomerOrder cancel(java.util.UUID orderId, String reason) {
-        CustomerOrder order = orderRepository.findById(orderId)
+        // Phase 0 fix (2026-09-27), D2 — see CustomerOrderRepository.lockById's javadoc.
+        CustomerOrder order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
         if (!CANCELLABLE_STATUSES.contains(order.getStatus())) {
             throw new UnprocessableException(

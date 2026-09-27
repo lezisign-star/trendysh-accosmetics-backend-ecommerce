@@ -69,7 +69,7 @@ class OrderFulfilmentServiceUnitTest {
         item.setReservation(activeReservation);
 
         CustomerOrder order = orderWithStatus(OrderStatus.PENDING_PAYMENT, List.of(item));
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.cancel(ORDER_ID, "customer changed their mind");
 
@@ -87,7 +87,7 @@ class OrderFulfilmentServiceUnitTest {
         when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CustomerOrder order = orderWithStatus(OrderStatus.PAID, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.cancel(ORDER_ID, null);
 
@@ -97,7 +97,7 @@ class OrderFulfilmentServiceUnitTest {
     @Test
     void cancellingADispatchedOrderThrowsAndNeverTouchesReservationsOrStatus() {
         CustomerOrder order = orderWithStatus(OrderStatus.DISPATCHED, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> fulfilmentService.cancel(ORDER_ID, "too late"))
                 .isInstanceOf(UnprocessableException.class)
@@ -113,7 +113,7 @@ class OrderFulfilmentServiceUnitTest {
         when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CustomerOrder order = orderWithStatus(OrderStatus.PICKING, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.cancel(ORDER_ID, null);
 
@@ -125,7 +125,7 @@ class OrderFulfilmentServiceUnitTest {
         when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CustomerOrder order = orderWithStatus(OrderStatus.READY, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.cancel(ORDER_ID, null);
 
@@ -137,7 +137,7 @@ class OrderFulfilmentServiceUnitTest {
         when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CustomerOrder order = orderWithStatus(OrderStatus.PAID, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.startPicking(ORDER_ID);
 
@@ -150,7 +150,7 @@ class OrderFulfilmentServiceUnitTest {
     @Test
     void startingPickingOnAPendingPaymentOrderThrowsAndNeverTouchesStatus() {
         CustomerOrder order = orderWithStatus(OrderStatus.PENDING_PAYMENT, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> fulfilmentService.startPicking(ORDER_ID))
                 .isInstanceOf(UnprocessableException.class)
@@ -166,7 +166,7 @@ class OrderFulfilmentServiceUnitTest {
         when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CustomerOrder order = orderWithStatus(OrderStatus.PICKING, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.markReady(ORDER_ID);
 
@@ -179,7 +179,7 @@ class OrderFulfilmentServiceUnitTest {
         when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CustomerOrder order = orderWithStatus(OrderStatus.PAID, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.markReady(ORDER_ID);
 
@@ -189,7 +189,7 @@ class OrderFulfilmentServiceUnitTest {
     @Test
     void markingReadyFromDispatchedThrows() {
         CustomerOrder order = orderWithStatus(OrderStatus.DISPATCHED, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> fulfilmentService.markReady(ORDER_ID))
                 .isInstanceOf(UnprocessableException.class)
@@ -203,7 +203,7 @@ class OrderFulfilmentServiceUnitTest {
         when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CustomerOrder order = orderWithStatus(OrderStatus.DISPATCHED, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         CustomerOrder result = fulfilmentService.markDelivered(ORDER_ID);
 
@@ -216,7 +216,7 @@ class OrderFulfilmentServiceUnitTest {
     @Test
     void markingDeliveredBeforeDispatchThrowsAndNeverTouchesStatus() {
         CustomerOrder order = orderWithStatus(OrderStatus.PAID, List.of());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> fulfilmentService.markDelivered(ORDER_ID))
                 .isInstanceOf(UnprocessableException.class)
@@ -239,7 +239,7 @@ class OrderFulfilmentServiceUnitTest {
         item.setReservation(alreadyReleased);
 
         CustomerOrder order = orderWithStatus(OrderStatus.PENDING_PAYMENT, List.of(item));
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
 
         fulfilmentService.cancel(ORDER_ID, null);
 

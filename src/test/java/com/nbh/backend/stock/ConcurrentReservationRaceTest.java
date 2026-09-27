@@ -10,6 +10,7 @@ import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
+import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.repository.StockDocumentRepository;
 import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.stock.service.StockReservationService;
@@ -47,6 +48,7 @@ class ConcurrentReservationRaceTest {
     @Autowired private StockDocumentRepository documentRepository;
     @Autowired private StockPostingService postingService;
     @Autowired private StockReservationService reservationService;
+    @Autowired private StockBalanceRepository balanceRepository;
 
     private ProductVariant variant;
 
@@ -124,5 +126,63 @@ class ConcurrentReservationRaceTest {
 
         assertEquals(1, succeeded.get(), "Exactly one concurrent reservation for the last unit must win");
         assertEquals(attempts - 1, rejected.get(), "Every other concurrent attempt must be rejected, not silently overbooked");
+    }
+
+    /**
+     * Phase 0 regression test (2026-09-27): the exact race {@code StockReservationService
+     * .terminate}'s own javadoc used to claim was already fixed but wasn't — two concurrent
+     * terminations of the SAME reservation (e.g. the expiry sweeper racing a payment-failure
+     * release) each read the reservation unlocked (an ordinary {@code findById}) before
+     * locking the balance, then re-fetched it under {@code PESSIMISTIC_WRITE} — but
+     * Hibernate's persistence context hands back that same already-loaded, pre-lock object
+     * instead of a fresh read, so the "loser sees a non-ACTIVE status" guarantee never
+     * actually held. Fixed by never loading the reservation at all before it's locked (a
+     * scalar variant-id lookup first instead), backstopped by {@code @Version} on both
+     * entities. Without either fix, this test reliably drives reserved_qty negative — one
+     * unit reserved, released from N concurrent callers, each independently believing it was
+     * the one that had to decrement it.
+     */
+    @Test
+    void concurrentTerminationsOfTheSameReservationNeverDoubleDecrement() throws InterruptedException {
+        StockReservation reservation = reservationService.reserve(
+                variant, BigDecimal.ONE, StockReservation.ReservationSource.ONLINE_CART,
+                "TEST_TERMINATE_RACE", UUID.randomUUID(), null);
+
+        int attempts = 10;
+        ExecutorService pool = Executors.newFixedThreadPool(attempts);
+        CountDownLatch ready = new CountDownLatch(attempts);
+        CountDownLatch go = new CountDownLatch(1);
+
+        List<Future<?>> futures = new java.util.ArrayList<>();
+        for (int i = 0; i < attempts; i++) {
+            futures.add(pool.submit(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    reservationService.release(reservation.getId());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }));
+        }
+
+        ready.await(10, TimeUnit.SECONDS);
+        go.countDown();
+        for (Future<?> f : futures) {
+            try {
+                f.get(30, TimeUnit.SECONDS);
+            } catch (ExecutionException | TimeoutException e) {
+                fail("Concurrent release task failed unexpectedly: " + e.getCause());
+            }
+        }
+        pool.shutdown();
+
+        BigDecimal finalReservedQty = balanceRepository
+                .findByVariantIdAndAccount(variant.getId(), StockAccount.SHOP)
+                .orElseThrow()
+                .getReservedQty();
+        assertEquals(0, finalReservedQty.compareTo(BigDecimal.ZERO),
+                "reserved_qty must land back at exactly zero — a double-decrement would drive it negative, "
+                        + "was " + finalReservedQty);
     }
 }

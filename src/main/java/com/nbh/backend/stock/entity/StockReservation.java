@@ -58,6 +58,13 @@ public class StockReservation extends BaseEntity {
 
     private UUID createdByUserId;
 
+    // Phase 0 correctness fix (2026-09-27): see StockBalance.version's javadoc — the same
+    // stale-return-under-lock hazard applies here, most directly in
+    // StockReservationService.terminate (release/fulfill/expire all funnel through it).
+    @Version
+    @Column(nullable = false)
+    private long version;
+
     public enum ReservationSource { ONLINE_CART, ONLINE_ORDER, POS_TICKET, MANUAL_HOLD }
 
     public enum ReservationStatus { ACTIVE, FULFILLED, RELEASED, EXPIRED }

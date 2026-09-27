@@ -136,6 +136,22 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Phase 0 fix (2026-09-27): covers both kinds of lock failure the stock/reservation
+     * correctness work can now throw — an optimistic {@code @Version} mismatch (the new
+     * backstop on {@code StockBalance}/{@code StockReservation}, which turns a stale read
+     * into a loud failure instead of a silent lost update) and a pessimistic lock
+     * timeout/deadlock (two transactions genuinely contending for the same row — e.g. a
+     * checkout racing a dispatch). Both are exactly the case a caller should retry, not
+     * treat as permanent; previously both fell through to the 500 catch-all with nothing
+     * telling the caller a retry might succeed.
+     */
+    @ExceptionHandler(org.springframework.dao.ConcurrencyFailureException.class)
+    public ResponseEntity<Object> handleConcurrencyFailure(org.springframework.dao.ConcurrencyFailureException e) {
+        log.warn("409: concurrency failure, caller should retry: {}", e.getMessage());
+        return body(HttpStatus.CONFLICT, "This was just updated by someone else — please retry");
+    }
+
+    /**
      * A malformed or semantically-invalid request body — e.g. a JSON value
      * that isn't one of the enum's remaining constants (found live: after
      * V12 removed DELIVERY_TUMABODA from FulfilmentType, sending that value
