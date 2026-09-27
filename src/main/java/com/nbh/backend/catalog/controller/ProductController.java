@@ -139,18 +139,19 @@ public class ProductController {
     }
 
     /**
-     * Sets a variant's sellable stock to {@code quantity}; the difference is posted to the stock ledger
-     * (see {@link VariantStockService}).
+     * Sets a variant's physical on-hand stock to {@code quantity} — "we counted N on the shelf";
+     * the difference is posted to the stock ledger (see {@link VariantStockService}).
      */
     @PreAuthorize("hasAuthority('PERM_STOCK_ADJUST')")
     @PutMapping("/{id}/variants/{variantId}/stock")
     public VariantStockService.Result setStock(@PathVariable UUID id, @PathVariable UUID variantId,
                                                 @Valid @RequestBody SetStockRequest request,
                                                 @AuthenticationPrincipal StaffUser staff) {
-        return variantStockService.setAvailable(id, variantId, request.quantity(), request.unitCost(), staff);
+        return variantStockService.setOnHand(id, variantId, request.quantity(), request.unitCost(), request.reason(), staff);
     }
 
-    public record SetStockRequest(@jakarta.validation.constraints.NotNull BigDecimal quantity, BigDecimal unitCost) {}
+    public record SetStockRequest(
+            @jakarta.validation.constraints.NotNull BigDecimal quantity, BigDecimal unitCost, String reason) {}
 
     /** Sets a variant's flash-deal price + deadline. See {@link VariantDealService}'s javadoc for the validation rules. */
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")

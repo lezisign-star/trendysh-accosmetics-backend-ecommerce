@@ -168,9 +168,13 @@ class ProductEditorIntegrationTest {
         assertThat(ok(get("/api/v1/products?categoryId=" + cat + "&stock=OUT"), null).get("totalElements").asInt()).isEqualTo(1);
         assertThat(ok(get("/api/v1/products?categoryId=" + cat + "&stock=IN"), null).get("totalElements").asInt()).isZero();
 
-        JsonNode up = ok(put("/api/v1/products/" + productId + "/variants/" + variantId + "/stock"), "{\"quantity\":12}");
-        assertThat(up.get("previousAvailable").asInt()).isZero();
-        assertThat(up.get("newAvailable").asInt()).isEqualTo(12);
+        // Phase 2 fix (2026-09-27): a unit cost is now required for a gain with no existing
+        // average to fall back on. Result's fields also renamed previousAvailable/newAvailable
+        // -> previousOnHand/newOnHand (D6: this now targets physical on-hand, not sellable qty).
+        JsonNode up = ok(put("/api/v1/products/" + productId + "/variants/" + variantId + "/stock"),
+                "{\"quantity\":12,\"unitCost\":100}");
+        assertThat(up.get("previousOnHand").asInt()).isZero();
+        assertThat(up.get("newOnHand").asInt()).isEqualTo(12);
         assertThat(up.get("documentNo").asText()).isNotBlank();
 
         JsonNode listed = ok(get("/api/v1/products?categoryId=" + cat + "&stock=IN"), null);
@@ -179,7 +183,7 @@ class ProductEditorIntegrationTest {
 
         // Correcting downwards writes it off; the same number again is a no-op.
         JsonNode down = ok(put("/api/v1/products/" + productId + "/variants/" + variantId + "/stock"), "{\"quantity\":5}");
-        assertThat(down.get("newAvailable").asInt()).isEqualTo(5);
+        assertThat(down.get("newOnHand").asInt()).isEqualTo(5);
         JsonNode same = ok(put("/api/v1/products/" + productId + "/variants/" + variantId + "/stock"), "{\"quantity\":5}");
         assertThat(same.get("documentNo").isNull()).isTrue();
 

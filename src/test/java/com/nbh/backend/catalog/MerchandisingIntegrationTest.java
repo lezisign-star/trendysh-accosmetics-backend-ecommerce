@@ -87,7 +87,11 @@ class MerchandisingIntegrationTest {
         ok(post("/api/v1/products/" + product.get("id").asText() + "/publish"), null);
         // Give it real stock so it's addable to a cart and shows up as inStock on the catalogue.
         String variantId = product.get("variants").get(0).get("id").asText();
-        ok(put("/api/v1/products/" + product.get("id").asText() + "/variants/" + variantId + "/stock"), "{\"quantity\":10}");
+        // Phase 2 fix (2026-09-27): a unit cost is now required for a stock gain with no
+        // existing average to fall back on (VariantStockService no longer silently posts at
+        // zero cost).
+        ok(put("/api/v1/products/" + product.get("id").asText() + "/variants/" + variantId + "/stock"),
+                "{\"quantity\":10,\"unitCost\":100}");
         return product;
     }
 

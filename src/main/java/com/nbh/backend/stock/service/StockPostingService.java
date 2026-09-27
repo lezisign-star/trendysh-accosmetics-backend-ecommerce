@@ -2,10 +2,12 @@ package com.nbh.backend.stock.service;
 
 import com.nbh.backend.common.event.LowStockThresholdCrossedEvent;
 import com.nbh.backend.common.exception.NotFoundException;
+import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
+import com.nbh.backend.stock.entity.StockDocumentType;
 import com.nbh.backend.stock.entity.StockLedgerEntry;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientStockException;
@@ -68,10 +70,19 @@ import java.util.*;
 @Service
 public class StockPostingService {
 
+    /** Phase 2 (2026-09-27): {@link #reverse}'s marker on a reversal document's referenceType. */
+    public static final String REVERSAL_REFERENCE_TYPE = "STOCK_DOCUMENT_REVERSAL";
+
+    /** Sales go through a return instead — see {@link #reverse}'s javadoc. */
+    private static final Set<StockDocumentType> REVERSIBLE_TYPES = EnumSet.of(
+            StockDocumentType.GOODS_RECEIPT, StockDocumentType.ADJUSTMENT,
+            StockDocumentType.WRITE_OFF, StockDocumentType.STOCK_COUNT);
+
     private final StockDocumentRepository documentRepository;
     private final StockLedgerEntryRepository ledgerRepository;
     private final StockBalanceRepository balanceRepository;
     private final StockReservationRepository reservationRepository;
+    private final StockDocumentNoGenerator documentNoGenerator;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -80,6 +91,7 @@ public class StockPostingService {
             StockLedgerEntryRepository ledgerRepository,
             StockBalanceRepository balanceRepository,
             StockReservationRepository reservationRepository,
+            StockDocumentNoGenerator documentNoGenerator,
             Clock clock,
             ApplicationEventPublisher eventPublisher
     ) {
@@ -87,6 +99,7 @@ public class StockPostingService {
         this.ledgerRepository = ledgerRepository;
         this.balanceRepository = balanceRepository;
         this.reservationRepository = reservationRepository;
+        this.documentNoGenerator = documentNoGenerator;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
     }
@@ -225,6 +238,13 @@ public class StockPostingService {
 
         Instant postedAt = Instant.now(clock);
 
+        // Phase 2 (2026-09-27): a reversal document (see reverse() below) sets referenceType
+        // to REVERSAL_REFERENCE_TYPE and referenceId to the original document's id — resolved
+        // once here into a (variant, account) -> original-entry lookup, so applyMovement can
+        // tag each new entry with exactly which original entry it undoes. Empty for every
+        // ordinary (non-reversal) document, which is the overwhelmingly common case.
+        Map<VariantAccountKey, StockLedgerEntry> reversalSourceEntries = resolveReversalSourceEntries(document);
+
         // Step 4: apply every line. A line with both a source and a target produces
         // two ledger entries (one negative, one positive) — the double-entry
         // property that makes SUM(qty_change) per variant always zero across the
@@ -234,20 +254,102 @@ public class StockPostingService {
                     ? lockedReservations.get(line.getReservation().getId())
                     : null;
             if (line.getSourceAccount() != null) {
+                VariantAccountKey key = new VariantAccountKey(line.getVariant().getId(), line.getSourceAccount());
                 applyMovement(document, line, line.getSourceAccount(), line.getQty().negate(),
-                        lockedBalances.get(new VariantAccountKey(line.getVariant().getId(), line.getSourceAccount())),
-                        postedAt, fulfils);
+                        lockedBalances.get(key), postedAt, fulfils, reversalSourceEntries.get(key));
             }
             if (line.getTargetAccount() != null) {
+                VariantAccountKey key = new VariantAccountKey(line.getVariant().getId(), line.getTargetAccount());
+                // a reservation is only consumed on the outbound/source side
                 applyMovement(document, line, line.getTargetAccount(), line.getQty(),
-                        lockedBalances.get(new VariantAccountKey(line.getVariant().getId(), line.getTargetAccount())),
-                        postedAt, null); // a reservation is only consumed on the outbound/source side
+                        lockedBalances.get(key), postedAt, null, reversalSourceEntries.get(key));
             }
         }
 
         document.setStatus(StockDocument.StockDocumentStatus.POSTED);
         document.setPostedAt(postedAt);
         return documentRepository.save(document);
+    }
+
+    /**
+     * Phase 2 (2026-09-27): undoes a previously posted document by posting its exact negation
+     * — every line's source/target swapped, same quantities, each side valued at what the
+     * ORIGINAL entry for that (variant, account) recorded (see applyMovement's reversal
+     * branch), not a fresh current-average or a re-typed cost. Goes through the normal
+     * {@link #post} — same locking, same negative-stock/reserved-floor guards, same
+     * single-write-path — so a reversal that would take SHOP negative fails exactly the way
+     * any other movement would (the design doc's "reject and point to a revaluation" guard is
+     * this same existing check, not a separate one).
+     *
+     * <p>Only GRN/ADJUSTMENT/WRITE_OFF/STOCK_COUNT are reversible this way — a posted sale
+     * must go through a customer return instead, since "undo the sale" and "the customer sent
+     * it back" are different real-world events with different implications (a return can be
+     * damaged-not-restocked; a plain reversal can't distinguish that).
+     */
+    @Transactional
+    public StockDocument reverse(UUID documentId, String reason, UUID staffUserId) {
+        StockDocument original = documentRepository.findById(documentId)
+                .orElseThrow(() -> new NotFoundException("No such stock document: " + documentId));
+        if (original.getStatus() != StockDocument.StockDocumentStatus.POSTED) {
+            throw new UnprocessableException(
+                    "Only a POSTED document can be reversed; " + original.getDocumentNo() + " is "
+                            + original.getStatus());
+        }
+        if (!REVERSIBLE_TYPES.contains(original.getDocumentType())) {
+            throw new UnprocessableException(
+                    original.getDocumentType() + " documents can't be reversed directly — "
+                            + "a sale must go through a customer return instead");
+        }
+        if (original.getCancelledByDocument() != null) {
+            throw new UnprocessableException(
+                    original.getDocumentNo() + " was already reversed by "
+                            + original.getCancelledByDocument().getDocumentNo());
+        }
+
+        StockDocument reversal = new StockDocument();
+        reversal.setDocumentType(StockDocumentType.ADJUSTMENT);
+        reversal.setDocumentNo(documentNoGenerator.next(StockDocumentType.ADJUSTMENT));
+        reversal.setPostedByUserId(staffUserId);
+        reversal.setReferenceType(REVERSAL_REFERENCE_TYPE);
+        reversal.setReferenceId(original.getId());
+        reversal.setNotes(reason != null && !reason.isBlank() ? reason : ("Reversal of " + original.getDocumentNo()));
+
+        int lineNo = 1;
+        for (StockDocumentLine originalLine : original.getLines()) {
+            StockDocumentLine reversalLine = new StockDocumentLine();
+            reversalLine.setDocument(reversal);
+            reversalLine.setLineNo(lineNo++);
+            reversalLine.setVariant(originalLine.getVariant());
+            reversalLine.setQty(originalLine.getQty());
+            // Swapped: undoing a movement means running it backwards.
+            reversalLine.setSourceAccount(originalLine.getTargetAccount());
+            reversalLine.setTargetAccount(originalLine.getSourceAccount());
+            reversal.getLines().add(reversalLine);
+        }
+
+        StockDocument posted = post(reversal);
+
+        original.setCancelledByDocument(posted);
+        documentRepository.save(original);
+
+        return posted;
+    }
+
+    /**
+     * Empty for every ordinary document (the overwhelmingly common case) — populated only when
+     * {@code document} is a {@link #reverse} product, mapping each (variant, account) this
+     * document touches back to the original ledger entry it's undoing, so {@link #applyMovement}
+     * can value each side precisely and tag it as a reversal.
+     */
+    private Map<VariantAccountKey, StockLedgerEntry> resolveReversalSourceEntries(StockDocument document) {
+        if (!REVERSAL_REFERENCE_TYPE.equals(document.getReferenceType()) || document.getReferenceId() == null) {
+            return Map.of();
+        }
+        Map<VariantAccountKey, StockLedgerEntry> byKey = new HashMap<>();
+        for (StockLedgerEntry original : ledgerRepository.findByDocumentIdOrderByIdAsc(document.getReferenceId())) {
+            byKey.put(new VariantAccountKey(original.getVariant().getId(), original.getAccount()), original);
+        }
+        return byKey;
     }
 
     private StockBalance lockOrCreateBalance(VariantAccountKey key) {
@@ -281,7 +383,8 @@ public class StockPostingService {
             BigDecimal signedQty,
             StockBalance balance,
             Instant postedAt,
-            StockReservation fulfils
+            StockReservation fulfils,
+            StockLedgerEntry reverses
     ) {
         BigDecimal onHandBefore = balance.getOnHandQty();
         BigDecimal newOnHand = onHandBefore.add(signedQty);
@@ -326,7 +429,25 @@ public class StockPostingService {
         BigDecimal unitCostForEntry;
         BigDecimal stockValueDifference;
 
-        if (signedQty.signum() > 0) {
+        if (reverses != null) {
+            // Phase 2 (2026-09-27): a reversal is valued at exactly what the ORIGINAL entry
+            // it undoes recorded, on both sides — not a fresh "current average" (which may
+            // have drifted since) or a caller-supplied cost. This is what "the physical leg
+            // is valued at the original leg's cost" (design doc §4.3) means in practice: the
+            // undo is precise regardless of what's happened to the average since, and doesn't
+            // depend on which direction either side now runs in.
+            unitCostForEntry = reverses.getUnitCost();
+            if (signedQty.signum() > 0) {
+                BigDecimal existingValue = balance.getOnHandQty().multiply(balance.getAvgCost());
+                BigDecimal incomingValue = signedQty.multiply(unitCostForEntry);
+                newAvgCost = newOnHand.signum() == 0
+                        ? BigDecimal.ZERO
+                        : existingValue.add(incomingValue).divide(newOnHand, 4, RoundingMode.HALF_UP);
+                stockValueDifference = incomingValue;
+            } else {
+                stockValueDifference = signedQty.multiply(unitCostForEntry);
+            }
+        } else if (signedQty.signum() > 0) {
             // Inbound: moving-average cost update. unit_cost is required on inbound lines.
             BigDecimal incomingCost = line.getUnitCost() != null ? line.getUnitCost() : balance.getAvgCost();
             BigDecimal existingValue = balance.getOnHandQty().multiply(balance.getAvgCost());
@@ -359,6 +480,10 @@ public class StockPostingService {
         entry.setDocument(document);
         entry.setDocumentLine(line);
         entry.setCreatedAt(postedAt);
+        if (reverses != null) {
+            entry.setReversal(true);
+            entry.setReversesEntry(reverses);
+        }
         StockLedgerEntry saved = ledgerRepository.save(entry);
 
         balance.setOnHandQty(newOnHand);

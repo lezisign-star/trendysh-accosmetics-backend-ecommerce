@@ -183,6 +183,18 @@ public class StockController {
         return movementQueryService.document(id);
     }
 
+    /** Phase 2 (2026-09-27): undo a previously posted GRN/adjustment/write-off — see {@code StockPostingService.reverse}'s javadoc for what's reversible and why. */
+    @PreAuthorize("hasAuthority('PERM_STOCK_ADJUST')")
+    @PostMapping("/documents/{id}/reverse")
+    public StockDocumentSummary reverseDocument(@PathVariable UUID id,
+                                                 @RequestBody(required = false) ReverseDocumentRequest request,
+                                                 @AuthenticationPrincipal com.nbh.backend.staff.entity.StaffUser staff) {
+        String reason = request != null ? request.reason() : null;
+        return StockDocumentSummary.from(postingService.reverse(id, reason, staff.getId()));
+    }
+
+    public record ReverseDocumentRequest(String reason) {}
+
     private ProductVariant findVariantOrThrow(UUID id) {
         return variantRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("No product variant: " + id));

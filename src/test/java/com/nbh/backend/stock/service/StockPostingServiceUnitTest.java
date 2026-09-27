@@ -49,6 +49,7 @@ class StockPostingServiceUnitTest {
     @Mock private StockLedgerEntryRepository ledgerRepository;
     @Mock private StockBalanceRepository balanceRepository;
     @Mock private StockReservationRepository reservationRepository;
+    @Mock private StockDocumentNoGenerator documentNoGenerator;
     @Mock private ApplicationEventPublisher eventPublisher;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
@@ -58,7 +59,7 @@ class StockPostingServiceUnitTest {
 
     @BeforeEach
     void setUp() {
-        postingService = new StockPostingService(documentRepository, ledgerRepository, balanceRepository, reservationRepository, clock, eventPublisher);
+        postingService = new StockPostingService(documentRepository, ledgerRepository, balanceRepository, reservationRepository, documentNoGenerator, clock, eventPublisher);
 
         // Not every test reaches these — the reservation-account/variant guards run
         // before saveAndFlush, and the negative-stock/reserved-floor guard tests
