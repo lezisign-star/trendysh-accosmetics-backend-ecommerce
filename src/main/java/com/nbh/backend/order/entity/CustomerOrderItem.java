@@ -47,7 +47,9 @@ public class CustomerOrderItem {
     private BigDecimal lineTotal;
 
     /** Filled in at fulfilment time from the stock ledger's outbound entry — the real margin figure. */
-    @Column(name = "unit_cost_at_sale", precision = 14, scale = 2)
+    // Phase 0 fix (2026-09-27), D7: was scale 2, silently truncating the 4dp moving-average
+    // cost this is sourced from (see StockLedgerEntry.unitCost's comment).
+    @Column(name = "unit_cost_at_sale", precision = 14, scale = 4)
     private BigDecimal unitCostAtSale;
 
     /** The hold this line is backed by — consumed (closed) when StockPostingService fulfils it at dispatch. */

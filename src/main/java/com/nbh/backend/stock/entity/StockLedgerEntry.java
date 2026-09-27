@@ -47,7 +47,9 @@ public class StockLedgerEntry {
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qtyAfter;
 
-    @Column(precision = 14, scale = 2)
+    // Phase 0 fix (2026-09-27), D7: was scale 2, silently truncating an outbound entry's
+    // avgCost-derived 4dp unit cost (see V30's migration comment). Widened to match.
+    @Column(precision = 14, scale = 4)
     private BigDecimal unitCost;
 
     // scale 4 — see StockBalance.avgCost for why (audit finding F11, session 3).

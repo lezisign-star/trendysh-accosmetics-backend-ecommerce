@@ -5,7 +5,7 @@ import com.nbh.backend.analytics.dto.TopSellerDto;
 import com.nbh.backend.catalog.repository.ProductSaleEventRepository;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,14 +45,14 @@ public class AnalyticsController {
 
     private final CustomerOrderRepository orderRepository;
     private final ProductSaleEventRepository saleEventRepository;
-    private final StockBalanceRepository balanceRepository;
+    private final StockAvailabilityService availabilityService;
 
     public AnalyticsController(CustomerOrderRepository orderRepository,
                                 ProductSaleEventRepository saleEventRepository,
-                                StockBalanceRepository balanceRepository) {
+                                StockAvailabilityService availabilityService) {
         this.orderRepository = orderRepository;
         this.saleEventRepository = saleEventRepository;
-        this.balanceRepository = balanceRepository;
+        this.availabilityService = availabilityService;
     }
 
     @PreAuthorize("hasAuthority('PERM_ANALYTICS_VIEW')")
@@ -70,7 +70,7 @@ public class AnalyticsController {
             total += sc.getCount();
         }
 
-        return new AnalyticsSummaryDto(revenue, total, byStatus, balanceRepository.countBelowReorderLevel());
+        return new AnalyticsSummaryDto(revenue, total, byStatus, availabilityService.countBelowReorderLevel());
     }
 
     @PreAuthorize("hasAuthority('PERM_ANALYTICS_VIEW')")

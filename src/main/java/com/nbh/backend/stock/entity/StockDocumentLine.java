@@ -38,7 +38,9 @@ public class StockDocumentLine extends BaseEntity {
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qty;
 
-    @Column(precision = 14, scale = 2)
+    // Phase 0 fix (2026-09-27), D7 — see StockLedgerEntry.unitCost's comment; same mismatch,
+    // same fix.
+    @Column(precision = 14, scale = 4)
     private BigDecimal unitCost;
 
     @Column(precision = 14, scale = 2)

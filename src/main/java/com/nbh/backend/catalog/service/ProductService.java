@@ -11,7 +11,7 @@ import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.staff.entity.StaffUser;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,20 +53,20 @@ public class ProductService {
     private final BrandRepository brandRepository;
     private final CategoryRepository categoryRepository;
     private final ProductImageRepository imageRepository;
-    private final StockBalanceRepository balanceRepository;
+    private final StockAvailabilityService availabilityService;
 
     public ProductService(ProductRepository productRepository,
                            ProductVariantRepository variantRepository,
                            BrandRepository brandRepository,
                            CategoryRepository categoryRepository,
                            ProductImageRepository imageRepository,
-                           StockBalanceRepository balanceRepository) {
+                           StockAvailabilityService availabilityService) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
         this.brandRepository = brandRepository;
         this.categoryRepository = categoryRepository;
         this.imageRepository = imageRepository;
-        this.balanceRepository = balanceRepository;
+        this.availabilityService = availabilityService;
     }
 
     /**
@@ -90,19 +90,13 @@ public class ProductService {
     private List<ProductVariantDto> variantDtos(UUID productId) {
         List<ProductVariant> variants = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
         List<UUID> variantIds = variants.stream().map(ProductVariant::getId).toList();
-        Map<UUID, BigDecimal> available = availability(variantIds);
+        // Phase 0 fix (2026-09-27): this used to reimplement StockAvailabilityService.available
+        // verbatim against the repository directly — the exact read-side bypass its own javadoc
+        // claims doesn't happen. Delegates now; behaviour is unchanged (same repository query).
+        Map<UUID, BigDecimal> available = availabilityService.available(variantIds);
         return variants.stream()
                 .map(v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)))
                 .toList();
-    }
-
-    private Map<UUID, BigDecimal> availability(Collection<UUID> variantIds) {
-        Map<UUID, BigDecimal> result = new HashMap<>();
-        if (variantIds.isEmpty()) return result;
-        for (StockBalanceRepository.VariantAvailability a : balanceRepository.availabilityForVariants(variantIds)) {
-            result.put(a.getVariantId(), a.getAvailable());
-        }
-        return result;
     }
 
     /**
@@ -457,7 +451,7 @@ public class ProductService {
 
         List<ProductVariant> allVariants = variantRepository.findByProductIdInAndDeletedFalse(productIds);
         List<UUID> allVariantIds = allVariants.stream().map(ProductVariant::getId).toList();
-        Map<UUID, BigDecimal> available = availability(allVariantIds);
+        Map<UUID, BigDecimal> available = availabilityService.available(allVariantIds);
         Map<UUID, List<ProductVariantDto>> variantsByProduct = allVariants.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         v -> v.getProduct().getId(),

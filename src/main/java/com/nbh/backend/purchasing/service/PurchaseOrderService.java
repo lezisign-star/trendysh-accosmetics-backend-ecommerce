@@ -139,12 +139,23 @@ public class PurchaseOrderService {
         for (CreateLineRequest line : request.lines()) {
             ProductVariant variant = variants.findById(line.variantId())
                     .orElseThrow(() -> new NotFoundException("No product variant: " + line.variantId()));
+            BigDecimal qty = new BigDecimal(line.qty());
+            BigDecimal unitCost = new BigDecimal(line.unitCost());
+            // Phase 0 fix (2026-09-27), D8: neither was validated server-side before — this
+            // cost is what receive() later copies onto the GOODS_RECEIPT with no further
+            // check, so an invalid value here reaches the ledger, not just this PO.
+            if (qty.signum() <= 0) {
+                throw new UnprocessableException(variant.getSku() + ": qty must be positive");
+            }
+            if (unitCost.signum() < 0) {
+                throw new UnprocessableException(variant.getSku() + ": unitCost cannot be negative");
+            }
             PurchaseOrderLine poLine = new PurchaseOrderLine();
             poLine.setPurchaseOrder(po);
             poLine.setLineNo(lineNo++);
             poLine.setVariant(variant);
-            poLine.setQtyOrdered(new BigDecimal(line.qty()));
-            poLine.setUnitCost(new BigDecimal(line.unitCost()));
+            poLine.setQtyOrdered(qty);
+            poLine.setUnitCost(unitCost);
             po.getLines().add(poLine);
         }
 

@@ -76,4 +76,18 @@ public class StockAvailabilityService {
     public long countBelowReorderLevel() {
         return balanceRepository.countBelowReorderLevel();
     }
+
+    /**
+     * Phase 0 fix (2026-09-27): every account's balance row for one variant (SHOP plus the
+     * virtual double-entry accounts) — backs the staff-facing {@code GET /stock/balance}
+     * diagnostic view. Previously {@code StockController} called
+     * {@code StockBalanceRepository.findByVariantId} directly, which is exactly the read-side
+     * bypass this class's own javadoc claims doesn't happen ("no class outside this one goes
+     * through the repository directly") — true for writes (ArchUnit-enforced), not true for
+     * reads until now.
+     */
+    @Transactional(readOnly = true)
+    public java.util.List<com.nbh.backend.stock.entity.StockBalance> balancesForVariant(UUID variantId) {
+        return balanceRepository.findByVariantId(variantId);
+    }
 }

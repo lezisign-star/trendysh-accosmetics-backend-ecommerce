@@ -7,7 +7,6 @@ import com.nbh.backend.stock.dto.InventoryLineDto;
 import com.nbh.backend.stock.dto.ReceiveStockRequest;
 import com.nbh.backend.stock.dto.StockBalanceDto;
 import com.nbh.backend.stock.entity.*;
-import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockPostingService;
@@ -39,18 +38,15 @@ public class StockController {
 
     private final StockPostingService postingService;
     private final ProductVariantRepository variantRepository;
-    private final StockBalanceRepository balanceRepository;
     private final StockAvailabilityService availabilityService;
     private final StockDocumentNoGenerator documentNoGenerator;
 
     public StockController(StockPostingService postingService,
                             ProductVariantRepository variantRepository,
-                            StockBalanceRepository balanceRepository,
                             StockAvailabilityService availabilityService,
                             StockDocumentNoGenerator documentNoGenerator) {
         this.postingService = postingService;
         this.variantRepository = variantRepository;
-        this.balanceRepository = balanceRepository;
         this.availabilityService = availabilityService;
         this.documentNoGenerator = documentNoGenerator;
     }
@@ -68,14 +64,24 @@ public class StockController {
         int lineNo = 1;
         for (ReceiveStockRequest.Line line : request.lines()) {
             ProductVariant variant = findVariantOrThrow(line.variantId());
+            BigDecimal qty = new BigDecimal(line.qty());
+            BigDecimal unitCost = new BigDecimal(line.unitCost());
+            // Phase 0 fix (2026-09-27), D8: neither was validated server-side before — only
+            // the admin frontend checked, which a direct API call bypasses entirely.
+            if (qty.signum() <= 0) {
+                throw new IllegalArgumentException(variant.getSku() + ": qty must be positive");
+            }
+            if (unitCost.signum() < 0) {
+                throw new IllegalArgumentException(variant.getSku() + ": unitCost cannot be negative");
+            }
             StockDocumentLine docLine = new StockDocumentLine();
             docLine.setDocument(document);
             docLine.setLineNo(lineNo++);
             docLine.setVariant(variant);
             docLine.setSourceAccount(StockAccount.SUPPLIER);
             docLine.setTargetAccount(StockAccount.SHOP);
-            docLine.setQty(new BigDecimal(line.qty()));
-            docLine.setUnitCost(new BigDecimal(line.unitCost()));
+            docLine.setQty(qty);
+            docLine.setUnitCost(unitCost);
             document.getLines().add(docLine);
         }
 
@@ -110,9 +116,14 @@ public class StockController {
             if (request.unitCost() == null) {
                 throw new IllegalArgumentException("unitCost is required for a positive adjustment");
             }
+            BigDecimal unitCost = new BigDecimal(request.unitCost());
+            // Phase 0 fix (2026-09-27), D8: wasn't validated server-side before.
+            if (unitCost.signum() < 0) {
+                throw new IllegalArgumentException("unitCost cannot be negative");
+            }
             docLine.setSourceAccount(StockAccount.ADJUSTMENT);
             docLine.setTargetAccount(StockAccount.SHOP);
-            docLine.setUnitCost(new BigDecimal(request.unitCost()));
+            docLine.setUnitCost(unitCost);
         } else {
             // Write-off/shrinkage: SHOP -> ADJUSTMENT.
             docLine.setSourceAccount(StockAccount.SHOP);
@@ -127,7 +138,7 @@ public class StockController {
     @GetMapping("/balance")
     @Transactional(readOnly = true)
     public List<StockBalanceDto> balance(@RequestParam UUID variantId) {
-        return balanceRepository.findByVariantId(variantId).stream().map(StockBalanceDto::from).toList();
+        return availabilityService.balancesForVariant(variantId).stream().map(StockBalanceDto::from).toList();
     }
 
     /**

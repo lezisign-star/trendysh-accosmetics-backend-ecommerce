@@ -55,6 +55,36 @@ public interface StockReservationRepository extends JpaRepository<StockReservati
     List<StockReservation> findByReferenceTypeAndReferenceId(String referenceType, UUID referenceId);
 
     /**
+     * Phase 0 addition (2026-09-27): feeds {@code StockBalanceRebuildService}'s new
+     * orphan-hold check — every ACTIVE reservation against a real order, so the caller can
+     * batch-check whether that order has since reached a terminal state the hold should
+     * have been released at.
+     */
+    List<StockReservation> findByStatusAndReferenceType(
+            StockReservation.ReservationStatus status, String referenceType);
+
+    /**
+     * Phase 0 addition (2026-09-27): feeds {@code StockBalanceRebuildService}'s new
+     * reserved-quantity check — {@code stock_balance.reserved_qty} is a cache of exactly this
+     * sum (per variant, since a reservation only ever holds SHOP), and the two had no
+     * independent cross-check before this. {@code getOutstandingQty()}'s formula
+     * (qty - fulfilledQty - releasedQty) is inlined here since JPQL cannot call an entity's
+     * plain Java method.
+     */
+    @Query("""
+            SELECT r.variant.id AS variantId, SUM(r.qty - r.fulfilledQty - r.releasedQty) AS outstanding
+            FROM StockReservation r
+            WHERE r.status = com.nbh.backend.stock.entity.StockReservation.ReservationStatus.ACTIVE
+            GROUP BY r.variant.id
+            """)
+    List<VariantOutstanding> sumOutstandingByVariant();
+
+    interface VariantOutstanding {
+        UUID getVariantId();
+        java.math.BigDecimal getOutstanding();
+    }
+
+    /**
      * Feeds the expiry sweeper (audit finding F9, session 3): active
      * reservations whose hold has lapsed. Capped with a limit by the caller
      * via Pageable/first-N pattern isn't wired here — the sweeper runs
