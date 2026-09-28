@@ -35,9 +35,33 @@ public record AdminOrderDetailDto(
         String transporterName,
         String transporterPhone,
         BigDecimal agreedDeliveryPrice,
+        Tumaboda tumaboda,
         List<Line> items,
         List<Payment> payments
 ) {
+    /**
+     * The TumaBoda API side of the delivery, for the staff panel. Null when this order is not booked
+     * through the API (phone-arranged, pickup, or rerouted back to manual — {@code rerouted} says which).
+     * {@code needsAttention} is true when a booking is stuck or TumaBoda reports the delivery failed.
+     */
+    public record Tumaboda(boolean rerouted, boolean booked, String deliveryNumber, String status, String trackingUrl,
+                           String trackingCode, String riderId, BigDecimal cost, BigDecimal customerPaid,
+                           int bookingAttempts, Instant nextRetryAt, String bookingFailure, boolean needsAttention) {
+        static Tumaboda from(CustomerOrder o) {
+            if (!o.isTumabodaApiDelivery() && !o.isTumabodaRerouted()) {
+                return null;
+            }
+            boolean booked = o.getTumabodaDeliveryId() != null;
+            boolean needsAttention = !o.isTumabodaRerouted()
+                    && (CustomerOrder.isDeadTumabodaStatus(o.getTumabodaStatus())
+                        || (!booked && o.getTumabodaBookingFailure() != null && o.getTumabodaNextRetryAt() == null));
+            return new Tumaboda(o.isTumabodaRerouted(), booked, o.getTumabodaDeliveryNumber(), o.getTumabodaStatus(),
+                    o.getTumabodaTrackingUrl(), o.getTumabodaTrackingCode(), o.getTumabodaRiderId(),
+                    o.getTumabodaCost(), o.getDeliveryFee(), o.getTumabodaBookingAttempts(), o.getTumabodaNextRetryAt(),
+                    o.getTumabodaBookingFailure(), needsAttention);
+        }
+    }
+
     public record Line(UUID variantId, String sku, String productName, String variantName,
                        BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal) {
         static Line from(CustomerOrderItem i) {
@@ -61,6 +85,7 @@ public record AdminOrderDetailDto(
                 o.getSubtotal(), o.getVatTotal(), o.getDeliveryFee(), o.getGrandTotal(),
                 o.getCreatedAt(), o.getPlacedAt(),
                 o.getTransporterName(), o.getTransporterPhone(), o.getAgreedDeliveryPrice(),
+                Tumaboda.from(o),
                 o.getItems().stream().map(Line::from).toList(),
                 payments.stream().map(Payment::from).toList());
     }

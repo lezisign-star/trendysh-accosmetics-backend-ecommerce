@@ -208,6 +208,27 @@ class OrderTrackingIntegrationTest {
     }
 
     @Test
+    void aVerifiedCustomerSeesTheirRidersTrackingLinkButAnOrderNumberAloneDoesNot() throws Exception {
+        String email = uniqueEmail();
+        CustomerOrder order = newOrder(email, OrderStatus.DISPATCHED);
+        order.setTumabodaTrackingUrl("https://track.tumaboda.test/TRK9");
+        order.setTumabodaTrackingCode("TRK9");
+        order.setTumabodaStatus("in_transit");
+        orders.save(order);
+        String token = verifiedToken(email);
+
+        JsonNode detail = json.readTree(getJson("/api/v1/orders/track/email/orders/" + order.getOrderNo(), token)
+                .getResponse().getContentAsString());
+        assertThat(detail.get("tumabodaTrackingUrl").asText()).isEqualTo("https://track.tumaboda.test/TRK9");
+        assertThat(detail.get("tumabodaTrackingCode").asText()).isEqualTo("TRK9");
+        assertThat(detail.get("tumabodaStatus").asText()).isEqualTo("in_transit");
+
+        JsonNode byNumber = json.readTree(getJson("/api/v1/orders/track/" + order.getOrderNo(), null)
+                .getResponse().getContentAsString());
+        assertThat(byNumber.fieldNames()).toIterable().containsExactlyInAnyOrder("orderNo", "status");
+    }
+
+    @Test
     void askingForCodesTwiceInARowIsThrottled() throws Exception {
         String email = uniqueEmail();
         newOrder(email, OrderStatus.PAID);

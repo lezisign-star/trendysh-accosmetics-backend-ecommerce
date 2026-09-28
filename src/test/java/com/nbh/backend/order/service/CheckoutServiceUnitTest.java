@@ -57,6 +57,7 @@ class CheckoutServiceUnitTest {
     @Mock private StockReservationService reservationService;
     @Mock private OrderNoGenerator orderNoGenerator;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private com.nbh.backend.tumaboda.TumaBodaQuoteService quoteService;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
     private CheckoutService checkoutService;
@@ -69,7 +70,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK),
-                MAX_OPEN_ORDERS);
+                MAX_OPEN_ORDERS, quoteService);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -143,7 +144,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
-                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS);
+                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS, quoteService);
         when(cartItemRepository.findByCartId(cart.getId()))
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 
@@ -215,6 +216,74 @@ class CheckoutServiceUnitTest {
                 FulfilmentType.PICKUP, null, "COURIER");
 
         assertThat(checkoutService.checkout(SESSION_ID, request).order().getDeliveryMethod()).isNull();
+    }
+
+    private CheckoutRequest tumabodaRequest(BigDecimal lat, BigDecimal lng) {
+        return new CheckoutRequest("Njeri Test", "n@example.com", "0720 000 111", FulfilmentType.DELIVERY_COURIER,
+                "Riverside Court, Kilimani", "BODA", lat, lng);
+    }
+
+    @Test
+    void aTumabodaApiDeliveryAddsTheServersQuotedFeeToTheTotalAndKeepsTheDropoffPoint() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        when(quoteService.enabled()).thenReturn(true);
+        when(quoteService.quote(any(), any(), any())).thenReturn(new com.nbh.backend.tumaboda.TumaBodaDtos.Quote(
+                new BigDecimal("350.00"), new BigDecimal("50.00"), new BigDecimal("4.2"), 25));
+
+        var order = checkoutService.checkout(SESSION_ID,
+                tumabodaRequest(new BigDecimal("-1.2921"), new BigDecimal("36.8219"))).order();
+
+        // The quote is for the products' value, and the customer is charged products + delivery.
+        verify(quoteService).quote(new BigDecimal("-1.2921"), new BigDecimal("36.8219"), new BigDecimal("500.00"));
+        assertThat(order.getDeliveryFee()).isEqualByComparingTo("350.00");
+        assertThat(order.getGrandTotal()).isEqualByComparingTo("850.00");
+        assertThat(order.getDropoffLat()).isEqualByComparingTo("-1.2921");
+        assertThat(order.isTumabodaApiDelivery()).isTrue();
+    }
+
+    @Test
+    void aDropoffTumabodaCannotServeRefusesTheCheckoutBeforeAnyStockIsHeld() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        when(quoteService.enabled()).thenReturn(true);
+        when(quoteService.quote(any(), any(), any())).thenThrow(
+                new com.nbh.backend.tumaboda.TumaBodaException("OUT_OF_COVERAGE", "not covered", false));
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID,
+                tumabodaRequest(new BigDecimal("-1.2921"), new BigDecimal("36.8219"))))
+                .isInstanceOf(com.nbh.backend.common.exception.UnprocessableException.class)
+                .hasMessageContaining("TumaBoda can't deliver to that address");
+        verify(reservationService, never()).reserve(any(), any(), any(), any(), any(), any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void tumabodaWithoutADropoffPointStaysPhoneArrangedAndIsNeverQuoted() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        lenient().when(quoteService.enabled()).thenReturn(true);
+
+        var order = checkoutService.checkout(SESSION_ID, tumabodaRequest(null, null)).order();
+
+        verify(quoteService, never()).quote(any(), any(), any());
+        assertThat(order.getDeliveryFee()).isEqualByComparingTo("0");
+        assertThat(order.getGrandTotal()).isEqualByComparingTo("500.00");
+        assertThat(order.isTumabodaApiDelivery()).isFalse();
+    }
+
+    @Test
+    void withTheIntegrationOffADropoffPointIsIgnoredAndTheOrderIsPhoneArranged() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        when(quoteService.enabled()).thenReturn(false);
+
+        var order = checkoutService.checkout(SESSION_ID,
+                tumabodaRequest(new BigDecimal("-1.2921"), new BigDecimal("36.8219"))).order();
+
+        verify(quoteService, never()).quote(any(), any(), any());
+        assertThat(order.getDropoffLat()).isNull();
+        assertThat(order.getGrandTotal()).isEqualByComparingTo("500.00");
     }
 
     @Test

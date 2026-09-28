@@ -70,6 +70,33 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
 
     boolean existsByGuestEmailIgnoreCase(String guestEmail);
 
+    /** TumaBoda bookings whose retry time has come — see {@code TumaBodaBookingRetryJob}. */
+    @Query("select o.id from CustomerOrder o where o.tumabodaNextRetryAt is not null and o.tumabodaNextRetryAt <= :now "
+            + "and o.tumabodaDeliveryId is null and o.tumabodaRerouted = false")
+    List<UUID> findIdsDueForTumabodaRetry(@Param("now") Instant now);
+
+    /**
+     * The order a TumaBoda delivery id belongs to, if any (webhooks and status polls arrive keyed by it).
+     * Id only, deliberately: the caller then takes the order's lock, and loading the entity first would
+     * leave a stale copy in the persistence context for that lock to hand back.
+     */
+    @Query("select o.id from CustomerOrder o where o.tumabodaDeliveryId = :deliveryId")
+    Optional<UUID> findIdByTumabodaDeliveryId(@Param("deliveryId") String deliveryId);
+
+    /** A booked delivery not yet seen finishing, and quiet since {@code quietSince}: the reconciliation poll's worklist. */
+    interface DeliveryToPoll {
+        UUID getId();
+        String getTumabodaDeliveryId();
+    }
+
+    @Query("""
+            select o.id as id, o.tumabodaDeliveryId as tumabodaDeliveryId from CustomerOrder o
+            where o.tumabodaDeliveryId is not null and o.tumabodaRerouted = false
+              and (o.tumabodaStatus is null or lower(o.tumabodaStatus) not in ('delivered', 'failed', 'returned', 'cancelled', 'canceled'))
+              and (o.tumabodaLastWebhookAt is null or o.tumabodaLastWebhookAt < :quietSince)
+            """)
+    List<DeliveryToPoll> findTumabodaDeliveriesToPoll(@Param("quietSince") Instant quietSince);
+
     /** Ids only — feeds {@code OrderExpiryService}, which then locks and re-checks each order itself. */
     @Query("select o.id from CustomerOrder o where o.status = :status")
     List<UUID> findIdsByStatus(@Param("status") OrderStatus status);

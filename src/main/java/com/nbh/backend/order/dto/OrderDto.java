@@ -19,7 +19,11 @@ public record OrderDto(
         java.time.Instant createdAt,
         String transporterName,
         String transporterPhone,
-        BigDecimal agreedDeliveryPrice
+        BigDecimal agreedDeliveryPrice,
+        /** TumaBoda's tracking link/code and its latest status for an order booked through the API; null otherwise. */
+        String tumabodaTrackingUrl,
+        String tumabodaTrackingCode,
+        String tumabodaStatus
 ) {
     public static OrderDto from(CustomerOrder order) {
         return new OrderDto(
@@ -28,6 +32,7 @@ public record OrderDto(
                 order.getDeliveryFee(), order.getGrandTotal(),
                 order.getItems().stream().map(OrderItemDto::from).toList(),
                 order.getCreatedAt(),
-                order.getTransporterName(), order.getTransporterPhone(), order.getAgreedDeliveryPrice());
+                order.getTransporterName(), order.getTransporterPhone(), order.getAgreedDeliveryPrice(),
+                order.getTumabodaTrackingUrl(), order.getTumabodaTrackingCode(), order.getTumabodaStatus());
     }
 }

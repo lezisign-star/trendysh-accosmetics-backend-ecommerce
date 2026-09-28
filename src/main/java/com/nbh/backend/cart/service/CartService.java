@@ -59,6 +59,24 @@ public class CartService {
         return toDto(cart);
     }
 
+    /**
+     * What this session's basket holds, in KES — the figure checkout sizes a TumaBoda delivery by, so a
+     * price previewed here and the price charged at checkout cannot disagree. Zero for an unknown, empty
+     * or already-checked-out session, and unlike {@link #getOrCreateCart} it never creates a cart.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal basketValue(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return BigDecimal.ZERO;
+        }
+        return cartRepository.findBySessionId(sessionId)
+                .filter(cart -> cart.getStatus() == Cart.CartStatus.ACTIVE)
+                .map(cart -> cartItemRepository.findByCartId(cart.getId()).stream()
+                        .map(CartItem::getLineTotal)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add))
+                .orElse(BigDecimal.ZERO);
+    }
+
     @Transactional
     public CartDto addItem(String sessionId, UUID variantId, BigDecimal qty) {
         if (qty.signum() <= 0) {

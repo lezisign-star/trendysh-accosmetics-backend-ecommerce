@@ -7,6 +7,7 @@ import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.common.event.OrderPlacedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.TooManyRequestsException;
+import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
@@ -21,6 +22,8 @@ import com.nbh.backend.payment.service.PaymentReferenceGenerator;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.exception.InsufficientAvailabilityException;
 import com.nbh.backend.stock.service.StockReservationService;
+import com.nbh.backend.tumaboda.TumaBodaException;
+import com.nbh.backend.tumaboda.TumaBodaQuoteService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -72,6 +75,7 @@ public class CheckoutService {
     private final PaymentReferenceGenerator referenceGenerator;
     private final BankPaymentSettings paymentSettings;
     private final int maxOpenOrdersPerContact;
+    private final TumaBodaQuoteService quoteService;
 
     public CheckoutService(CartRepository cartRepository,
                             CartItemRepository cartItemRepository,
@@ -84,8 +88,10 @@ public class CheckoutService {
                             PaymentReferenceGenerator referenceGenerator,
                             BankPaymentSettings paymentSettings,
                             @org.springframework.beans.factory.annotation.Value(
-                                    "${app.checkout.max-open-orders-per-contact:3}") int maxOpenOrdersPerContact) {
+                                    "${app.checkout.max-open-orders-per-contact:3}") int maxOpenOrdersPerContact,
+                            TumaBodaQuoteService quoteService) {
         this.maxOpenOrdersPerContact = maxOpenOrdersPerContact;
+        this.quoteService = quoteService;
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.orderRepository = orderRepository;
@@ -138,6 +144,11 @@ public class CheckoutService {
                 .sorted(java.util.Comparator.comparing(ci -> ci.getVariant().getId()))
                 .toList();
 
+        // A TumaBoda delivery booked through the API is quoted HERE, before the order exists and before
+        // any stock is locked: it is a network call to TumaBoda, and no stock-balance row may be held
+        // while it runs. The fee comes from the server's own quote, never from the request.
+        BigDecimal tumabodaFee = quoteTumabodaFeeIfBookedThroughApi(request, cartItems);
+
         CustomerOrder order = new CustomerOrder();
         order.setOrderNo(orderNoGenerator.next());
         order.setCustomerAccount(customer);
@@ -151,7 +162,13 @@ public class CheckoutService {
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(BigDecimal.ZERO);
         order.setVatTotal(BigDecimal.ZERO);
-        order.setDeliveryFee(BigDecimal.ZERO); // delivery fee calculation is not built yet — flagged in HANDOFF
+        // Zero unless a TumaBoda API delivery was quoted above; matatu, courier and phone-arranged
+        // TumaBoda deliveries are paid to the transporter directly, not through the shop.
+        order.setDeliveryFee(tumabodaFee == null ? BigDecimal.ZERO : tumabodaFee);
+        if (tumabodaFee != null) {
+            order.setDropoffLat(request.dropoffLat());
+            order.setDropoffLng(request.dropoffLng());
+        }
         order.setGrandTotal(BigDecimal.ZERO);
         order = orderRepository.save(order); // needs an id before reservations can reference it
 
@@ -235,6 +252,29 @@ public class CheckoutService {
                 order.getGrandTotal(), cartItems.size()));
 
         return new CheckoutResult(order, paymentRecord);
+    }
+
+    /**
+     * The delivery fee for a TumaBoda order booked through the API, or null when this order is not one:
+     * the method is not TumaBoda, the integration is off, or the customer gave no drop-off point (then it
+     * is arranged by phone, exactly as before). A drop-off TumaBoda cannot serve is refused rather than
+     * silently downgraded, so the customer is never charged for a delivery that will not happen.
+     */
+    private BigDecimal quoteTumabodaFeeIfBookedThroughApi(CheckoutRequest request, List<CartItem> cartItems) {
+        boolean tumaboda = request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER
+                && "BODA".equals(request.deliveryMethod());
+        if (!tumaboda || request.dropoffLat() == null || request.dropoffLng() == null || !quoteService.enabled()) {
+            return null;
+        }
+        BigDecimal productValue = cartItems.stream()
+                .map(CartItem::getLineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        try {
+            return quoteService.quote(request.dropoffLat(), request.dropoffLng(), productValue).totalKes();
+        } catch (TumaBodaException e) {
+            throw new UnprocessableException("TumaBoda can't deliver to that address right now. Please choose matatu or"
+                    + " courier, pick another address, or collect your order from the shop.");
+        }
     }
 
     /** 30^6 combinations makes a clash rare; the unique index is the real guard, this just avoids a 500 on the odd hit. */

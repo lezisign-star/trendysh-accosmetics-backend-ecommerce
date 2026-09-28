@@ -128,6 +128,10 @@ public class OrderFulfilmentService {
             throw new UnprocessableException(
                     "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot assign a transporter");
         }
+        if (order.isTumabodaApiDelivery()) {
+            throw new UnprocessableException("Order " + order.getOrderNo() + " is delivered by a TumaBoda rider booked"
+                    + " through the API. Switch it to a phone-arranged delivery first if you want to assign someone else.");
+        }
 
         order.setTransporterName(request.transporterName().trim());
         order.setTransporterPhone(PhoneNumbers.normalize(request.transporterPhone()));
@@ -144,9 +148,16 @@ public class OrderFulfilmentService {
             throw new UnprocessableException(
                     "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot fulfil it");
         }
-        if (order.getFulfilmentType() == FulfilmentType.DELIVERY_COURIER && order.getTransporterName() == null) {
-            throw new UnprocessableException(
-                    "Assign a rider, matatu or courier for " + order.getOrderNo() + " before marking it dispatched");
+        if (order.getFulfilmentType() == FulfilmentType.DELIVERY_COURIER) {
+            if (order.isTumabodaApiDelivery()) {
+                if (order.getTumabodaDeliveryId() == null) {
+                    throw new UnprocessableException("A TumaBoda rider hasn't been booked for " + order.getOrderNo()
+                            + " yet. Book one from the order, or switch it to a phone-arranged delivery.");
+                }
+            } else if (order.getTransporterName() == null) {
+                throw new UnprocessableException(
+                        "Assign a rider, matatu or courier for " + order.getOrderNo() + " before marking it dispatched");
+            }
         }
 
         StockDocument document = new StockDocument();
@@ -281,6 +292,10 @@ public class OrderFulfilmentService {
         if (!CANCELLABLE_STATUSES.contains(order.getStatus())) {
             throw new UnprocessableException(
                     "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot be cancelled");
+        }
+        if (order.hasLiveTumabodaDelivery()) {
+            throw new UnprocessableException("A TumaBoda rider is already booked for " + order.getOrderNo()
+                    + " and TumaBoda has no cancel option. Contact TumaBoda to stop the delivery, then cancel here.");
         }
 
         for (CustomerOrderItem item : order.getItems()) {
