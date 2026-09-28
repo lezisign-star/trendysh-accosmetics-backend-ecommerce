@@ -279,6 +279,15 @@ public class StockReservationService {
         if (reservation.getStatus() != StockReservation.ReservationStatus.ACTIVE) {
             return; // already terminal, or lost the race to another release/fulfill/post — idempotent
         }
+        if (target == StockReservation.ReservationStatus.EXPIRED) {
+            // The sweeper lists lapsed holds first and expires them one at a time, so a hold can be paid for
+            // (expiry cleared) or extended between the listing and this lock. Re-check under the lock, or a
+            // paid order would lose its stock and then be undispatchable.
+            Instant expiresAt = reservation.getExpiresAt();
+            if (expiresAt == null || expiresAt.isAfter(Instant.now(clock))) {
+                return;
+            }
+        }
 
         BigDecimal outstanding = reservation.getOutstandingQty();
         if (target == StockReservation.ReservationStatus.FULFILLED) {

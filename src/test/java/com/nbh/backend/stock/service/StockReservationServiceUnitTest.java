@@ -153,6 +153,43 @@ class StockReservationServiceUnitTest {
         assertThat(result.getQty()).isEqualByComparingTo("10");
     }
 
+    /**
+     * The sweeper lists lapsed holds, then expires them one at a time. A hold can be paid for (expiry
+     * cleared) or extended (a customer says they've paid) in between — expiring it anyway would release
+     * the stock from under a paid order.
+     */
+    @Test
+    void expiringAHoldThatWasPaidForOrExtendedSinceTheSweeperListedItLeavesItAlone() {
+        for (Instant expiresAt : new Instant[]{null, fixedClock.instant().plusSeconds(600)}) {
+            StockReservation hold = activeHold(new BigDecimal("3"), BigDecimal.ZERO, expiresAt);
+            StockBalance balance = balanceWithOnHand(BigDecimal.TEN);
+            balance.setReservedQty(new BigDecimal("3"));
+            when(reservationRepository.findVariantIdById(hold.getId())).thenReturn(Optional.of(variant.getId()));
+            when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP)).thenReturn(Optional.of(balance));
+            when(reservationRepository.lockById(hold.getId())).thenReturn(Optional.of(hold));
+
+            reservationService.expire(hold.getId());
+
+            assertThat(hold.getStatus()).as("expiry %s", expiresAt).isEqualTo(StockReservation.ReservationStatus.ACTIVE);
+            assertThat(balance.getReservedQty()).as("stock still held").isEqualByComparingTo("3");
+        }
+    }
+
+    @Test
+    void expiringAHoldThatReallyLapsedReleasesItsStock() {
+        StockReservation hold = activeHold(new BigDecimal("3"), BigDecimal.ZERO, fixedClock.instant().minusSeconds(60));
+        StockBalance balance = balanceWithOnHand(BigDecimal.TEN);
+        balance.setReservedQty(new BigDecimal("3"));
+        when(reservationRepository.findVariantIdById(hold.getId())).thenReturn(Optional.of(variant.getId()));
+        when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP)).thenReturn(Optional.of(balance));
+        when(reservationRepository.lockById(hold.getId())).thenReturn(Optional.of(hold));
+
+        reservationService.expire(hold.getId());
+
+        assertThat(hold.getStatus()).isEqualTo(StockReservation.ReservationStatus.EXPIRED);
+        assertThat(balance.getReservedQty()).isEqualByComparingTo("0");
+    }
+
     @Test
     void neverStockedVariantThrowsInsufficientAvailabilityNotAnNpe() {
         when(balanceRepository.lockByVariantIdAndAccount(variant.getId(), StockAccount.SHOP))

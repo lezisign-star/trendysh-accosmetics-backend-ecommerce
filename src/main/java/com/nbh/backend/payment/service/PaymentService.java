@@ -77,7 +77,10 @@ public class PaymentService {
                     + " — cannot confirm success from this state");
         }
 
-        CustomerOrder order = payment.getOrder();
+        // Lock the order too, payment first and then order (then stock, in checkout's order): cancelling an
+        // order and expiring one both lock it, so without this a late payment could read the order just
+        // before a cancel committed and then write PAID over CANCELLED, with the cancellation already sent.
+        CustomerOrder order = lockOrderOf(paymentRecordId);
         if (order.getStatus() == OrderStatus.CANCELLED) {
             throw new ConflictException("Order " + order.getOrderNo() + " was cancelled, so it can't be marked paid."
                     + " If the customer paid, refund them.");
@@ -118,6 +121,14 @@ public class PaymentService {
         return payment;
     }
 
+    /** The payment's order, locked. Its id comes from a scalar query so the lock is the first real load of that order. */
+    private CustomerOrder lockOrderOf(UUID paymentRecordId) {
+        UUID orderId = paymentRecordRepository.findOrderIdById(paymentRecordId)
+                .orElseThrow(() -> new EntityNotFoundException("No payment record: " + paymentRecordId));
+        return orderRepository.lockById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+    }
+
     @Transactional
     public PaymentRecord markFailed(UUID paymentRecordId, String reason, String rawResponse) {
         // §4 C2 fix: same lock-before-read as confirmSuccess.
@@ -131,7 +142,7 @@ public class PaymentService {
         payment.setRawResponse(rawResponse);
         paymentRecordRepository.save(payment);
 
-        CustomerOrder order = payment.getOrder();
+        CustomerOrder order = lockOrderOf(paymentRecordId); // as in confirmSuccess: payment, then order, then stock
         for (CustomerOrderItem item : order.getItems()) {
             if (item.getReservation() != null) {
                 reservationService.release(item.getReservation().getId());

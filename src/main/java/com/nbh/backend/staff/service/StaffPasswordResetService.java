@@ -117,7 +117,8 @@ public class StaffPasswordResetService {
         if (user == null) {
             return false;
         }
-        StaffPasswordResetToken token = tokens.findFirstByStaffIdOrderByCreatedAtDesc(user.getId())
+        // Locked: see the repository method — this is where guesses are counted.
+        StaffPasswordResetToken token = tokens.findTopByStaffIdOrderByCreatedAtDesc(user.getId())
                 .orElseThrow(() -> new UnprocessableException(GENERIC_INVALID));
         verifyCode(token, code);
 

@@ -99,6 +99,45 @@ class StaffPasswordResetIntegrationTest {
                 .andExpect(jsonPath("$.mustChangePassword").value(false));
     }
 
+    /**
+     * The five-guess limit must hold when guesses arrive together. Unserialised, a burst of parallel
+     * guesses each reads the same attempt count and overwrites the others' increment, so most of them are
+     * weighed against the code — and a staff account can administer the whole shop.
+     */
+    @Test
+    void aBurstOfParallelWrongGuessesIsCountedExactlyAndBurnsTheCode() throws Exception {
+        String email = newStaffEmail();
+        String code = requestOtpCode(email);
+        String wrong = code.equals("000000") ? "111111" : "000000";
+
+        int guesses = 40;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(guesses);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        List<java.util.concurrent.Future<String>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < guesses; i++) {
+            results.add(pool.submit(() -> {
+                go.await();
+                return mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                                .post("/api/v1/customer/auth/reset-password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(resetBody(email, wrong, "attacker-chosen-password")))
+                        .andReturn().getResponse().getContentAsString();
+            }));
+        }
+        go.countDown();
+        int weighed = 0;
+        for (java.util.concurrent.Future<String> result : results) {
+            if (result.get().contains("Incorrect code")) {
+                weighed++;
+            }
+        }
+        pool.shutdown();
+
+        // The first four are answered with an attempts-left count, the fifth "too many"; the rest are never weighed.
+        assertThat(weighed).as("guesses answered with an attempts-left count").isEqualTo(4);
+        post("/api/v1/customer/auth/reset-password", resetBody(email, code, "my-new-admin-password"), 422);
+    }
+
     @Test
     void theCodeWorksOnlyOnce() throws Exception {
         String email = newStaffEmail();

@@ -28,7 +28,10 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
      * Staff "awaiting payment" queue: bank orders not yet paid, oldest first (order fetched, no N+1).
      * Includes orders that EXPIRED within the last window ({@code expiredSince}) — a customer can still
      * pay after the hold lapses, and staff need to find that order to confirm it — but not cancelled or
-     * failed ones, which can never be marked paid, nor months-old expired ones.
+     * failed ones, which can never be marked paid, nor months-old expired ones. "Within the window" is
+     * measured from when the payment window itself ended ({@code expiresAt}), NOT from when the order row
+     * was last touched: the first expiry sweep after a deploy rewrites every historical unpaid order in
+     * one go, and measuring from that would have put all of them back on the queue for a month.
      */
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"order"})
     @Query("select p from PaymentRecord p where p.paymentReference is not null "
@@ -36,7 +39,7 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
             + "com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.PENDING) "
             + "and (p.order.status = com.nbh.backend.order.entity.OrderStatus.PENDING_PAYMENT "
             + "or (p.order.status = com.nbh.backend.order.entity.OrderStatus.EXPIRED "
-            + "and p.order.updatedAt >= :expiredSince)) "
+            + "and p.expiresAt >= :expiredSince)) "
             + "order by p.createdAt asc")
     List<PaymentRecord> findAwaitingBankPayments(@org.springframework.data.repository.query.Param("expiredSince") java.time.Instant expiredSince);
 
@@ -54,4 +57,11 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from PaymentRecord p where p.id = :id")
     Optional<PaymentRecord> lockById(UUID id);
+
+    /**
+     * The id of the order a payment belongs to, without loading the order: the caller then takes that
+     * order's lock, and an entity already loaded in the session would be handed back stale by it.
+     */
+    @Query("select p.order.id from PaymentRecord p where p.id = :id")
+    Optional<UUID> findOrderIdById(@org.springframework.data.repository.query.Param("id") UUID id);
 }

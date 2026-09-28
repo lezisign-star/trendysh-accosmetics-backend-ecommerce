@@ -249,7 +249,8 @@ public class CustomerAuthService {
         }
         CustomerAccount account = accounts.findByEmailIgnoreCase(normalizeEmail(email))
                 .orElseThrow(() -> new UnprocessableException(GENERIC_INVALID));
-        CustomerEmailToken token = tokens.findFirstByAccountIdAndPurposeOrderByCreatedAtDesc(account.getId(), Purpose.RESET_PASSWORD)
+        // Locked: see the repository method — this is where guesses are counted.
+        CustomerEmailToken token = tokens.findTopByAccountIdAndPurposeOrderByCreatedAtDesc(account.getId(), Purpose.RESET_PASSWORD)
                 .orElseThrow(() -> new UnprocessableException(GENERIC_INVALID));
         verifyCode(token, code);
 

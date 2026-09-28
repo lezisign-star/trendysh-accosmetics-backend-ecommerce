@@ -288,7 +288,8 @@ public class StockPostingService {
      */
     @Transactional
     public StockDocument reverse(UUID documentId, String reason, UUID staffUserId) {
-        StockDocument original = documentRepository.findById(documentId)
+        // Locked, so a second reversal of the same document waits and then sees it already reversed.
+        StockDocument original = documentRepository.lockById(documentId)
                 .orElseThrow(() -> new NotFoundException("No such stock document: " + documentId));
         if (original.getStatus() != StockDocument.StockDocumentStatus.POSTED) {
             throw new UnprocessableException(

@@ -57,9 +57,16 @@ class BankPaymentSettingsTest {
 
     @Test
     void aPlaceholderWithNoValueResolvesToNothingNotALiteralTag() {
+        // With no order number or reference to fall back on, "nothing" is what is left — never "<name>".
+        assertThat(BankPaymentSettings.resolve("<name>", null, "0720000111", "", "")).isEmpty();
+        assertThat(BankPaymentSettings.resolve("<name>-<order>", null, "0720000111", "SO-1", "R")).isEqualTo("-SO-1");
+    }
+
+    @Test
+    void anOrderWhoseNameIsMissingIsToldToTypeItsOrderNumberInsteadOfNothing() {
         var settings = settingsWithEnvTemplate("<name>");
 
-        assertThat(settings.paybillAccountFor(null, "0720000111", "SO-1", "R")).isEmpty();
+        assertThat(settings.paybillAccountFor(null, "0720000111", "SO-1", "R")).isEqualTo("SO-1");
     }
 
     @Test
@@ -100,6 +107,24 @@ class BankPaymentSettingsTest {
 
         assertThat(preview.accountNumber()).isEqualTo("01100123#YOUR PAYMENT REFERENCE");
         assertThat(preview.finalValue()).isFalse();
+    }
+
+    @Test
+    void aNameWithNoLatinLettersFallsBackToTheOrderNumberRatherThanAnEmptyAccount() {
+        var settings = settingsWithEnvTemplate("<name>");
+
+        assertThat(settings.paybillAccountFor("李小龍", "0720000111", "SO-20260928-000123", "K7M2QX"))
+                .isEqualTo("SO-20260928-000123");
+        assertThat(settings.paybillAccountFor("Njeri Test", "0720000111", "SO-20260928-000123", "K7M2QX"))
+                .as("an ordinary name is untouched").isEqualTo("NJERI TEST");
+    }
+
+    @Test
+    void theFallbackUsesTheReferenceIfThereIsNoOrderNumber() {
+        assertThat(BankPaymentSettings.orderNumberIfBlank("", null, "K7M2QX")).isEqualTo("K7M2QX");
+        assertThat(BankPaymentSettings.orderNumberIfBlank("", "  ", "K7M2QX")).isEqualTo("K7M2QX");
+        assertThat(BankPaymentSettings.orderNumberIfBlank("", null, null)).isEmpty();
+        assertThat(BankPaymentSettings.orderNumberIfBlank("01100123#", "SO-1", "K7")).isEqualTo("01100123#");
     }
 
     @Test

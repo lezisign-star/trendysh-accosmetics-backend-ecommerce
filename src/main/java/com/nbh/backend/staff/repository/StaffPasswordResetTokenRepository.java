@@ -14,4 +14,12 @@ public interface StaffPasswordResetTokenRepository extends JpaRepository<StaffPa
 
     /** The most recent link for a staff member — used to rate-limit re-sends. */
     Optional<StaffPasswordResetToken> findFirstByStaffIdOrderByCreatedAtDesc(UUID staffId);
+
+    /**
+     * The same row, LOCKED, for checking a guess at a code: unlocked, guesses made at the same moment
+     * each read the same {@code attempts} and overwrite one another's increment, so the five-guess limit
+     * would not actually limit parallel guessing — on an account that can administer the whole shop.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    Optional<StaffPasswordResetToken> findTopByStaffIdOrderByCreatedAtDesc(UUID staffId);
 }

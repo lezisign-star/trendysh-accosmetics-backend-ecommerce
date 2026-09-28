@@ -47,6 +47,7 @@ class LatePaymentAndExpiryIntegrationTest {
     @Autowired private StockReservationService reservationService;
     @Autowired private StockBalanceRepository balanceRepository;
     @Autowired private OrderExpirySweeper orderExpirySweeper;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private String staffToken;
 
@@ -127,11 +128,17 @@ class LatePaymentAndExpiryIntegrationTest {
                 .toList();
     }
 
-    /** What the expiry sweeper does when the payment window ends. */
+    /**
+     * What the expiry sweeper does when the payment window ends: the hold's expiry has passed, then it is
+     * expired. (Expiring a hold whose expiry has NOT passed is refused — it may have been paid or extended.)
+     */
     private void lapseTheHold(Placed placed) {
         holdsOf(placed).stream()
                 .filter(r -> r.getStatus() == StockReservation.ReservationStatus.ACTIVE)
-                .forEach(r -> reservationService.expire(r.getId()));
+                .forEach(r -> {
+                    jdbc.update("UPDATE stock_reservation SET expires_at = now() - interval '1 minute' WHERE id = ?", r.getId());
+                    reservationService.expire(r.getId());
+                });
     }
 
     private String orderStatus(Placed placed) throws Exception {
@@ -228,6 +235,54 @@ class LatePaymentAndExpiryIntegrationTest {
 
         MvcResult allowed = checkout(item, 1, phone, TestContacts.email());
         assertThat(allowed.getResponse().getStatus()).as(allowed.getResponse().getContentAsString()).isEqualTo(200);
+    }
+
+    /**
+     * The first sweep after a deploy moves every historical unpaid order to EXPIRED in one go, so the
+     * awaiting queue must age an expired order from when its PAYMENT WINDOW ended, not from when the order
+     * row was last written — otherwise every one of them lands back on the queue for a month.
+     */
+    @Test
+    void theAwaitingQueueAgesAnExpiredOrderFromItsPaymentWindowNotFromTheSweep() throws Exception {
+        Item item = newPublishedVariantWithStock(5);
+        Placed placed = place(item, 1);
+        lapseTheHold(placed);
+        orderExpirySweeper.sweepUnpaidOrders();
+        assertThat(orderStatus(placed)).isEqualTo("EXPIRED");
+
+        jdbc.update("UPDATE payment_record SET expires_at = now() - interval '60 days' WHERE id = ?", UUID.fromString(placed.paymentId()));
+        assertThat(awaitingOrderNos()).as("expired two months ago").doesNotContain(placed.orderNo());
+
+        jdbc.update("UPDATE payment_record SET expires_at = now() - interval '1 hour' WHERE id = ?", UUID.fromString(placed.paymentId()));
+        assertThat(awaitingOrderNos()).as("expired an hour ago").contains(placed.orderNo());
+    }
+
+    private List<String> awaitingOrderNos() throws Exception {
+        JsonNode queue = okStaff(get("/api/v1/admin/payments/awaiting"));
+        List<String> orderNos = new java.util.ArrayList<>();
+        queue.forEach(entry -> orderNos.add(entry.get("orderNo").asText()));
+        return orderNos;
+    }
+
+    /**
+     * The sweeper lists lapsed holds and then expires them one at a time. A hold paid for in between
+     * (its expiry cleared) must survive the sweeper's late arrival, or the paid order loses its stock.
+     */
+    @Test
+    void aHoldPaidForAfterTheSweeperListedItIsNotExpiredFromUnderTheOrder() throws Exception {
+        Item item = newPublishedVariantWithStock(5);
+        Placed placed = place(item, 2);
+        StockReservation hold = holdsOf(placed).get(0);
+        jdbc.update("UPDATE stock_reservation SET expires_at = now() - interval '1 minute' WHERE id = ?", hold.getId());
+
+        assertThat(confirm(placed).getResponse().getStatus()).isEqualTo(200); // paid while the hold is still ACTIVE
+        reservationService.expire(hold.getId()); // ...and only now does the sweeper reach it
+
+        assertThat(orderStatus(placed)).isEqualTo("PAID");
+        assertThat(reservationRepository.findById(hold.getId()).orElseThrow().getStatus())
+                .isEqualTo(StockReservation.ReservationStatus.ACTIVE);
+        assertThat(balanceRepository.findByVariantIdAndAccount(UUID.fromString(item.variantId()), StockAccount.SHOP)
+                .orElseThrow().getReservedQty()).isEqualByComparingTo("2");
     }
 
     @Test

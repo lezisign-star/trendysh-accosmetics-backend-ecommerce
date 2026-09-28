@@ -64,6 +64,10 @@ class PaymentServiceUnitTest {
         payment.setMethod(PaymentRecord.PaymentMethod.MPESA);
         payment.setAmount(new BigDecimal("500.00"));
         payment.setStatus(status);
+        // The service locks the payment's order too (payment, then order, then stock): a scalar lookup of
+        // its id, then the locking read.
+        lenient().when(paymentRecordRepository.findOrderIdById(payment.getId())).thenReturn(Optional.of(order.getId()));
+        lenient().when(orderRepository.lockById(order.getId())).thenReturn(Optional.of(order));
         return payment;
     }
 

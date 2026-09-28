@@ -131,6 +131,46 @@ class StockDocumentReversalIntegrationTest {
                 () -> postingService.reverse(original.getId(), null, UUID.randomUUID()));
     }
 
+    /**
+     * Two staff pressing "reverse" on the same document at the same moment: each would see "not yet
+     * reversed", each post the undoing movement, and the stock would go out twice. The document is
+     * locked while it is reversed, so exactly one wins and the other is told it was already reversed.
+     */
+    @Test
+    void reversingTheSameDocumentAtTheSameMomentTakesTheStockOutOnlyOnce() throws Exception {
+        StockDocument original = receive(new BigDecimal("10"), new BigDecimal("100.00"));
+        receive(new BigDecimal("10"), new BigDecimal("100.00")); // enough on hand that a second reversal WOULD succeed
+
+        int attempts = 6;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(attempts);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        List<java.util.concurrent.Future<Boolean>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < attempts; i++) {
+            results.add(pool.submit(() -> {
+                go.await();
+                try {
+                    postingService.reverse(original.getId(), null, UUID.randomUUID());
+                    return true;
+                } catch (UnprocessableException alreadyReversed) {
+                    return false;
+                }
+            }));
+        }
+        go.countDown();
+        int succeeded = 0;
+        for (java.util.concurrent.Future<Boolean> result : results) {
+            if (result.get()) {
+                succeeded++;
+            }
+        }
+        pool.shutdown();
+
+        assertEquals(1, succeeded, "only one reversal may post");
+        BigDecimal onHand = balanceRepository.findByVariantIdAndAccount(variant.getId(), StockAccount.SHOP)
+                .orElseThrow().getOnHandQty();
+        assertEquals(0, onHand.compareTo(new BigDecimal("10")), "20 received - 10 reversed once = 10, not 0 or less");
+    }
+
     @Test
     void reversingASaleIsRejectedSalesMustGoThroughAReturn() {
         receive(BigDecimal.TEN, new BigDecimal("100.00"));

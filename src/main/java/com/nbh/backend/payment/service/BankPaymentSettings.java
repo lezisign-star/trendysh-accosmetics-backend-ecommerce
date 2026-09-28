@@ -81,7 +81,24 @@ public class BankPaymentSettings {
      * than leaving a literal "&lt;name&gt;" for a customer to type.
      */
     public String paybillAccountFor(String customerName, String phone, String orderNo, String reference) {
-        return resolve(paybillAccountTemplate(), customerName, phone, orderNo, reference);
+        return orderNumberIfBlank(resolve(paybillAccountTemplate(), customerName, phone, orderNo, reference),
+                orderNo, reference);
+    }
+
+    /**
+     * A customer must never be told to type an empty account number. A name written entirely in a
+     * non-Latin script has nothing left after {@link #accountSafeName} strips it to what a paybill
+     * accepts, so the template can come out blank; the order number (or, failing that, the payment
+     * reference) is then the account.
+     */
+    static String orderNumberIfBlank(String resolved, String orderNo, String reference) {
+        if (!resolved.isBlank()) {
+            return resolved;
+        }
+        if (orderNo != null && !orderNo.isBlank()) {
+            return orderNo;
+        }
+        return reference == null ? "" : reference;
     }
 
     /**
