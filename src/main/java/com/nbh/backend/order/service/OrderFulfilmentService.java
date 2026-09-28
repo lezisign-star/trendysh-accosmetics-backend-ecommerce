@@ -6,8 +6,11 @@ import com.nbh.backend.common.event.OrderFulfilledEvent;
 import com.nbh.backend.common.event.OrderPickingStartedEvent;
 import com.nbh.backend.common.event.OrderReadyEvent;
 import com.nbh.backend.common.exception.UnprocessableException;
+import com.nbh.backend.common.util.PhoneNumbers;
+import com.nbh.backend.order.dto.AssignTransporterRequest;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
+import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.stock.entity.StockAccount;
@@ -105,6 +108,33 @@ public class OrderFulfilmentService {
         this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * Records who was actually assigned to carry a DELIVERY_COURIER order and what
+     * was agreed on the phone (V35) — settable any time before dispatch, and
+     * re-settable (a rider falling through and a replacement being called is a real
+     * scenario) right up until {@link #fulfil} runs. {@link #fulfil} refuses to move
+     * a courier order to DISPATCHED without this, which is the whole point: before
+     * this existed, the call happened but nothing about it was ever recorded.
+     */
+    @Transactional
+    public CustomerOrder assignTransporter(java.util.UUID orderId, AssignTransporterRequest request) {
+        CustomerOrder order = orderRepository.lockById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+        if (order.getFulfilmentType() != FulfilmentType.DELIVERY_COURIER) {
+            throw new UnprocessableException(
+                    "Order " + order.getOrderNo() + " is a pickup order — there is no transporter to assign");
+        }
+        if (!DISPATCHABLE_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException(
+                    "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot assign a transporter");
+        }
+
+        order.setTransporterName(request.transporterName().trim());
+        order.setTransporterPhone(PhoneNumbers.normalize(request.transporterPhone()));
+        order.setAgreedDeliveryPrice(request.agreedPrice());
+        return orderRepository.save(order);
+    }
+
     @Transactional
     public CustomerOrder fulfil(java.util.UUID orderId, java.util.UUID staffUserId) {
         // Phase 0 fix (2026-09-27), D2 — see CustomerOrderRepository.lockById's javadoc.
@@ -113,6 +143,10 @@ public class OrderFulfilmentService {
         if (!DISPATCHABLE_STATUSES.contains(order.getStatus())) {
             throw new UnprocessableException(
                     "Order " + order.getOrderNo() + " is " + order.getStatus() + " — cannot fulfil it");
+        }
+        if (order.getFulfilmentType() == FulfilmentType.DELIVERY_COURIER && order.getTransporterName() == null) {
+            throw new UnprocessableException(
+                    "Assign a rider, matatu or courier for " + order.getOrderNo() + " before marking it dispatched");
         }
 
         StockDocument document = new StockDocument();

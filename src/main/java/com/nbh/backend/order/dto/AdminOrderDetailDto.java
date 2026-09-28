@@ -32,6 +32,9 @@ public record AdminOrderDetailDto(
         BigDecimal grandTotal,
         Instant createdAt,
         Instant placedAt,
+        String transporterName,
+        String transporterPhone,
+        BigDecimal agreedDeliveryPrice,
         List<Line> items,
         List<Payment> payments
 ) {
@@ -57,6 +60,7 @@ public record AdminOrderDetailDto(
                 o.getDeliveryMethod(), o.getCustomerName(), o.getGuestEmail(), o.getGuestPhone(), o.getDeliveryAddress(),
                 o.getSubtotal(), o.getVatTotal(), o.getDeliveryFee(), o.getGrandTotal(),
                 o.getCreatedAt(), o.getPlacedAt(),
+                o.getTransporterName(), o.getTransporterPhone(), o.getAgreedDeliveryPrice(),
                 o.getItems().stream().map(Line::from).toList(),
                 payments.stream().map(Payment::from).toList());
     }

@@ -2,6 +2,7 @@ package com.nbh.backend.order.controller;
 
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.dto.AdminOrderDetailDto;
+import com.nbh.backend.order.dto.AssignTransporterRequest;
 import com.nbh.backend.order.dto.OrderDto;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.order.dto.OrderSummaryDto;
@@ -11,6 +12,7 @@ import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.order.service.OrderFulfilmentService;
 import com.nbh.backend.staff.entity.StaffUser;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -74,6 +76,14 @@ public class OrderController {
         CustomerOrder order = orderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + id));
         return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id));
+    }
+
+    /** Who's actually carrying a DELIVERY_COURIER order, and the price agreed by phone. See {@code OrderFulfilmentService.assignTransporter}. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/assign-transporter")
+    @Transactional
+    public OrderDto assignTransporter(@PathVariable java.util.UUID id, @Valid @RequestBody AssignTransporterRequest request) {
+        return OrderDto.from(fulfilmentService.assignTransporter(id, request));
     }
 
     /**

@@ -16,7 +16,10 @@ public record OrderDto(
         BigDecimal deliveryFee,
         BigDecimal grandTotal,
         List<OrderItemDto> items,
-        java.time.Instant createdAt
+        java.time.Instant createdAt,
+        String transporterName,
+        String transporterPhone,
+        BigDecimal agreedDeliveryPrice
 ) {
     public static OrderDto from(CustomerOrder order) {
         return new OrderDto(
@@ -24,6 +27,7 @@ public record OrderDto(
                 order.getSubtotal(), order.getVatTotal(),
                 order.getDeliveryFee(), order.getGrandTotal(),
                 order.getItems().stream().map(OrderItemDto::from).toList(),
-                order.getCreatedAt());
+                order.getCreatedAt(),
+                order.getTransporterName(), order.getTransporterPhone(), order.getAgreedDeliveryPrice());
     }
 }

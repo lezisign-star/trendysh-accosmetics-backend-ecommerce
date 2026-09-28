@@ -72,6 +72,16 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "placed_at")
     private Instant placedAt;
 
+    /** Who was actually assigned to carry a DELIVERY_COURIER order, and what they and the customer agreed on the phone (V35). Null until {@code OrderFulfilmentService.assignTransporter} runs; always null for PICKUP. */
+    @Column(name = "transporter_name", length = 200)
+    private String transporterName;
+
+    @Column(name = "transporter_phone", length = 20)
+    private String transporterPhone;
+
+    @Column(name = "agreed_delivery_price", precision = 14, scale = 2)
+    private BigDecimal agreedDeliveryPrice;
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<CustomerOrderItem> items = new ArrayList<>();
 }
