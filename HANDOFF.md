@@ -1,5 +1,52 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-09-27/28 — inventory redesign Phases 0-2, checkout fixes, guest tracking, Paybill settings, TumaBoda API (V29-V38)
+
+Built 2026-09-27/28; 401 tests on a fresh DB in a clean checkout of the pushed commit (one known-flaky test, see below), and two
+independent Opus audits of the range (the first found a boot-blocking migration; both sets of findings are fixed, see "Lessons").
+`main` auto-deploys to Railway. Migrations V29-V38 are all new to production; read `MigrationUpgradePathTest` before adding another.
+
+- **Inventory redesign (Odoo/ERPNext-grounded), Phases 0-2 done:** `@Version` + deterministic lock order on stock rows,
+  read-path ArchUnit rule (no `@Query` outside `stock` may touch StockBalance/StockReservation/StockLedgerEntry), movement history,
+  Holds browse, document reversal (`StockPostingService.reverse`, locked), structured write-offs, stock counts. Phase 3 (valuation)
+  is next; it touches `applyMovement` and must land before customer returns.
+- **Checkout:** delivery methods BODA/MATATU/COURIER, transporter assignment (V35; courier orders can't be dispatched without one),
+  late payment after the hold lapsed re-takes the stock or refuses with a clear message, unpaid orders now EXPIRE
+  (`OrderExpirySweeper`), per-contact open-order cap (3), cart quantity checks.
+- **Guest order lookup:** an order number alone gives the status only; an email gets an emailed 6-digit code (hashed, single use,
+  5 guesses, guesses are counted under a row lock) then a 30-minute `X-Track-Token` session (V36).
+- **Paybill:** number, merchant name and the account-number template (`<name> <phone> <order> <ref>`, default `<name>`) are admin
+  settings (V37); staff confirm from Orders or Payments (both update the same payment). A blank account falls back to the order number.
+- **TumaBoda through the partner API (V38), OFF until `app.tumaboda.api-key` is set** (env `APP_TUMABODA_API_KEY`;
+  `APP_TUMABODA_BASE_URL` defaults to TumaBoda's SANDBOX, production is `https://api.tumaboda.co.ke/api`;
+  `APP_TUMABODA_WEBHOOK_SECRET`). Checkout quotes the drop-off server-side and adds the fee to the total; a rider is booked when
+  staff mark the order READY (after commit, own executor, retried 3/10/30/60 min, then handed to staff); the signed webhook
+  (`POST /api/v1/tumaboda/webhook`, header `X-Tuma-Signature: t=..,v1=..`, HMAC-SHA256 over `t.rawBody`) and a reconciliation poll
+  move the order (rider collects = DISPATCHED, delivered = DELIVERED). **Never run against real TumaBoda:** request/response shapes
+  come from Moments' working integration and are tested only against a local fake (`FakeTumaBodaServer`). Trendysh needs its own
+  partner account (key, webhook secret, pickup location registered on their side). Package size/vehicle is a placeholder heuristic
+  on basket value (5,000 = large, 20,000 = van; `app.tumaboda.*-threshold-kes`). Public endpoints: `/api/v1/public/tumaboda/{status,maps/*,quote}`.
+- **Lessons (2026-09-28 audit):** V33 would have aborted Flyway on any database holding a VEHICLE order (empty-DB tests can't see it);
+  fixed, and `MigrationUpgradePathTest` now migrates a scratch schema to V28, seeds legacy-shaped rows, then applies the rest.
+  One-time codes (lookup, shopper reset, staff reset) count guesses under a `PESSIMISTIC_WRITE` lock; a payment confirmed or failed
+  late locks payment, then order, then stock; the reservation sweeper re-checks expiry under the lock; emails go through
+  `emailTaskExecutor` (sync in tests via `app.email.sync-send`).
+- **Second audit fixes:** the public TumaBoda webhook reads no body without a configured secret and a signature and refuses more than
+  64 KB (413); a customer's "I've paid" claim locks the payment row first, like `confirmSuccess` (a test fails without it); at most
+  4 TumaBoda price checks run at once (each holds a DB connection while it waits; the rest get a retryable BUSY) and the fee is rounded
+  UP to a whole shilling (M-PESA takes no cents); `spring.task.scheduling.pool.size: 4` (Boot's default is ONE thread for every
+  `@Scheduled` job); the email pool is 4 threads (a pool only grows past core once its queue is full); marking an API delivery READY
+  leaves a 3-minute safety-net retry so a booking lost between commit and call is picked up by the retry job.
+- **Rate-limit key:** the TumaBoda public endpoints key their limits on the LAST `X-Forwarded-For` hop (the one Railway's proxy adds).
+  Confirm Railway really appends the client address there, and remember shoppers behind one carrier NAT share a key.
+- **Known flaky test:** `MerchandisingIntegrationTest.popularAndNewArrivalFlagsRoundTripThroughSaveAndTheCatalogueFilter` fails with a
+  409 "Someone else changed this product" in roughly half of full runs and passes alone. It is the whole-second `updatedAt` staleness
+  check in `ProductService.saveProduct` and likely a real spurious-409 for staff on their first save after creating a product.
+- **Deploy order:** backend first, then the frontend `staging` branch straight away (the new frontend needs the new endpoints; the old
+  frontend breaks on the new backend for vehicle checkout, the track page and courier dispatch).
+- **First expiry sweep after deploy** marks every historical unpaid order EXPIRED; the awaiting-payment queue ages them from the
+  payment window, so they do not flood it.
+
 ## Inventory redesign Phase 3f — the old attribute/option editor and single-category pair are gone from the code (2026-09-25, later same day)
 
 The Java-side half of the cleanup V27's own comments already promised ("removed in Phase 3f once
