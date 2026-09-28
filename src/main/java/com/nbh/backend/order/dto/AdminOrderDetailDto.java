@@ -8,7 +8,9 @@ import com.nbh.backend.payment.entity.PaymentRecord;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * What staff need to actually process an order — customer contact, delivery
@@ -62,12 +64,19 @@ public record AdminOrderDetailDto(
         }
     }
 
+    /**
+     * {@code components} is non-empty only for a kit's own summary line (one level deep — a kit
+     * can't contain another kit, see {@code KitService}). Each entry is a real constituent with its
+     * own reservation, shown here purely for staff visibility; it's never counted again anywhere —
+     * the parent line's own {@code lineTotal} (the package price) is what the order subtotal used.
+     */
     public record Line(UUID variantId, String sku, String productName, String variantName,
-                       BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal) {
-        static Line from(CustomerOrderItem i) {
+                       BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal, List<Line> components) {
+        static Line from(CustomerOrderItem i, List<CustomerOrderItem> children) {
             return new Line(i.getVariant().getId(), i.getVariant().getSku(),
                     i.getVariant().getProduct().getName(), i.getVariant().getVariantName(),
-                    i.getQty(), i.getUnitPrice(), i.getLineTotal());
+                    i.getQty(), i.getUnitPrice(), i.getLineTotal(),
+                    children.stream().map(c -> Line.from(c, List.of())).toList());
         }
     }
 
@@ -79,6 +88,13 @@ public record AdminOrderDetailDto(
     }
 
     public static AdminOrderDetailDto from(CustomerOrder o, List<PaymentRecord> payments) {
+        Map<CustomerOrderItem, List<CustomerOrderItem>> childrenByParent = o.getItems().stream()
+                .filter(i -> i.getParentItem() != null)
+                .collect(Collectors.groupingBy(CustomerOrderItem::getParentItem));
+        List<Line> lines = o.getItems().stream()
+                .filter(i -> i.getParentItem() == null)
+                .map(i -> Line.from(i, childrenByParent.getOrDefault(i, List.of())))
+                .toList();
         return new AdminOrderDetailDto(
                 o.getId(), o.getOrderNo(), o.getStatus(), o.getFulfilmentType().name(),
                 o.getDeliveryMethod(), o.getCustomerName(), o.getGuestEmail(), o.getGuestPhone(), o.getDeliveryAddress(),
@@ -86,7 +102,7 @@ public record AdminOrderDetailDto(
                 o.getCreatedAt(), o.getPlacedAt(),
                 o.getTransporterName(), o.getTransporterPhone(), o.getAgreedDeliveryPrice(),
                 Tumaboda.from(o),
-                o.getItems().stream().map(Line::from).toList(),
+                lines,
                 payments.stream().map(Payment::from).toList());
     }
 }

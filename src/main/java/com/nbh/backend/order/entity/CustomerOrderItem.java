@@ -56,4 +56,16 @@ public class CustomerOrderItem {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reservation_id")
     private StockReservation reservation;
+
+    /**
+     * Null for a normal line, and null for a kit's own summary line (variant = the kit's stockless
+     * variant, priced at the package price, {@code reservation = null}). Set only on a kit's real
+     * constituent lines, each pointing back at that summary line — those are what carry the genuine
+     * {@link #reservation} and post real stock movements; the order subtotal is only ever summed
+     * from parentless lines, so a component's price is never double-counted. See
+     * {@code CheckoutService}'s reservation/assembly loop and {@code KitService}'s javadoc.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_item_id")
+    private CustomerOrderItem parentItem;
 }

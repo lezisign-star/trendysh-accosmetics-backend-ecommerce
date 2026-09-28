@@ -157,7 +157,7 @@ public class CatalogService {
                 v.getId(), p.getId(), p.getSlug(), p.getName(), variantName, displayName,
                 imageByVariant.get(v.getId()), categoryIds, categoryIds.isEmpty() ? null : categoryIds.get(0),
                 price.effectivePrice(), price.originalPrice(), price.onDeal(), price.dealEndsAt(),
-                availableByVariant.getOrDefault(v.getId(), BigDecimal.ZERO).signum() > 0,
+                v.isKit() || availableByVariant.getOrDefault(v.getId(), BigDecimal.ZERO).signum() > 0,
                 p.isPopular(), p.isNewArrival(),
                 rating != null ? rating.getAvgRating() : 0.0, rating != null ? rating.getReviewCount() : 0L,
                 soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO), (int) Math.max(0, sellableCount - 1));

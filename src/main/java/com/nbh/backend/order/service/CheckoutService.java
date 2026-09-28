@@ -4,11 +4,13 @@ import com.nbh.backend.cart.entity.Cart;
 import com.nbh.backend.cart.entity.CartItem;
 import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
+import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.common.event.OrderPlacedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.TooManyRequestsException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.common.util.PhoneNumbers;
+import com.nbh.backend.kits.service.KitService;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.FulfilmentType;
@@ -76,6 +78,7 @@ public class CheckoutService {
     private final BankPaymentSettings paymentSettings;
     private final int maxOpenOrdersPerContact;
     private final TumaBodaQuoteService quoteService;
+    private final KitService kitService;
 
     public CheckoutService(CartRepository cartRepository,
                             CartItemRepository cartItemRepository,
@@ -89,9 +92,11 @@ public class CheckoutService {
                             BankPaymentSettings paymentSettings,
                             @org.springframework.beans.factory.annotation.Value(
                                     "${app.checkout.max-open-orders-per-contact:3}") int maxOpenOrdersPerContact,
-                            TumaBodaQuoteService quoteService) {
+                            TumaBodaQuoteService quoteService,
+                            KitService kitService) {
         this.maxOpenOrdersPerContact = maxOpenOrdersPerContact;
         this.quoteService = quoteService;
+        this.kitService = kitService;
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.orderRepository = orderRepository;
@@ -135,15 +140,6 @@ public class CheckoutService {
                     + " before placing another.");
         }
 
-        // Phase 0 fix (2026-09-27), D1: reserve in a deterministic order (variant id ASC) —
-        // the same order StockPostingService.post already locks its balance rows in. Without
-        // this, two concurrent checkouts (or a checkout racing a dispatch) that touch the same
-        // two SKUs in opposite orders can deadlock in Postgres, which surfaces to a customer as
-        // a raw 500 instead of either request simply waiting its turn.
-        cartItems = cartItems.stream()
-                .sorted(java.util.Comparator.comparing(ci -> ci.getVariant().getId()))
-                .toList();
-
         // A TumaBoda delivery booked through the API is quoted HERE, before the order exists and before
         // any stock is locked: it is a network call to TumaBoda, and no stock-balance row may be held
         // while it runs. The fee comes from the server's own quote, never from the request.
@@ -180,25 +176,61 @@ public class CheckoutService {
                 ? paymentSettings.paymentWindow()
                 : java.time.Duration.ofMinutes(MPESA_RESERVATION_TTL_MINUTES));
 
+        // Phase 0 fix (2026-09-27), D1, extended for kits: reserve in a deterministic order (the
+        // REAL variant id ASC) — the same order StockPostingService.post already locks its balance
+        // rows in. A kit line expands into one reservation target per real component here, so this
+        // sorts by the variant actually reserved rather than the cart line's own (stockless) kit
+        // variant — without it, two concurrent checkouts that touch the same underlying SKUs
+        // (directly, or buried inside different kits) in opposite orders could still deadlock in
+        // Postgres, which is exactly what the original fix was for.
+        record ReservationTarget(CartItem cartItem, ProductVariant variant, BigDecimal qty, boolean isKitComponent) {}
+        List<ReservationTarget> targets = new java.util.ArrayList<>();
         for (CartItem cartItem : cartItems) {
-            // Reserving here — not at add-to-cart — is the exact "hold starts at
-            // checkout" decision. If this throws (insufficient availability), the
-            // whole @Transactional method rolls back, including the order row
-            // saved above — nothing is left half-created.
+            List<KitService.KitComponentLine> components = kitService.componentsForVariant(cartItem.getVariant().getId());
+            if (components.isEmpty()) {
+                targets.add(new ReservationTarget(cartItem, cartItem.getVariant(), cartItem.getQty(), false));
+            } else {
+                for (KitService.KitComponentLine component : components) {
+                    targets.add(new ReservationTarget(cartItem, component.variant(),
+                            component.qtyPerKit().multiply(cartItem.getQty()), true));
+                }
+            }
+        }
+        targets.sort(java.util.Comparator.comparing(t -> t.variant().getId()));
+
+        // Reserving here — not at add-to-cart — is the exact "hold starts at checkout" decision.
+        // If any target throws (insufficient availability), the whole @Transactional method rolls
+        // back, including the order row saved above — nothing is left half-created.
+        record ReservedComponent(ProductVariant variant, BigDecimal qty, StockReservation reservation) {}
+        java.util.Map<CartItem, StockReservation> reservationByCartItem = new java.util.LinkedHashMap<>();
+        java.util.Map<CartItem, List<ReservedComponent>> componentsByCartItem = new java.util.LinkedHashMap<>();
+        for (ReservationTarget target : targets) {
             StockReservation reservation;
             try {
                 reservation = reservationService.reserve(
-                        cartItem.getVariant(), cartItem.getQty(),
+                        target.variant(), target.qty(),
                         StockReservation.ReservationSource.ONLINE_CART,
                         "CUSTOMER_ORDER", order.getId(), expiresAt);
             } catch (InsufficientAvailabilityException e) {
+                // Named after the cart item's own product even when the shortfall is actually on
+                // one of its kit components — the customer never added that component SKU directly
+                // and shouldn't need to know it exists.
+                CartItem cartItem = target.cartItem();
                 throw new InsufficientAvailabilityException(
                         cartItem.getVariant().getProduct().getName()
                                 + (cartItem.getVariant().getVariantName().equalsIgnoreCase("Default")
                                         ? "" : " (" + cartItem.getVariant().getVariantName() + ")")
                                 + " just went out of stock — please update your basket");
             }
+            if (target.isKitComponent()) {
+                componentsByCartItem.computeIfAbsent(target.cartItem(), k -> new java.util.ArrayList<>())
+                        .add(new ReservedComponent(target.variant(), target.qty(), reservation));
+            } else {
+                reservationByCartItem.put(target.cartItem(), reservation);
+            }
+        }
 
+        for (CartItem cartItem : cartItems) {
             CustomerOrderItem orderItem = new CustomerOrderItem();
             orderItem.setOrder(order);
             orderItem.setVariant(cartItem.getVariant());
@@ -206,8 +238,27 @@ public class CheckoutService {
             orderItem.setUnitPrice(cartItem.getUnitPriceSnapshot());
             orderItem.setVatRate(cartItem.getVariant().getVatRate());
             orderItem.setLineTotal(cartItem.getLineTotal());
-            orderItem.setReservation(reservation);
+            // Null for a kit — its own SKU holds no stock, so it gets no reservation; see the
+            // child component lines added below, each with its own genuine reservation.
+            orderItem.setReservation(reservationByCartItem.get(cartItem));
             order.getItems().add(orderItem);
+
+            for (ReservedComponent component : componentsByCartItem.getOrDefault(cartItem, List.of())) {
+                BigDecimal unitPrice = component.variant().getSellingPrice() == null
+                        ? BigDecimal.ZERO : component.variant().getSellingPrice();
+                CustomerOrderItem componentItem = new CustomerOrderItem();
+                componentItem.setOrder(order);
+                componentItem.setVariant(component.variant());
+                componentItem.setQty(component.qty());
+                componentItem.setUnitPrice(unitPrice);
+                componentItem.setVatRate(component.variant().getVatRate());
+                componentItem.setLineTotal(unitPrice.multiply(component.qty()));
+                componentItem.setReservation(component.reservation());
+                // Informational only — never summed into subtotal/vatTotal below, which is still
+                // computed strictly once per cart item, exactly as before kits existed.
+                componentItem.setParentItem(orderItem);
+                order.getItems().add(componentItem);
+            }
 
             subtotal = subtotal.add(cartItem.getLineTotal());
             if (!cartItem.getVariant().isVatExempt()) {

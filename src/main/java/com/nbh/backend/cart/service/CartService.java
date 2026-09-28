@@ -183,6 +183,11 @@ public class CartService {
     private static final BigDecimal LOW_STOCK_THRESHOLD = new BigDecimal("5");
 
     private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty) {
+        if (variant.isKit()) {
+            // A kit holds no StockBalance of its own — the real stock lives on its components, and
+            // real availability is enforced at checkout by reserving each of those instead.
+            return;
+        }
         BigDecimal available = availabilityService.available(variant.getId());
         if (available.compareTo(requestedQty) >= 0) {
             return;

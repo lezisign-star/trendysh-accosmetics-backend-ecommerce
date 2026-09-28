@@ -173,6 +173,12 @@ public class OrderFulfilmentService {
         int lineNo = 1;
         java.util.List<CustomerOrderItem> itemsInLineOrder = new java.util.ArrayList<>();
         for (CustomerOrderItem item : order.getItems()) {
+            // A kit's own summary line has no reservation — nothing is physically held under its
+            // stockless SKU, so it posts no stock movement; its real components (each a separate
+            // item with its own reservation) are what actually move stock. See KitService's javadoc.
+            if (item.getReservation() == null) {
+                continue;
+            }
             StockDocumentLine line = new StockDocumentLine();
             line.setDocument(document);
             line.setLineNo(lineNo++);

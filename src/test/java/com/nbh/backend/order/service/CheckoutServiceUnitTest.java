@@ -58,6 +58,7 @@ class CheckoutServiceUnitTest {
     @Mock private OrderNoGenerator orderNoGenerator;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private com.nbh.backend.tumaboda.TumaBodaQuoteService quoteService;
+    @Mock private com.nbh.backend.kits.service.KitService kitService;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
     private CheckoutService checkoutService;
@@ -70,7 +71,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK),
-                MAX_OPEN_ORDERS, quoteService);
+                MAX_OPEN_ORDERS, quoteService, kitService);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -144,7 +145,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
-                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS, quoteService);
+                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS, quoteService, kitService);
         when(cartItemRepository.findByCartId(cart.getId()))
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 

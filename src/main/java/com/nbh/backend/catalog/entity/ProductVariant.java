@@ -92,6 +92,16 @@ public class ProductVariant extends BaseEntity {
     @Column(nullable = false)
     private boolean deleted = false;
 
+    /**
+     * True for the one variant that represents an admin-curated {@code Kit} — see that package's
+     * javadoc. A kit variant holds no {@code StockBalance} of its own (the real stock lives on its
+     * components), so both {@code CatalogService.toCard} and {@code CartService}'s courtesy
+     * availability check bypass their normal stock lookup for it; checkout enforces the real
+     * availability by reserving each component instead.
+     */
+    @Column(name = "is_kit", nullable = false)
+    private boolean isKit = false;
+
     /** Not deleted, not hidden, and has a price — the one definition of "can appear/be sold" everywhere. */
     public boolean isSellable() {
         return !deleted && isActive && sellingPrice != null;
