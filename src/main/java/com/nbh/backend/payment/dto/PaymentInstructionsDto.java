@@ -23,7 +23,8 @@ public record PaymentInstructionsDto(
         /** True once the customer has said "I've paid" and staff have not yet checked it. */
         boolean underReview
 ) {
-    public record Paybill(String paybillNumber, String accountNumber) {}
+    /** {@code merchantName} is what the customer's phone shows for this paybill (empty when not set). */
+    public record Paybill(String paybillNumber, String accountNumber, String merchantName) {}
 
     public record BankTransfer(String bankName, String accountName, String accountNumber, String branch,
                                String reference) {}

@@ -34,17 +34,20 @@ public class AdminPaymentService {
     private final PaymentClaimRepository claimRepository;
     private final PaymentClaimService claimService;
     private final BankCreditService creditService;
+    private final BankPaymentSettings paymentSettings;
     private final Clock clock;
 
     public AdminPaymentService(PaymentRecordRepository paymentRecordRepository,
                                 PaymentClaimRepository claimRepository,
                                 PaymentClaimService claimService,
                                 BankCreditService creditService,
+                                BankPaymentSettings paymentSettings,
                                 Clock clock) {
         this.paymentRecordRepository = paymentRecordRepository;
         this.claimRepository = claimRepository;
         this.claimService = claimService;
         this.creditService = creditService;
+        this.paymentSettings = paymentSettings;
         this.clock = clock;
     }
 
@@ -54,8 +57,15 @@ public class AdminPaymentService {
         for (PaymentClaim c : claimRepository.findByStatusOrderByCreatedAtAsc(PaymentClaim.ClaimStatus.PENDING)) {
             underReview.add(c.getPayment().getId());
         }
+        boolean paybillConfigured = !paymentSettings.paybillNumber().isBlank();
         return paymentRecordRepository.findAwaitingBankPayments(Instant.now(clock).minus(EXPIRED_ORDER_VISIBILITY)).stream()
-                .map(p -> AwaitingPaymentDto.from(p, underReview.contains(p.getId())))
+                .map(p -> {
+                    var o = p.getOrder();
+                    String expected = paybillConfigured
+                            ? paymentSettings.paybillAccountFor(o.getCustomerName(), o.getGuestPhone(), o.getOrderNo(), p.getPaymentReference())
+                            : "";
+                    return AwaitingPaymentDto.from(p, underReview.contains(p.getId()), expected);
+                })
                 .toList();
     }
 

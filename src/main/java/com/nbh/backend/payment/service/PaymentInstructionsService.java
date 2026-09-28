@@ -60,7 +60,9 @@ public class PaymentInstructionsService {
         String reference = payment.getPaymentReference();
 
         PaymentInstructionsDto.Paybill paybill = settings.paybillNumber().isBlank() ? null
-                : new PaymentInstructionsDto.Paybill(settings.paybillNumber(), settings.paybillAccountFor(reference));
+                : new PaymentInstructionsDto.Paybill(settings.paybillNumber(),
+                        settings.paybillAccountFor(order.getCustomerName(), order.getGuestPhone(), order.getOrderNo(), reference),
+                        settings.paybillMerchantName());
         PaymentInstructionsDto.BankTransfer transfer = settings.accountNumber().isBlank() ? null
                 : new PaymentInstructionsDto.BankTransfer(settings.bankName(), settings.accountName(),
                         settings.accountNumber(), settings.accountBranch(), reference);

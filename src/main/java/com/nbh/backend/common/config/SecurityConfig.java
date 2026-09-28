@@ -74,6 +74,8 @@ public class SecurityConfig {
                     "/api/v1/payments/mpesa/callback/**",
                     // Customer's bank pay page: authorised by order number + payment reference.
                     "/api/v1/payments/pay/**",
+                    // The paybill details the checkout's payment step previews before an order exists.
+                    "/api/v1/payments/paybill-info",
                     // Co-op Bank deposit notifications: authenticated inside the controller (shared Basic credential).
                     "/api/v1/payments/coop/ins",
                     // Public storefront browse/search/reviews — read-only, only

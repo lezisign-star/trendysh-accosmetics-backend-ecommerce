@@ -75,9 +75,11 @@ app:
     # blank account-number hides the bank-transfer tab. Set to the client's real details.
     name: ${BANK_NAME:}
     paybill-number: ${BANK_PAYBILL_NUMBER:}
-    # What the customer types as the paybill "account"; <ref> is replaced by the order's
-    # payment reference, e.g. 01100123456#<ref> when the bank needs a fixed account prefix.
-    paybill-account-template: ${BANK_PAYBILL_ACCOUNT_TEMPLATE:<ref>}
+    # Fallback for what the customer types as the paybill "account" (an admin-set value in
+    # Settings wins). Placeholders: <name> the customer's name, <phone>, <order> the order
+    # number, <ref> the per-order payment reference; e.g. 01100123456#<name> when the bank needs
+    # a fixed account prefix.
+    paybill-account-template: ${BANK_PAYBILL_ACCOUNT_TEMPLATE:<name>}
     account-name: ${BANK_ACCOUNT_NAME:}
     account-number: ${BANK_ACCOUNT_NUMBER:}
     account-branch: ${BANK_ACCOUNT_BRANCH:}

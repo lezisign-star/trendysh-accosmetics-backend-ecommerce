@@ -25,6 +25,14 @@ public class PaymentSettings extends BaseEntity {
     @Column(name = "paybill_number", length = 30)
     private String paybillNumber;
 
+    /** The business name the customer's phone shows before they enter their PIN (V37). */
+    @Column(name = "paybill_merchant_name", length = 200)
+    private String paybillMerchantName;
+
+    /** What to type as the Account Number: placeholders {@code <name> <phone> <order> <ref>}. Null falls back to the env template (V37). */
+    @Column(name = "paybill_account_template", length = 100)
+    private String paybillAccountTemplate;
+
     @Column(name = "account_name", length = 200)
     private String accountName;
 

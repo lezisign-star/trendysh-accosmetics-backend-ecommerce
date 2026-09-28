@@ -18,7 +18,8 @@ public class OrderExpirySweeper {
     }
 
     /** One pass over every unpaid order; a single bad row never stops the rest. Returns how many expired. */
-    @Scheduled(fixedDelayString = "${app.orders.expiry-sweep-interval-ms:60000}")
+    @Scheduled(fixedDelayString = "${app.orders.expiry-sweep-interval-ms:60000}",
+            initialDelayString = "${app.orders.expiry-sweep-initial-delay-ms:30000}")
     public int sweepUnpaidOrders() {
         int expired = 0;
         for (UUID id : expiryService.unpaidOrderIds()) {

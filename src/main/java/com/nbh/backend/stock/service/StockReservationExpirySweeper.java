@@ -41,7 +41,8 @@ public class StockReservationExpirySweeper {
         this.reservationService = reservationService;
     }
 
-    @Scheduled(fixedDelayString = "${app.stock.reservation-sweep-interval-ms:60000}")
+    @Scheduled(fixedDelayString = "${app.stock.reservation-sweep-interval-ms:60000}",
+            initialDelayString = "${app.stock.reservation-sweep-initial-delay-ms:30000}")
     public void sweepExpiredReservations() {
         List<StockReservation> lapsed = reservationRepository
                 .findByStatusAndExpiresAtBefore(StockReservation.ReservationStatus.ACTIVE, Instant.now());

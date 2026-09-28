@@ -14,10 +14,15 @@ public record PaymentSettingsDto(
         @Size(max = 200) String accountName,
         @Size(max = 50) String accountNumber,
         @Size(max = 100) String accountBranch,
-        @Size(max = 30) String supportWhatsapp
+        @Size(max = 30) String supportWhatsapp,
+        /** The business name the customer's phone shows for the paybill, before the PIN. */
+        @Size(max = 200) String paybillMerchantName,
+        /** What the customer types as the paybill account: placeholders {@code <name> <phone> <order> <ref>}. Blank = the environment default. */
+        @Size(max = 100) String paybillAccountTemplate
 ) {
     public static PaymentSettingsDto from(PaymentSettings s) {
         return new PaymentSettingsDto(s.getBankName(), s.getPaybillNumber(), s.getAccountName(),
-                s.getAccountNumber(), s.getAccountBranch(), s.getSupportWhatsapp());
+                s.getAccountNumber(), s.getAccountBranch(), s.getSupportWhatsapp(),
+                s.getPaybillMerchantName(), s.getPaybillAccountTemplate());
     }
 }

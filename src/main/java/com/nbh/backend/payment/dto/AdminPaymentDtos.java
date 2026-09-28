@@ -39,17 +39,21 @@ public final class AdminPaymentDtos {
     public record AllocateRequest(@NotBlank String orderNo, @Size(max = 1000) String note) {}
 
     // ---- staff responses
-    /** {@code orderStatus} is PENDING_PAYMENT, or EXPIRED when the hold lapsed (a late payment can still be confirmed). */
+    /**
+     * {@code orderStatus} is PENDING_PAYMENT, or EXPIRED when the hold lapsed (a late payment can still be
+     * confirmed). {@code expectedAccount} is what the customer was told to type as the paybill account
+     * (their name, by default) — what staff look for on the M-PESA statement; empty if no paybill is set up.
+     */
     public record AwaitingPaymentDto(
             UUID paymentId, String orderNo, String customerName, String phone, String email,
             BigDecimal amount, String reference, Instant expiresAt, Instant createdAt, boolean underReview,
-            String orderStatus) {
+            String orderStatus, String expectedAccount) {
 
-        public static AwaitingPaymentDto from(PaymentRecord p, boolean underReview) {
+        public static AwaitingPaymentDto from(PaymentRecord p, boolean underReview, String expectedAccount) {
             var o = p.getOrder();
             return new AwaitingPaymentDto(p.getId(), o.getOrderNo(), o.getCustomerName(), o.getGuestPhone(),
                     o.getGuestEmail(), p.getAmount(), p.getPaymentReference(), p.getExpiresAt(), p.getCreatedAt(),
-                    underReview, o.getStatus().name());
+                    underReview, o.getStatus().name(), expectedAccount);
         }
     }
 

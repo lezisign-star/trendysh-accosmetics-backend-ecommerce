@@ -21,6 +21,13 @@ app:
     # Known value for live/manual testing of the callback endpoint (§4 C1) —
     # never used outside the test profile.
     callback-secret: test-only-callback-secret-not-for-any-real-deployment
+  # Background sweepers are held off for an hour so they cannot fire while a test runs: Hibernate's
+  # statistics (which OrderReadQueryCountTest asserts on) count statements from EVERY thread, so a
+  # sweep landing mid-test made that count flaky. Tests that need a sweep call the sweeper directly.
+  orders:
+    expiry-sweep-initial-delay-ms: 3600000
+  stock:
+    reservation-sweep-initial-delay-ms: 3600000
 
 logging:
   level:

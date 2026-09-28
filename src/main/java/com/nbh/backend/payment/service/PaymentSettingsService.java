@@ -23,9 +23,16 @@ public class PaymentSettingsService {
 
     @Transactional
     public PaymentSettingsDto update(PaymentSettingsDto request) {
+        String template = blankToNull(request.paybillAccountTemplate());
+        if (template != null) {
+            // A typo like <nmae> would otherwise reach customers verbatim as the account number to type.
+            BankPaymentSettings.requireKnownPlaceholders(template);
+        }
         PaymentSettings settings = current();
         settings.setBankName(blankToNull(request.bankName()));
         settings.setPaybillNumber(blankToNull(request.paybillNumber()));
+        settings.setPaybillMerchantName(blankToNull(request.paybillMerchantName()));
+        settings.setPaybillAccountTemplate(template);
         settings.setAccountName(blankToNull(request.accountName()));
         settings.setAccountNumber(blankToNull(request.accountNumber()));
         settings.setAccountBranch(blankToNull(request.accountBranch()));
