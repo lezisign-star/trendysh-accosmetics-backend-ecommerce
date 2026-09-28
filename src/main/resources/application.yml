@@ -25,6 +25,14 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  task:
+    scheduling:
+      pool:
+        # Boot's default is ONE scheduler thread shared by every @Scheduled job (stock-hold and order
+        # expiry, guest-tracking cleanup, TumaBoda retry and reconciliation, ...). A TumaBoda poll that is
+        # waiting out a slow network call must not hold the expiry sweeps back behind it.
+        size: 4
+
 app:
   jwt:
     # DEV DEFAULT ONLY — override with a real random secret via JWT_SECRET before

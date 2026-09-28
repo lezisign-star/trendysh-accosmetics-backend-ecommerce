@@ -187,6 +187,47 @@ class OrderFulfilmentServiceUnitTest {
     }
 
     @Test
+    void markingATumabodaApiDeliveryReadyLeavesASafetyNetRetryForTheRiderBooking() {
+        when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        CustomerOrder order = orderWithStatus(OrderStatus.PAID, List.of());
+        order.setDropoffLat(new java.math.BigDecimal("-1.2864"));
+        order.setDropoffLng(new java.math.BigDecimal("36.8172"));
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
+
+        java.time.Instant before = java.time.Instant.now();
+        CustomerOrder result = fulfilmentService.markReady(ORDER_ID);
+
+        assertThat(result.getTumabodaNextRetryAt())
+                .as("if the booking that follows the commit never runs, the retry job books it a few minutes on")
+                .isBetween(before.plus(OrderFulfilmentService.TUMABODA_BOOKING_SAFETY_NET),
+                        java.time.Instant.now().plus(OrderFulfilmentService.TUMABODA_BOOKING_SAFETY_NET));
+    }
+
+    @Test
+    void markingAnOrderReadyThatTumabodaAlreadyHasARiderForLeavesNoRetry() {
+        when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        CustomerOrder order = orderWithStatus(OrderStatus.PAID, List.of());
+        order.setDropoffLat(new java.math.BigDecimal("-1.2864"));
+        order.setDropoffLng(new java.math.BigDecimal("36.8172"));
+        order.setTumabodaDeliveryId("d-1");
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
+
+        assertThat(fulfilmentService.markReady(ORDER_ID).getTumabodaNextRetryAt()).isNull();
+    }
+
+    @Test
+    void markingAPhoneArrangedOrderReadyLeavesNoRetry() {
+        when(orderRepository.save(any(CustomerOrder.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        CustomerOrder order = orderWithStatus(OrderStatus.PAID, List.of());
+        when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));
+
+        assertThat(fulfilmentService.markReady(ORDER_ID).getTumabodaNextRetryAt()).isNull();
+    }
+
+    @Test
     void markingReadyFromDispatchedThrows() {
         CustomerOrder order = orderWithStatus(OrderStatus.DISPATCHED, List.of());
         when(orderRepository.lockById(ORDER_ID)).thenReturn(Optional.of(order));

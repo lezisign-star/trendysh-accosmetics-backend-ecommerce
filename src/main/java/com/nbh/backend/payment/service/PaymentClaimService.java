@@ -62,12 +62,18 @@ public class PaymentClaimService {
     public PaymentClaim submit(String orderNo, String reference, String transactionCode, BigDecimal amount,
                                LocalDate paidOn, String payerName) {
         String normalised = referenceGenerator.normaliseAndValidate(reference);
-        PaymentRecord payment = normalised == null ? null
-                : paymentRecordRepository.findByPaymentReference(normalised)
-                        .filter(p -> p.getOrder().getOrderNo().equals(orderNo)).orElse(null);
-        if (payment == null) {
+        UUID paymentId = normalised == null ? null
+                : paymentRecordRepository.findIdByReferenceAndOrderNo(normalised, orderNo).orElse(null);
+        if (paymentId == null) {
             throw new NotFoundException("No payment found for that order and reference");
         }
+        // The payment row is locked FIRST, before anything else is touched, because confirmSuccess takes
+        // its locks payment, then order, then stock: extending the stock holds below while another
+        // transaction confirms this same payment would otherwise be two transactions each holding what the
+        // other needs next. It also makes two simultaneous claims on one payment take turns, so the pending
+        // cap and the "first claim" test below see each other.
+        PaymentRecord payment = paymentRecordRepository.lockById(paymentId)
+                .orElseThrow(() -> new NotFoundException("No payment found for that order and reference"));
         if (payment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS) {
             throw new ConflictException("This order has already been paid");
         }

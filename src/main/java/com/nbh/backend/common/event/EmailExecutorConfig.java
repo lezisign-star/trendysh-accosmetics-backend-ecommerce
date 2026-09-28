@@ -26,7 +26,9 @@ public class EmailExecutorConfig {
         }
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("email-");
-        executor.setCorePoolSize(2);
+        // Core equals max on purpose: a pool only grows past its core size once the queue is FULL, so with
+        // room for 500 queued emails a "2 to 4" pool would never have used more than two threads.
+        executor.setCorePoolSize(4);
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(500);
         // A deploy should not throw away emails that are already queued.

@@ -54,6 +54,14 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Query("select o from CustomerOrder o where o.id = :id")
     Optional<CustomerOrder> lockById(@Param("id") UUID id);
 
+    /**
+     * An order's id from its number without loading the order. For callers that go on to lock the order:
+     * loading it first would put a copy in the persistence context, and the lock that follows would hand
+     * back that copy instead of what another transaction just committed.
+     */
+    @Query("select o.id from CustomerOrder o where o.orderNo = :orderNo")
+    Optional<UUID> findIdByOrderNo(@Param("orderNo") String orderNo);
+
     /** Guest tracking by order number alone: the status and nothing else, so no entity is loaded. */
     @Query("select o.status from CustomerOrder o where o.orderNo = :orderNo")
     Optional<OrderStatus> findStatusByOrderNo(@Param("orderNo") String orderNo);

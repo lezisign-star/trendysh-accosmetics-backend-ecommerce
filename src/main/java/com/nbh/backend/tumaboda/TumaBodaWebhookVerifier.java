@@ -33,6 +33,11 @@ public class TumaBodaWebhookVerifier {
         this.clock = clock;
     }
 
+    /** False while no webhook secret is set: every webhook is then refused, so there is no point reading one. */
+    public boolean configured() {
+        return !config.webhookSecret().isBlank();
+    }
+
     public boolean verify(String header, byte[] body) {
         String secret = config.webhookSecret();
         if (secret.isBlank() || header == null || header.isBlank() || body == null) {

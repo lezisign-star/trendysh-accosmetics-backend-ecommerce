@@ -87,6 +87,9 @@ public class OrderFulfilmentService {
     private static final Set<OrderStatus> CANCELLABLE_STATUSES =
             EnumSet.of(OrderStatus.PENDING_PAYMENT, OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY);
 
+    /** How long after an order is marked ready the TumaBoda retry job steps in if the rider booking that should follow never ran. */
+    static final java.time.Duration TUMABODA_BOOKING_SAFETY_NET = java.time.Duration.ofMinutes(3);
+
     private final CustomerOrderRepository orderRepository;
     private final StockAvailabilityService availabilityService;
     private final StockPostingService postingService;
@@ -241,6 +244,12 @@ public class OrderFulfilmentService {
         }
 
         order.setStatus(OrderStatus.READY);
+        if (order.isTumabodaApiDelivery() && order.getTumabodaDeliveryId() == null) {
+            // The rider is booked right after this commits, and a booking that goes through clears this
+            // again. It is only here so that a booking that never ran (the server restarting in between)
+            // is found by the retry job a few minutes on instead of the order waiting for staff to notice.
+            order.setTumabodaNextRetryAt(java.time.Instant.now().plus(TUMABODA_BOOKING_SAFETY_NET));
+        }
         order = orderRepository.save(order);
 
         eventPublisher.publishEvent(

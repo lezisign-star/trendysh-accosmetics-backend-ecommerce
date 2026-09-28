@@ -2,14 +2,15 @@ package com.nbh.backend.tumaboda;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.util.Locale;
 import java.util.Map;
 
@@ -31,6 +32,9 @@ import java.util.Map;
 @RequestMapping("/api/v1/tumaboda/webhook")
 public class TumaBodaWebhookController {
 
+    /** A real webhook is a few hundred bytes; this leaves room for growth without letting a stranger fill memory. */
+    static final int MAX_BODY_BYTES = 64 * 1024;
+
     private final TumaBodaWebhookVerifier verifier;
     private final TumaBodaStatusService statuses;
     private final ObjectMapper objectMapper;
@@ -45,7 +49,21 @@ public class TumaBodaWebhookController {
     @PostMapping
     public ResponseEntity<Map<String, String>> receive(
             @RequestHeader(value = "X-Tuma-Signature", required = false) String signature,
-            @RequestBody byte[] body) {
+            HttpServletRequest request) throws IOException {
+        // The endpoint is public, so nothing is read for a request that cannot possibly be TumaBoda's: with
+        // no secret configured (the default while the integration is off) or no signature at all, the body
+        // is never touched. A signed body is tiny; anything past the cap is refused without being buffered.
+        if (!verifier.configured() || signature == null || signature.isBlank()) {
+            log.warn("TumaBoda webhook rejected: missing or invalid signature");
+            return ResponseEntity.status(401).body(Map.of("error", "invalid signature"));
+        }
+        if (request.getContentLengthLong() > MAX_BODY_BYTES) {
+            return tooLarge();
+        }
+        byte[] body = request.getInputStream().readNBytes(MAX_BODY_BYTES + 1);
+        if (body.length > MAX_BODY_BYTES) {
+            return tooLarge();
+        }
         if (!verifier.verify(signature, body)) {
             log.warn("TumaBoda webhook rejected: missing or invalid signature");
             return ResponseEntity.status(401).body(Map.of("error", "invalid signature"));
@@ -63,6 +81,11 @@ public class TumaBodaWebhookController {
             log.error("TumaBoda webhook accepted but could not be processed: {}", e.getMessage());
         }
         return ResponseEntity.ok(Map.of("received", "true"));
+    }
+
+    private static ResponseEntity<Map<String, String>> tooLarge() {
+        log.warn("TumaBoda webhook rejected: body larger than {} bytes", MAX_BODY_BYTES);
+        return ResponseEntity.status(413).body(Map.of("error", "body too large"));
     }
 
     private static String statusFromEventName(String type) {

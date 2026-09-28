@@ -88,8 +88,10 @@ public class BankCreditService {
     @Transactional
     public BankCredit allocate(UUID creditId, String orderNo, String staffEmail, String note) {
         BankCredit credit = lockUnmatched(creditId);
-        UUID orderId = orderRepository.findByOrderNo(orderNo.trim())
-                .orElseThrow(() -> new NotFoundException("No such order: " + orderNo)).getId();
+        // The id only, never the order: confirming the payment locks the order, and a copy loaded here
+        // would be what that lock returns, however much the order changed in the meantime.
+        UUID orderId = orderRepository.findIdByOrderNo(orderNo.trim())
+                .orElseThrow(() -> new NotFoundException("No such order: " + orderNo));
         PaymentRecord payment = paymentRecordRepository.findByOrderId(orderId).stream()
                 .filter(p -> p.getMethod() == PaymentRecord.PaymentMethod.BANK)
                 .filter(p -> p.getStatus() == PaymentRecord.PaymentStatus.INITIATED

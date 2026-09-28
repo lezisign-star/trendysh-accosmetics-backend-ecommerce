@@ -64,4 +64,12 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
      */
     @Query("select p.order.id from PaymentRecord p where p.id = :id")
     Optional<UUID> findOrderIdById(@org.springframework.data.repository.query.Param("id") UUID id);
+
+    /**
+     * The id of the payment carrying this reference on this order, without loading it, so the caller's
+     * {@link #lockById} is the first real read of the row and sees what other transactions committed.
+     */
+    @Query("select p.id from PaymentRecord p where p.paymentReference = :reference and p.order.orderNo = :orderNo")
+    Optional<UUID> findIdByReferenceAndOrderNo(@org.springframework.data.repository.query.Param("reference") String reference,
+                                               @org.springframework.data.repository.query.Param("orderNo") String orderNo);
 }
