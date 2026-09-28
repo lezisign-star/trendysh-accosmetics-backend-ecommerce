@@ -11,6 +11,9 @@ import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -24,19 +27,25 @@ import java.util.UUID;
 @Service
 public class AdminPaymentService {
 
+    /** How long an expired order stays in the awaiting queue, in case its customer pays late. */
+    private static final Duration EXPIRED_ORDER_VISIBILITY = Duration.ofDays(30);
+
     private final PaymentRecordRepository paymentRecordRepository;
     private final PaymentClaimRepository claimRepository;
     private final PaymentClaimService claimService;
     private final BankCreditService creditService;
+    private final Clock clock;
 
     public AdminPaymentService(PaymentRecordRepository paymentRecordRepository,
                                 PaymentClaimRepository claimRepository,
                                 PaymentClaimService claimService,
-                                BankCreditService creditService) {
+                                BankCreditService creditService,
+                                Clock clock) {
         this.paymentRecordRepository = paymentRecordRepository;
         this.claimRepository = claimRepository;
         this.claimService = claimService;
         this.creditService = creditService;
+        this.clock = clock;
     }
 
     @Transactional(readOnly = true)
@@ -45,7 +54,7 @@ public class AdminPaymentService {
         for (PaymentClaim c : claimRepository.findByStatusOrderByCreatedAtAsc(PaymentClaim.ClaimStatus.PENDING)) {
             underReview.add(c.getPayment().getId());
         }
-        return paymentRecordRepository.findAwaitingBankPayments().stream()
+        return paymentRecordRepository.findAwaitingBankPayments(Instant.now(clock).minus(EXPIRED_ORDER_VISIBILITY)).stream()
                 .map(p -> AwaitingPaymentDto.from(p, underReview.contains(p.getId())))
                 .toList();
     }

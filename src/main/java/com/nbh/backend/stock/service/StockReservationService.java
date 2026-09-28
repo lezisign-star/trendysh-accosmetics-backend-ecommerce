@@ -1,5 +1,6 @@
 package com.nbh.backend.stock.service;
 
+import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
@@ -107,6 +108,16 @@ public class StockReservationService {
         return reservationRepository.save(reservation);
     }
 
+    /**
+     * True if any of these reservations is still ACTIVE. Lets the order package ask whether an
+     * unpaid order still holds stock without reading stock tables itself (the read-path rule).
+     */
+    @Transactional(readOnly = true)
+    public boolean anyActive(java.util.Collection<UUID> reservationIds) {
+        return !reservationIds.isEmpty()
+                && reservationRepository.existsByIdInAndStatus(reservationIds, StockReservation.ReservationStatus.ACTIVE);
+    }
+
     /** Phase 1 (2026-09-27): the staff-facing "Holds" list — see the repository query's javadoc. */
     @Transactional(readOnly = true)
     public Page<StockReservation> browse(StockReservation.ReservationStatus status, Pageable pageable) {
@@ -171,20 +182,57 @@ public class StockReservationService {
      * lock is needed, only the reservation row's own lock to avoid racing the
      * sweeper (which could otherwise expire it in the same instant payment
      * confirms).
+     *
+     * <p><b>Late payments (2026-09-28):</b> with payment confirmed by hand from a Paybill
+     * statement, a customer can pay inside the window and staff can confirm hours later —
+     * after the sweeper has already EXPIRED the hold and returned the stock. That used to
+     * throw, leaving staff unable to mark an order paid for money already received. A lapsed
+     * (EXPIRED) hold is now re-taken from current availability instead; only if the stock has
+     * genuinely gone does this fail, with a message staff can act on. The caller must use the
+     * RETURNED reservation, which is a new row when the old one had lapsed. A hold that was
+     * released (order cancelled) or fulfilled is still refused.
+     *
+     * <p>Lock order is balance row then reservation, as in {@link #terminate}: this can end in
+     * {@link #reserve}, and taking them the other way round could deadlock a concurrent
+     * release of the same hold.
      */
     @Transactional
-    public void confirmForOrder(UUID reservationId) {
+    public StockReservation confirmForOrder(UUID reservationId) {
         // §4 C7: a referenced entity missing is a 404, not a 400.
+        UUID variantId = reservationRepository.findVariantIdById(reservationId)
+                .orElseThrow(() -> new NotFoundException("No such reservation: " + reservationId));
+        balanceRepository.lockByVariantIdAndAccount(variantId, StockAccount.SHOP)
+                .orElseThrow(() -> new NotFoundException("No stock balance for reservation " + reservationId));
+
         StockReservation reservation = reservationRepository.lockById(reservationId)
                 .orElseThrow(() -> new NotFoundException("No such reservation: " + reservationId));
-        if (reservation.getStatus() != StockReservation.ReservationStatus.ACTIVE) {
-            throw new IllegalStateException(
-                    "Reservation " + reservationId + " is " + reservation.getStatus()
-                            + ", not ACTIVE — cannot confirm it for an order (it may have expired)");
+
+        return switch (reservation.getStatus()) {
+            case ACTIVE -> {
+                reservation.setSource(StockReservation.ReservationSource.ONLINE_ORDER);
+                reservation.setExpiresAt(null);
+                yield reservationRepository.save(reservation);
+            }
+            case EXPIRED -> retakeLapsedHold(reservation);
+            default -> throw new ConflictException(
+                    "This order's stock hold was " + reservation.getStatus().name().toLowerCase()
+                            + " (the order was cancelled or already dispatched), so it can't be marked paid."
+                            + " If the customer paid, refund them.");
+        };
+    }
+
+    private StockReservation retakeLapsedHold(StockReservation lapsed) {
+        ProductVariant variant = lapsed.getVariant();
+        try {
+            return reserve(variant, lapsed.getQty(), StockReservation.ReservationSource.ONLINE_ORDER,
+                    lapsed.getReferenceType(), lapsed.getReferenceId(), null);
+        } catch (InsufficientAvailabilityException e) {
+            String product = variant.getProduct().getName()
+                    + (variant.getVariantName().equalsIgnoreCase("Default") ? "" : " (" + variant.getVariantName() + ")");
+            throw new InsufficientAvailabilityException(
+                    "This payment can't be applied: the hold on " + product + " expired and the stock has since"
+                            + " gone. Restock it and confirm again, or refund the customer and mark the payment failed.");
         }
-        reservation.setSource(StockReservation.ReservationSource.ONLINE_ORDER);
-        reservation.setExpiresAt(null);
-        reservationRepository.save(reservation);
     }
 
     /**

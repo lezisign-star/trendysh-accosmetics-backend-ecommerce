@@ -85,9 +85,9 @@ class AssignTransporterIntegrationTest {
         String deliveryFields = deliveryMethod == null ? ""
                 : ",\"deliveryAddress\":\"Kilimani, Nairobi\",\"deliveryMethod\":\"" + deliveryMethod + "\"";
         String checkoutBody = """
-                {"customerName":"Test Customer","guestEmail":"transporter-test@example.com",
-                 "guestPhone":"0720000111","fulfilmentType":"%s"%s}
-                """.formatted(fulfilmentType, deliveryFields);
+                {"customerName":"Test Customer","guestEmail":"%s",
+                 "guestPhone":"%s","fulfilmentType":"%s"%s}
+                """.formatted(TestContacts.email(), TestContacts.phone(), fulfilmentType, deliveryFields);
         MvcResult checkoutResult = mvc.perform(post("/api/v1/checkout")
                         .header("X-Cart-Session", sessionId)
                         .contentType(MediaType.APPLICATION_JSON)

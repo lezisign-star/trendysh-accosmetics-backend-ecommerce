@@ -68,7 +68,8 @@ class CheckoutServiceUnitTest {
     void setUp() {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
-                orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK));
+                orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK),
+                MAX_OPEN_ORDERS);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -90,6 +91,29 @@ class CheckoutServiceUnitTest {
     }
 
     private static final BankPaymentSettings.CollectionMode BANK = BankPaymentSettings.CollectionMode.BANK;
+    private static final int MAX_OPEN_ORDERS = 3;
+
+    @Test
+    void aContactAlreadyAtTheOpenOrderLimitCannotHoldMoreStock() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        when(orderRepository.countByStatusForContact(any(), any(), any())).thenReturn((long) MAX_OPEN_ORDERS);
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
+                .isInstanceOf(com.nbh.backend.common.exception.TooManyRequestsException.class)
+                .hasMessageContaining("3 orders waiting for payment");
+        verify(reservationService, never()).reserve(any(), any(), any(), any(), any(), any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void oneOrderUnderTheLimitStillChecksOut() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        when(orderRepository.countByStatusForContact(any(), any(), any())).thenReturn((long) MAX_OPEN_ORDERS - 1);
+
+        assertThat(checkoutService.checkout(SESSION_ID, request()).order().getOrderNo()).isEqualTo("SO-TEST-000001");
+    }
 
     // Checkout only ever reads mode()/paymentWindow() from this, never the bank-detail accessors,
     // so the settings repository doesn't need a real row backing it for these tests.
@@ -119,7 +143,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
-                bankSettings(BankPaymentSettings.CollectionMode.MPESA));
+                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS);
         when(cartItemRepository.findByCartId(cart.getId()))
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 

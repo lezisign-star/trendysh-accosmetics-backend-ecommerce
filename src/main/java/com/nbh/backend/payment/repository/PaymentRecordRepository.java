@@ -24,12 +24,21 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
      */
     Optional<PaymentRecord> findByProviderReference(String providerReference);
 
-    /** Staff "awaiting payment" queue: bank orders not yet paid, oldest first (order fetched, no N+1). */
+    /**
+     * Staff "awaiting payment" queue: bank orders not yet paid, oldest first (order fetched, no N+1).
+     * Includes orders that EXPIRED within the last window ({@code expiredSince}) — a customer can still
+     * pay after the hold lapses, and staff need to find that order to confirm it — but not cancelled or
+     * failed ones, which can never be marked paid, nor months-old expired ones.
+     */
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"order"})
     @Query("select p from PaymentRecord p where p.paymentReference is not null "
             + "and p.status in (com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.INITIATED, "
-            + "com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.PENDING) order by p.createdAt asc")
-    List<PaymentRecord> findAwaitingBankPayments();
+            + "com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.PENDING) "
+            + "and (p.order.status = com.nbh.backend.order.entity.OrderStatus.PENDING_PAYMENT "
+            + "or (p.order.status = com.nbh.backend.order.entity.OrderStatus.EXPIRED "
+            + "and p.order.updatedAt >= :expiredSince)) "
+            + "order by p.createdAt asc")
+    List<PaymentRecord> findAwaitingBankPayments(@org.springframework.data.repository.query.Param("expiredSince") java.time.Instant expiredSince);
 
     /** Bank collection: the customer-quoted reference (V19), backed by a unique index. */
     Optional<PaymentRecord> findByPaymentReference(String paymentReference);

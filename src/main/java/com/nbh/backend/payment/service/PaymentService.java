@@ -2,6 +2,7 @@ package com.nbh.backend.payment.service;
 
 import com.nbh.backend.common.event.PaymentConfirmedEvent;
 import com.nbh.backend.common.event.PaymentFailedEvent;
+import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.OrderStatus;
@@ -16,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -74,6 +77,12 @@ public class PaymentService {
                     + " — cannot confirm success from this state");
         }
 
+        CustomerOrder order = payment.getOrder();
+        if (order.getStatus() == OrderStatus.CANCELLED) {
+            throw new ConflictException("Order " + order.getOrderNo() + " was cancelled, so it can't be marked paid."
+                    + " If the customer paid, refund them.");
+        }
+
         payment.setStatus(PaymentRecord.PaymentStatus.SUCCESS);
         if (actualMethod != null) {
             payment.setMethod(actualMethod);
@@ -82,13 +91,17 @@ public class PaymentService {
         payment.setRawResponse(rawResponse);
         paymentRecordRepository.save(payment);
 
-        CustomerOrder order = payment.getOrder();
-        // Every reservation moves from the 15-minute cart hold to a permanent
-        // order hold — see StockReservationService.confirmForOrder's javadoc.
-        for (CustomerOrderItem item : order.getItems()) {
-            if (item.getReservation() != null) {
-                reservationService.confirmForOrder(item.getReservation().getId());
-            }
+        // Every reservation moves from the time-limited checkout hold to a permanent order hold
+        // — see StockReservationService.confirmForOrder's javadoc, which also covers a hold that
+        // lapsed before staff confirmed (it is re-taken, so the item may point at a NEW row).
+        // Variant-id order matches checkout and StockPostingService, so two orders being
+        // confirmed at once cannot take the same stock balances in opposite orders.
+        List<CustomerOrderItem> heldItems = order.getItems().stream()
+                .filter(item -> item.getReservation() != null)
+                .sorted(Comparator.comparing(item -> item.getVariant().getId()))
+                .toList();
+        for (CustomerOrderItem item : heldItems) {
+            item.setReservation(reservationService.confirmForOrder(item.getReservation().getId()));
         }
         order.setStatus(OrderStatus.PAID);
         order.setPlacedAt(Instant.now(clock));

@@ -54,6 +54,22 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Query("select o from CustomerOrder o where o.id = :id")
     Optional<CustomerOrder> lockById(@Param("id") UUID id);
 
+    /** Ids only — feeds {@code OrderExpiryService}, which then locks and re-checks each order itself. */
+    @Query("select o.id from CustomerOrder o where o.status = :status")
+    List<UUID> findIdsByStatus(@Param("status") OrderStatus status);
+
+    /**
+     * Orders this person already has waiting for payment, matched on phone OR email — the cap
+     * on how many stock holds one contact can have open at once (see CheckoutService).
+     */
+    @Query("""
+            select count(o) from CustomerOrder o
+            where o.status = :status
+              and (o.guestPhone = :phone or lower(o.guestEmail) = lower(:email))
+            """)
+    long countByStatusForContact(@Param("status") OrderStatus status,
+                                 @Param("phone") String phone, @Param("email") String email);
+
     /**
      * Staff order-browse list — one query, no N+1 (F12 pattern): {@code
      * SIZE(o.items)} is a correlated-count subquery, not a fetch of the

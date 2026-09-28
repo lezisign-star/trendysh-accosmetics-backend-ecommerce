@@ -1,6 +1,7 @@
 package com.nbh.backend.payment.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.payment.dto.MpesaCallbackRequest;
 import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
@@ -174,6 +175,12 @@ public class PaymentController {
             // a staff manual-fail). Not an error Safaricom should retry over — log
             // and acknowledge, exactly like the idempotent early-return above.
             log.warn("M-Pesa callback for payment {} could not be applied: {}", payment.getId(), e.getMessage());
+        } catch (ConflictException e) {
+            // Money arrived but the order can't take it (its stock hold lapsed and the stock has
+            // gone, or the order was cancelled). Retrying won't change that, so acknowledge — but
+            // loudly: a customer has paid for something staff now have to resolve by hand.
+            log.error("M-Pesa callback for payment {} was paid but could not be applied — needs staff: {}",
+                    payment.getId(), e.getMessage());
         }
         return accepted();
     }

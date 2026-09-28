@@ -69,8 +69,6 @@ public class CartService {
                 .orElseThrow(() -> new EntityNotFoundException("No product variant: " + variantId));
         requireSellable(variant);
 
-        checkCourtesyAvailability(variant, qty);
-
         CartItem item = cartItemRepository.findByCartIdAndVariantId(cart.getId(), variantId)
                 .orElseGet(() -> {
                     CartItem newItem = new CartItem();
@@ -79,6 +77,9 @@ public class CartService {
                     newItem.setQty(BigDecimal.ZERO);
                     return newItem;
                 });
+        // The whole line, not just this click: with 3 in stock and 2 already in the basket,
+        // adding 2 more used to pass because each add was compared to stock on its own.
+        checkCourtesyAvailability(variant, item.getQty().add(qty));
         item.setQty(item.getQty().add(qty));
         // The real, server-computed price — a variant's own deal, else an active site-wide campaign, else
         // the plain selling price (see EffectivePriceResolver). This snapshot is what checkout later
@@ -155,12 +156,29 @@ public class CartService {
         }
     }
 
+    /**
+     * What a shopper is told when the basket line asks for more than is in stock. The exact stock
+     * figure is only shown when it is low (Odoo's website_sale_stock does the same with its
+     * available_threshold, default 5) — anything higher tells a competitor how deep the shelf is,
+     * and the old message also printed the internal SKU.
+     */
+    private static final BigDecimal LOW_STOCK_THRESHOLD = new BigDecimal("5");
+
     private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty) {
         BigDecimal available = availabilityService.available(variant.getId());
-        if (available.compareTo(requestedQty) < 0) {
-            throw new IllegalArgumentException(
-                    "Only " + available + " of " + variant.getSku() + " is currently available");
+        if (available.compareTo(requestedQty) >= 0) {
+            return;
         }
+        String name = variant.getProduct().getName()
+                + (variant.getVariantName().equalsIgnoreCase("Default") ? "" : " (" + variant.getVariantName() + ")");
+        if (available.signum() <= 0) {
+            throw new IllegalArgumentException(name + " is out of stock");
+        }
+        if (available.compareTo(LOW_STOCK_THRESHOLD) <= 0) {
+            throw new IllegalArgumentException(
+                    "Only " + available.stripTrailingZeros().toPlainString() + " of " + name + " left");
+        }
+        throw new IllegalArgumentException("That quantity of " + name + " isn't available right now");
     }
 
     private CartDto toDto(Cart cart) {

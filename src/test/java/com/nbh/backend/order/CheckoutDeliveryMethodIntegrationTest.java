@@ -83,10 +83,10 @@ class CheckoutDeliveryMethodIntegrationTest {
 
     private MvcResult checkout(String sessionId, String deliveryMethod) throws Exception {
         String body = """
-                {"customerName":"Test Customer","guestEmail":"delivery-method-test@example.com",
-                 "guestPhone":"0720000111","fulfilmentType":"DELIVERY_COURIER",
+                {"customerName":"Test Customer","guestEmail":"%s",
+                 "guestPhone":"%s","fulfilmentType":"DELIVERY_COURIER",
                  "deliveryAddress":"Kilimani, Nairobi","deliveryMethod":"%s"}
-                """.formatted(deliveryMethod);
+                """.formatted(TestContacts.email(), TestContacts.phone(), deliveryMethod);
         return mvc.perform(post("/api/v1/checkout")
                         .header("X-Cart-Session", sessionId)
                         .contentType(MediaType.APPLICATION_JSON)

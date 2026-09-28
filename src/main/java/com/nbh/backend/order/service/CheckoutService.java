@@ -6,6 +6,7 @@ import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.common.event.OrderPlacedEvent;
 import com.nbh.backend.common.exception.ConflictException;
+import com.nbh.backend.common.exception.TooManyRequestsException;
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
@@ -70,6 +71,7 @@ public class CheckoutService {
     private final ApplicationEventPublisher eventPublisher;
     private final PaymentReferenceGenerator referenceGenerator;
     private final BankPaymentSettings paymentSettings;
+    private final int maxOpenOrdersPerContact;
 
     public CheckoutService(CartRepository cartRepository,
                             CartItemRepository cartItemRepository,
@@ -80,7 +82,10 @@ public class CheckoutService {
                             Clock clock,
                             ApplicationEventPublisher eventPublisher,
                             PaymentReferenceGenerator referenceGenerator,
-                            BankPaymentSettings paymentSettings) {
+                            BankPaymentSettings paymentSettings,
+                            @org.springframework.beans.factory.annotation.Value(
+                                    "${app.checkout.max-open-orders-per-contact:3}") int maxOpenOrdersPerContact) {
+        this.maxOpenOrdersPerContact = maxOpenOrdersPerContact;
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.orderRepository = orderRepository;
@@ -111,6 +116,19 @@ public class CheckoutService {
         if (cartItems.isEmpty()) {
             throw new IllegalStateException("Cannot check out an empty cart");
         }
+        // Every checkout holds stock for the whole payment window, and the public endpoint has no
+        // login, so without a limit one person could tie up the shelf with orders they never pay
+        // for. Counting by phone OR email means changing just one of them doesn't get round it;
+        // OrderExpiryService is what frees a slot again once a hold lapses.
+        String contactPhone = PhoneNumbers.normalize(request.guestPhone());
+        long open = orderRepository.countByStatusForContact(
+                OrderStatus.PENDING_PAYMENT, contactPhone, request.guestEmail());
+        if (open >= maxOpenOrdersPerContact) {
+            throw new TooManyRequestsException("You already have " + open
+                    + " orders waiting for payment. Please pay for one of them, or wait for it to expire,"
+                    + " before placing another.");
+        }
+
         // Phase 0 fix (2026-09-27), D1: reserve in a deterministic order (variant id ASC) —
         // the same order StockPostingService.post already locks its balance rows in. Without
         // this, two concurrent checkouts (or a checkout racing a dispatch) that touch the same
@@ -125,7 +143,7 @@ public class CheckoutService {
         order.setCustomerAccount(customer);
         order.setCustomerName(request.customerName().trim());
         order.setGuestEmail(request.guestEmail());
-        order.setGuestPhone(PhoneNumbers.normalize(request.guestPhone()));
+        order.setGuestPhone(contactPhone);
         order.setFulfilmentType(request.fulfilmentType());
         order.setDeliveryAddress(request.deliveryAddress());
         // Pickup has no courier leg, so a stray method on a pickup order is dropped, not stored.

@@ -81,6 +81,8 @@ public class PaymentClaimService {
                     "We're already checking your payment. Please wait for our confirmation or message us on WhatsApp.");
         }
 
+        boolean firstClaim = claimRepository.countByPaymentId(payment.getId()) == 0;
+
         PaymentClaim claim = new PaymentClaim();
         claim.setPayment(payment);
         claim.setTransactionCode(code);
@@ -89,7 +91,12 @@ public class PaymentClaimService {
         claim.setPayerName(blankToNull(payerName));
         claim = claimRepository.save(claim);
 
-        holdItemsForReview(payment);
+        // Only the first claim buys the extra review time. Every claim used to push the hold out
+        // another 12 hours from now, and staff rejecting one reset the pending count — so a
+        // stream of made-up transaction codes could keep an order's stock held indefinitely.
+        if (firstClaim) {
+            holdItemsForReview(payment);
+        }
         return claim;
     }
 

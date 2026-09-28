@@ -18,6 +18,8 @@ public interface PaymentClaimRepository extends JpaRepository<PaymentClaim, UUID
 
     long countByPaymentIdAndStatus(UUID paymentId, PaymentClaim.ClaimStatus status);
 
+    long countByPaymentId(UUID paymentId);
+
     boolean existsByPaymentIdAndStatus(UUID paymentId, PaymentClaim.ClaimStatus status);
 
     /** Same transaction code twice for one payment is a double-submit, not a second claim. */

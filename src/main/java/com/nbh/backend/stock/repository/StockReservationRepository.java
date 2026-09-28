@@ -97,6 +97,9 @@ public interface StockReservationRepository extends JpaRepository<StockReservati
     List<StockReservation> findByStatusAndExpiresAtBefore(
             StockReservation.ReservationStatus status, java.time.Instant cutoff);
 
+    /** Whether any of these holds is in this status — feeds the unpaid-order expiry sweep. */
+    boolean existsByIdInAndStatus(java.util.Collection<UUID> ids, StockReservation.ReservationStatus status);
+
     /**
      * Phase 1 (2026-09-27): the staff-facing "Holds" browse — every reservation the checkout
      * or a manual hold has ever created, not just the one-at-a-time {@code GET .../{id}} shape

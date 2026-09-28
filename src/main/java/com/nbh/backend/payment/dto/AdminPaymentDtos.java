@@ -39,15 +39,17 @@ public final class AdminPaymentDtos {
     public record AllocateRequest(@NotBlank String orderNo, @Size(max = 1000) String note) {}
 
     // ---- staff responses
+    /** {@code orderStatus} is PENDING_PAYMENT, or EXPIRED when the hold lapsed (a late payment can still be confirmed). */
     public record AwaitingPaymentDto(
             UUID paymentId, String orderNo, String customerName, String phone, String email,
-            BigDecimal amount, String reference, Instant expiresAt, Instant createdAt, boolean underReview) {
+            BigDecimal amount, String reference, Instant expiresAt, Instant createdAt, boolean underReview,
+            String orderStatus) {
 
         public static AwaitingPaymentDto from(PaymentRecord p, boolean underReview) {
             var o = p.getOrder();
             return new AwaitingPaymentDto(p.getId(), o.getOrderNo(), o.getCustomerName(), o.getGuestPhone(),
                     o.getGuestEmail(), p.getAmount(), p.getPaymentReference(), p.getExpiresAt(), p.getCreatedAt(),
-                    underReview);
+                    underReview, o.getStatus().name());
         }
     }
 

@@ -1,5 +1,6 @@
 package com.nbh.backend.payment.service;
 
+import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.OrderStatus;
@@ -74,10 +75,20 @@ class PaymentServiceUnitTest {
         for (StockReservation reservation : reservations) {
             CustomerOrderItem item = new CustomerOrderItem();
             item.setOrder(order);
+            ProductVariant variant = new ProductVariant();
+            variant.setId(UUID.randomUUID());
+            item.setVariant(variant);
             item.setReservation(reservation);
             order.getItems().add(item);
         }
         return order;
+    }
+
+    /** confirmForOrder returns the hold now backing the order line — the same one unless it had lapsed. */
+    private void confirmingKeepsTheSameHold(StockReservation... reservations) {
+        for (StockReservation reservation : reservations) {
+            lenient().when(reservationService.confirmForOrder(reservation.getId())).thenReturn(reservation);
+        }
     }
 
     private StockReservation reservation() {
@@ -90,6 +101,7 @@ class PaymentServiceUnitTest {
     void confirmSuccessFromInitiatedConfirmsEveryReservationAndMarksOrderPaid() {
         StockReservation r1 = reservation();
         StockReservation r2 = reservation();
+        confirmingKeepsTheSameHold(r1, r2);
         CustomerOrder order = orderWithItems(r1, r2);
         PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, order);
         when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
@@ -102,6 +114,40 @@ class PaymentServiceUnitTest {
         assertThat(order.getPlacedAt()).isEqualTo(fixedClock.instant());
         verify(reservationService).confirmForOrder(r1.getId());
         verify(reservationService).confirmForOrder(r2.getId());
+    }
+
+    @Test
+    void aHoldThatLapsedBeforeStaffConfirmedIsReplacedByTheOneTheReservationServiceRetook() {
+        StockReservation lapsed = reservation();
+        StockReservation retaken = reservation();
+        when(reservationService.confirmForOrder(lapsed.getId())).thenReturn(retaken);
+        CustomerOrder order = orderWithItems(lapsed);
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, order);
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        paymentService.confirmSuccess(payment.getId(), "LATE-REF", "{}");
+
+        // The order line must point at the live hold, or dispatch would later try to consume a dead one.
+        assertThat(order.getItems().get(0).getReservation()).isSameAs(retaken);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+    }
+
+    @Test
+    void aCancelledOrderCannotBeMarkedPaidAndNothingIsTouched() {
+        CustomerOrder order = orderWithItems(reservation());
+        order.setOrderNo("SO-CANCELLED-1");
+        order.setStatus(OrderStatus.CANCELLED);
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, order);
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}"))
+                .isInstanceOf(com.nbh.backend.common.exception.ConflictException.class)
+                .hasMessageContaining("SO-CANCELLED-1")
+                .hasMessageContaining("refund");
+
+        verifyNoInteractions(reservationService);
+        assertThat(payment.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.INITIATED);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
     }
 
     @Test

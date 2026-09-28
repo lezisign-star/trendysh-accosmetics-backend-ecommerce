@@ -129,9 +129,37 @@ class CartServiceUnitTest {
     void addingMoreThanIsAvailableIsRefusedAndNothingIsSaved() {
         stockAvailable("5", "3");
 
+        // Low stock, so the count is shown — but as the product's name, never the internal SKU.
         assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), new BigDecimal("3")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("GEL-RED");
+                .hasMessage("Only 2 of Gel polish (Red) left");
+        verify(cartItemRepository, never()).save(any());
+    }
+
+    @Test
+    void theRefusalDoesNotRevealHowMuchStockThereReallyIsWhenItIsNotLow() {
+        stockAvailable("40", "0");
+
+        assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), new BigDecimal("50")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("That quantity of Gel polish (Red) isn't available right now");
+    }
+
+    @Test
+    void whatIsAlreadyInTheBasketCountsAgainstStockWhenAddingMore() {
+        stockAvailable("3", "0");
+        CartItem inBasket = new CartItem();
+        inBasket.setCart(cart);
+        inBasket.setVariant(variant);
+        inBasket.setQty(new BigDecimal("2"));
+        when(cartItemRepository.findByCartIdAndVariantId(cart.getId(), variant.getId()))
+                .thenReturn(Optional.of(inBasket));
+
+        // 2 already in the basket + 2 more is 4 against 3 in stock: each add used to be compared
+        // to stock on its own, so this slipped through until checkout.
+        assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), new BigDecimal("2")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Only 3 of Gel polish (Red) left");
         verify(cartItemRepository, never()).save(any());
     }
 }
