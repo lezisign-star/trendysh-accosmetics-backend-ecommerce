@@ -29,7 +29,7 @@ public final class KitDtos {
      * on the purchase-order form.
      */
     public record SaveKitRequest(
-            @NotBlank String name,
+            @NotBlank @Size(max = 250) String name,
             @NotNull UUID professionId,
             @NotNull UUID categoryId,
             @NotBlank @Size(max = 500) String description,

@@ -29,6 +29,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
 /**
  * A kit end to end: admin creates one from real components, it shows up wherever a normal variant
@@ -377,5 +378,53 @@ class KitIntegrationTest {
         }
         assertThat(foundBeginner).as("beginner kit should be in the public kits list").isTrue();
         assertThat(foundPro).as("pro kit should be in the public kits list").isTrue();
+    }
+
+    @Test
+    void updatingAKitReplacesItsComponentsAndKeepsTheSameSku() throws Exception {
+        // The create path was already covered by every test above; this is the ONLY test that
+        // exercises PUT /admin/kits/{id} — in particular the "wholesale replace" of KitComponent
+        // rows, which create() never touches at all.
+        String categoryId = newCategory();
+        String professionId = newProfession();
+        String originalComponent = newComponentVariant(new BigDecimal("500"));
+        receiveStock(Map.of(originalComponent, new BigDecimal("5")));
+
+        JsonNode kit = createKit(categoryId, professionId, "Original description",
+                List.of(originalComponent), List.of("1"), "400");
+        String kitId = kit.get("id").asText();
+        String originalVariantId = kit.get("variantId").asText();
+        String originalSku = kit.get("sku").asText();
+
+        // Swap the component entirely, and change everything else too: name, description, price,
+        // category, and profession.
+        String newComponent = newComponentVariant(new BigDecimal("900"));
+        receiveStock(Map.of(newComponent, new BigDecimal("5")));
+        String newCategoryId = newCategory();
+        String newProfessionId = newProfession();
+
+        String body = "{\"name\":\"Updated Kit Name\",\"professionId\":\"" + newProfessionId
+                + "\",\"categoryId\":\"" + newCategoryId
+                + "\",\"description\":\"Updated description\",\"finalPrice\":\"700\""
+                + ",\"components\":[{\"variantId\":\"" + newComponent + "\",\"qty\":\"1\"}]}";
+        JsonNode updated = ok(put("/api/v1/admin/kits/" + kitId), body);
+
+        // Editing a kit reuses its existing backing Product+ProductVariant — it never creates a new one.
+        assertThat(updated.get("variantId").asText()).isEqualTo(originalVariantId);
+        assertThat(updated.get("sku").asText()).isEqualTo(originalSku);
+        assertThat(updated.get("name").asText()).isEqualTo("Updated Kit Name");
+        assertThat(updated.get("description").asText()).isEqualTo("Updated description");
+        assertThat(updated.get("professionId").asText()).isEqualTo(newProfessionId);
+        assertThat(updated.get("categoryId").asText()).isEqualTo(newCategoryId);
+        assertThat(updated.get("packagePrice").decimalValue()).isEqualByComparingTo("700");
+        assertThat(updated.get("components")).hasSize(1);
+        assertThat(updated.get("components").get(0).get("variantId").asText()).isEqualTo(newComponent);
+
+        // Re-fetch independently — proves the wholesale replace actually persisted, not just an
+        // in-memory echo of the request.
+        JsonNode reFetched = ok(get("/api/v1/admin/kits/" + kitId), null);
+        assertThat(reFetched.get("components")).hasSize(1);
+        assertThat(reFetched.get("components").get(0).get("variantId").asText()).isEqualTo(newComponent);
+        assertThat(reFetched.get("name").asText()).isEqualTo("Updated Kit Name");
     }
 }
