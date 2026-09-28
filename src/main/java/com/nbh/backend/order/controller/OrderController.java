@@ -53,20 +53,8 @@ public class OrderController {
         return orderRepository.search(status, term, PhoneNumbers.searchFragment(term), pageable);
     }
 
-    /**
-     * Guest order tracking by reference + email — no login required (design
-     * doc §2.1: "guest tracking by reference"). Deliberately requires BOTH the
-     * order number and the email it was placed under, so a guessed order
-     * number alone can't leak another customer's order.
-     */
-    @GetMapping("/track/{orderNo}")
-    @Transactional(readOnly = true)
-    public OrderDto track(@PathVariable String orderNo, @RequestParam String email) {
-        CustomerOrder order = orderRepository.findByOrderNo(orderNo)
-                .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
-                .orElseThrow(() -> new EntityNotFoundException("No order found for that reference and email"));
-        return OrderDto.from(order);
-    }
+    // Guest tracking (order number alone = status only; email = emailed code, then its orders) lives in
+    // OrderTrackingController. It used to be here, returning a full order for a number plus email.
 
     /** Staff detail view — see {@link AdminOrderDetailDto} for why this isn't the shared {@link OrderDto}. */
     @PreAuthorize("hasAuthority('PERM_ORDER_VIEW') or hasAuthority('PERM_ORDER_MANAGE_ALL')")

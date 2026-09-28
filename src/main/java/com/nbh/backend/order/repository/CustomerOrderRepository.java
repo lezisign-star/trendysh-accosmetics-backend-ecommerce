@@ -54,6 +54,22 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Query("select o from CustomerOrder o where o.id = :id")
     Optional<CustomerOrder> lockById(@Param("id") UUID id);
 
+    /** Guest tracking by order number alone: the status and nothing else, so no entity is loaded. */
+    @Query("select o.status from CustomerOrder o where o.orderNo = :orderNo")
+    Optional<OrderStatus> findStatusByOrderNo(@Param("orderNo") String orderNo);
+
+    /** Orders under a verified email, newest first ({@code email} already lower-cased). No line items are loaded. */
+    @Query("""
+            SELECT NEW com.nbh.backend.order.dto.TrackingDtos$TrackedOrderSummaryDto(
+                o.orderNo, o.status, o.createdAt, SIZE(o.items), o.grandTotal, o.fulfilmentType)
+            FROM CustomerOrder o
+            WHERE LOWER(o.guestEmail) = :email
+            ORDER BY o.createdAt DESC
+            """)
+    List<com.nbh.backend.order.dto.TrackingDtos.TrackedOrderSummaryDto> findTrackedSummaries(@Param("email") String email);
+
+    boolean existsByGuestEmailIgnoreCase(String guestEmail);
+
     /** Ids only — feeds {@code OrderExpiryService}, which then locks and re-checks each order itself. */
     @Query("select o.id from CustomerOrder o where o.status = :status")
     List<UUID> findIdsByStatus(@Param("status") OrderStatus status);
