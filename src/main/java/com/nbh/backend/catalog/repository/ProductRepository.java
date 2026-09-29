@@ -4,15 +4,28 @@ import com.nbh.backend.catalog.entity.Product;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface ProductRepository extends JpaRepository<Product, UUID> {
     boolean existsBySlug(String slug);
+
+    /**
+     * A targeted column update, deliberately bypassing the managed entity (not
+     * {@code product.setPublished(...)} + {@code save()}) so publishing does NOT bump
+     * {@code updatedAt} — see {@link com.nbh.backend.catalog.service.ProductService#setPublished}
+     * for why that matters.
+     */
+    @Modifying
+    @Query("UPDATE Product p SET p.isPublished = :published, p.publishedAt = :publishedAt WHERE p.id = :id")
+    void updatePublishedState(@Param("id") UUID id, @Param("published") boolean published,
+                               @Param("publishedAt") Instant publishedAt);
 
     Optional<Product> findBySlugAndIsPublishedTrueAndDeletedFalse(String slug);
 

@@ -500,14 +500,25 @@ public class ProductService {
      * Products are created unpublished (see {@link #createProduct}'s comment) —
      * this is the explicit "go live" action staff take once photos/pricing are
      * ready, matching what the architecture doc describes for the storefront.
+     *
+     * Uses a targeted update rather than loading the entity and saving it, so this does
+     * NOT bump {@code updatedAt} — found live (2026-09-29): it used to go through the
+     * normal managed-entity save, and a staff member who published a fresh draft and then
+     * saved the same open editor shortly after could get a spurious "Someone else changed
+     * this product" (see {@link #saveProduct}'s expectedUpdatedAt check) whenever the two
+     * requests' commits happened to land in different wall-clock seconds — a real gap of
+     * well under a second, but enough to trip the truncated-to-seconds comparison.
+     * Publishing is a narrow, idempotent toggle, not a conflicting edit to the editor's own
+     * fields, so it should not be able to invalidate the editor's optimistic-lock token.
      */
     @Transactional
     public ProductDto setPublished(UUID productId, boolean published) {
+        if (!productRepository.existsById(productId)) {
+            throw new EntityNotFoundException("No product: " + productId);
+        }
+        productRepository.updatePublishedState(productId, published, published ? Instant.now() : null);
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-        product.setPublished(published);
-        product.setPublishedAt(published ? Instant.now() : null);
-        productRepository.save(product);
         return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));
     }
 

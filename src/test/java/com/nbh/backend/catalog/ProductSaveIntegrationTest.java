@@ -159,6 +159,36 @@ class ProductSaveIntegrationTest {
         assertThat(reread.get("name").asText()).isEqualTo(draft.get("name").asText());
     }
 
+    /**
+     * Regression test for a live bug (2026-09-29): publishing used to go through the normal
+     * managed-entity save, which bumped {@code updatedAt} same as any editor save would. A staff
+     * member who published a fresh draft and then saved the same open editor shortly after could
+     * get a spurious 409 whenever the two requests' commits happened to land in different
+     * wall-clock seconds — a real gap of well under a second, but enough to trip the
+     * truncated-to-seconds comparison in the conflict check above. That only reproduced
+     * intermittently (it depends on where a second boundary happens to fall), so this asserts the
+     * underlying invariant directly instead of racing the clock: publishing must leave
+     * updatedAt untouched, full stop, not "usually unchanged within the same second."
+     */
+    @Test
+    void publishingDoesNotChangeUpdatedAtSoAFollowUpSaveWithTheOriginalTimestampSucceeds() throws Exception {
+        JsonNode draft = ok(post("/api/v1/products/draft"), "{\"name\":\"" + unique("Publish Then Save")
+                + "\",\"categoryIds\":[],\"published\":false,\"variants\":[]}");
+        String id = draft.get("id").asText();
+        String draftUpdatedAt = draft.get("updatedAt").asText();
+
+        JsonNode published = ok(post("/api/v1/products/" + id + "/publish"), null);
+        assertThat(published.get("updatedAt").asText()).isEqualTo(draftUpdatedAt);
+
+        // A save using the pre-publish snapshot must therefore still be accepted, not rejected
+        // as a conflict just because publishing happened in between.
+        JsonNode saved = ok(put("/api/v1/products/" + id + "/full"), "{"
+                + "\"expectedUpdatedAt\":\"" + draftUpdatedAt + "\","
+                + "\"name\":\"" + draft.get("name").asText() + "\",\"categoryIds\":[],"
+                + "\"published\":true,\"variants\":[]}");
+        assertThat(saved.get("isPublished").asBoolean()).isTrue();
+    }
+
     @Test
     void aProductInSeveralCategoriesShowsUpUnderEachOneAndTheirSharedParent() throws Exception {
         String parent = newCategory(unique("Skincare"), null);
