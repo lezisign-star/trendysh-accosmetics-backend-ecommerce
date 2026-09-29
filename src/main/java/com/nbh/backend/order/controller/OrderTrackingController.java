@@ -7,6 +7,7 @@ import com.nbh.backend.order.dto.TrackingDtos.SessionDto;
 import com.nbh.backend.order.dto.TrackingDtos.TrackedOrderSummaryDto;
 import com.nbh.backend.order.dto.TrackingDtos.VerifyRequest;
 import com.nbh.backend.order.service.OrderTrackingService;
+import com.nbh.backend.live.LiveStreams;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
@@ -31,14 +33,27 @@ public class OrderTrackingController {
     static final String TOKEN_HEADER = "X-Track-Token";
 
     private final OrderTrackingService tracking;
+    private final LiveStreams streams;
 
-    public OrderTrackingController(OrderTrackingService tracking) {
+    public OrderTrackingController(OrderTrackingService tracking, LiveStreams streams) {
         this.tracking = tracking;
+        this.streams = streams;
     }
 
     @GetMapping("/{orderNo}")
     public OrderStatusDto status(@PathVariable String orderNo) {
         return tracking.status(orderNo);
+    }
+
+    /**
+     * Tells the pay/track page THAT this order changed — never what changed — so it knows to ask the real
+     * endpoint again right away instead of on its next poll. An order number that does not exist is a 404,
+     * same as {@link #status}; nothing here needs an email or a track token, so it stays as anonymous as
+     * the order number itself already is.
+     */
+    @GetMapping(value = "/{orderNo}/events", produces = "text/event-stream")
+    public SseEmitter events(@PathVariable String orderNo) {
+        return streams.subscribeOrder(tracking.verifiedOrderNo(orderNo));
     }
 
     @PostMapping("/email/code")

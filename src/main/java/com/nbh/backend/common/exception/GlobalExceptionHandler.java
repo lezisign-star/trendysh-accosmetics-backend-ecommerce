@@ -100,7 +100,13 @@ public class GlobalExceptionHandler {
         } else {
             log.warn("{}: {}", e.getStatus().value(), e.getMessage());
         }
-        return body(e.getStatus(), e.getMessage());
+        ResponseEntity<Object> response = body(e.getStatus(), e.getMessage());
+        if (e instanceof CodedException coded && response.getBody() instanceof Map<?, ?> payload) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> editable = (Map<String, Object>) payload;
+            editable.put("code", coded.code());
+        }
+        return response;
     }
 
     @ExceptionHandler(IllegalStateException.class)

@@ -1,5 +1,6 @@
 package com.nbh.backend.tumaboda;
 
+import com.nbh.backend.common.event.TumaBodaDeliveryUpdatedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.entity.CustomerOrder;
@@ -11,6 +12,7 @@ import com.nbh.backend.tumaboda.TumaBodaDtos.DeliveryRequest;
 import com.nbh.backend.tumaboda.TumaBodaDtos.Recipient;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -54,16 +56,18 @@ public class TumaBodaBookingService {
     private final TumaBodaClient client;
     private final TumaBodaConfig config;
     private final TumaBodaQuoteService quotes;
+    private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate tx;
     private final Clock clock;
 
     public TumaBodaBookingService(CustomerOrderRepository orders, TumaBodaClient client, TumaBodaConfig config,
-                                  TumaBodaQuoteService quotes, PlatformTransactionManager transactionManager,
-                                  Clock clock) {
+                                  TumaBodaQuoteService quotes, ApplicationEventPublisher eventPublisher,
+                                  PlatformTransactionManager transactionManager, Clock clock) {
         this.orders = orders;
         this.client = client;
         this.config = config;
         this.quotes = quotes;
+        this.eventPublisher = eventPublisher;
         // Each step is its own short transaction, never joined to a caller's: the booking runs from an
         // after-commit listener, where "joining" the just-finished transaction would silently lose the
         // writes, and an outer transaction would also keep a lock open across the network call.
@@ -214,6 +218,7 @@ public class TumaBodaBookingService {
             order.setTumabodaBookingFailure(null);
             order.setTumabodaNextRetryAt(null);
             orders.save(order);
+            eventPublisher.publishEvent(new TumaBodaDeliveryUpdatedEvent(order.getId(), order.getOrderNo(), "booked"));
             return Outcome.BOOKED;
         }
 
@@ -225,6 +230,10 @@ public class TumaBodaBookingService {
         orders.save(order);
         log.warn("TumaBoda booking for {} failed (attempt {}, {}): {}", order.getOrderNo(), attempts,
                 retry ? "will retry" : "needs staff", failure.getMessage());
+        if (!retry) {
+            // A retry is routine and silent; needing staff is the moment worth interrupting them for.
+            eventPublisher.publishEvent(new TumaBodaDeliveryUpdatedEvent(order.getId(), order.getOrderNo(), "booking_failed"));
+        }
         return retry ? Outcome.WILL_RETRY : Outcome.NEEDS_STAFF;
     }
 

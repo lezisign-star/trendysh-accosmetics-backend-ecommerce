@@ -38,6 +38,12 @@ app:
     sync-booking: true
     retry-initial-delay-ms: 3600000
     reconcile-initial-delay-ms: 3600000
+  live:
+    # A live update is written on the calling thread, so a test can assert on it as soon as the request
+    # returns; the heartbeat (which would otherwise show up as an extra write partway through a slow test)
+    # is held off for an hour, same as the other background sweepers above.
+    sync: true
+    heartbeat-ms: 3600000
 
 logging:
   level:

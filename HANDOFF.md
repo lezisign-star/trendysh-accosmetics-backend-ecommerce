@@ -1,5 +1,43 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-09-29 — checkout re-prices on every read, live order/payment updates, one more lock-order fix
+
+Built on top of the range below (still `main`, no new migration). Backend + frontend both touched; see the frontend HANDOFF for its half.
+
+- **Checkout re-prices every basket read** (`CartService.refreshPrices`/`refreshPricesForCheckout`): a deal, campaign or plain price
+  change is picked up the moment the cart is next read, never from a cached snapshot. A line whose product can no longer be sold is
+  flagged `available: false` and blocks checkout; `CheckoutRequest` carries `expectedSubtotal`/`expectedDeliveryFee` — never used as the
+  charge, only to refuse with 409 `PRICE_CHANGED` (`CodedException`/`PriceChangedException`) when they disagree with what the server
+  is about to charge. `CartRepricingIntegrationTest` and a `TumaBodaIntegrationTest` case cover it. **Still uncommitted.**
+- **Live updates for orders and payments**, the event-driven way (mirrors momentspackaging.com's design): `live/LiveStreams` is an
+  in-memory `SseEmitter` registry — one broadcast list for staff, one list per order number for customers — written to from its own
+  executor (`app.live.sync` for tests), never the request thread. `live/LiveUpdateListener` turns the EXISTING domain events
+  (`OrderPlacedEvent`, `PaymentConfirmedEvent`, the order-lifecycle events, the two new ones below) into a staff broadcast
+  (`AdminEvent`: type + order number + amount, nothing else) and a bare "something about this order changed" push to that order's own
+  watchers — the customer stream never carries the actual data, only the hint to re-fetch. New events: `PaymentClaimSubmittedEvent`
+  (from `PaymentClaimService.submit`), `BankCreditRecordedEvent` (from `BankCreditService.record`), `TumaBodaDeliveryUpdatedEvent`
+  (booking outcome and webhook status changes). Endpoints: `GET /api/v1/admin/events` (staff, `PERM_ORDER_VIEW`/`PERM_ORDER_MANAGE_ALL`/
+  `PERM_PAYMENT_MANAGE`) and `GET /api/v1/orders/track/{orderNo}/events` (public, 404 on an unknown order — reuses the existing
+  `/orders/track/**` permitAll rule). `LiveStreamsTest`, `LiveUpdateListenerTest`, `LiveEventStreamIntegrationTest` (the last one is the
+  real end-to-end proof: places an order and confirms a payment through the actual endpoints/services and asserts on a
+  `@MockitoSpyBean`-wrapped `LiveStreams`). **Still uncommitted.**
+- **One more lock-order bug, found chasing the same class of issue as the second audit:** `BankCreditService.tryAutoMatch` and
+  `.allocate` read the payment record UNLOCKED before deciding anything from it (status, amount), then handed it to
+  `confirmSuccess`/`confirmAndMatch` — the exact "stale object under a later lock" trap already fixed elsewhere (see `PaymentService
+  .lockOrderOf`'s javadoc): if a claim approval, a Co-op callback or another credit's auto-match confirmed that SAME payment in the
+  gap between the unlocked read and the eventual lock, this code could see a stale INITIATED and try to confirm an order a moment
+  after it was already, correctly, paid another way — matching a bank credit to an order without ever noticing the duplicate. Fixed
+  the same way as the second audit's payment-claim fix: resolve the id with a scalar query, lock FIRST, decide after. Pinned by
+  `BankCreditLockOrderTest` (fails without the fix — confirmed by reverting it and re-running). **Still uncommitted.**
+- **A second independent Opus audit of the `c0ff13e` fix commit** (webhook cap / quote limiter / lock order / scheduler pool) found
+  no blockers. It also flagged, all LOW and all pre-existing (not from that commit, not fixed here): the TumaBoda retry job can loop
+  forever on ONE order (never blocking others) if `TumaBodaBookingService.record` itself throws before committing — a data-shape edge
+  case, and the feature is off in production regardless; the booking listener and retry job can race and book the same order at once
+  if the executor queue backs up past 3 minutes (harmless — TumaBoda's reference makes a repeat come back as the same delivery, itself
+  untested against the real API); a TumaBoda quote-limiter BUSY response surfaces to the shopper as "can't deliver to that address"
+  instead of "try again"; `PaymentClaimService.holdItemsForReview` extends stock holds in item order, not variant-id order (a
+  pre-existing, low-probability deadlock path with a checkout of the same variants). None fixed; noted for whoever picks up P3/Phase 3.
+
 ## 2026-09-27/28 — inventory redesign Phases 0-2, checkout fixes, guest tracking, Paybill settings, TumaBoda API (V29-V38)
 
 Built 2026-09-27/28; 401 tests on a fresh DB in a clean checkout of the pushed commit (one known-flaky test, see below), and two

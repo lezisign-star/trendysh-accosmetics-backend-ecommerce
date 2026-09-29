@@ -6,5 +6,6 @@ import java.util.UUID;
 public record PaymentFailedEvent(
         UUID paymentRecordId,
         UUID orderId,
+        String orderNo,
         String reason
 ) {}

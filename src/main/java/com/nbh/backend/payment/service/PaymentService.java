@@ -151,7 +151,7 @@ public class PaymentService {
         order.setStatus(OrderStatus.PAYMENT_FAILED);
         orderRepository.save(order);
 
-        eventPublisher.publishEvent(new PaymentFailedEvent(payment.getId(), order.getId(), reason));
+        eventPublisher.publishEvent(new PaymentFailedEvent(payment.getId(), order.getId(), order.getOrderNo(), reason));
 
         return payment;
     }

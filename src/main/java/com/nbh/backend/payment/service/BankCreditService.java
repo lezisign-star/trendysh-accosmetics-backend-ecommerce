@@ -1,5 +1,6 @@
 package com.nbh.backend.payment.service;
 
+import com.nbh.backend.common.event.BankCreditRecordedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
@@ -7,6 +8,7 @@ import com.nbh.backend.payment.entity.BankCredit;
 import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.BankCreditRepository;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +34,7 @@ public class BankCreditService {
     private final CustomerOrderRepository orderRepository;
     private final PaymentReferenceGenerator referenceGenerator;
     private final PaymentService paymentService;
+    private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
     public BankCreditService(BankCreditRepository creditRepository,
@@ -39,12 +42,14 @@ public class BankCreditService {
                               CustomerOrderRepository orderRepository,
                               PaymentReferenceGenerator referenceGenerator,
                               PaymentService paymentService,
+                              ApplicationEventPublisher eventPublisher,
                               Clock clock) {
         this.creditRepository = creditRepository;
         this.paymentRecordRepository = paymentRecordRepository;
         this.orderRepository = orderRepository;
         this.referenceGenerator = referenceGenerator;
         this.paymentService = paymentService;
+        this.eventPublisher = eventPublisher;
         this.clock = clock;
     }
 
@@ -81,6 +86,11 @@ public class BankCreditService {
         if (autoMatch) {
             tryAutoMatch(credit);
         }
+        // confirmAndMatch (inside tryAutoMatch) mutates this same object, so its status already
+        // reflects whether the auto-match actually landed — a plain "money arrived" hint either way.
+        boolean matched = credit.getStatus() == BankCredit.CreditStatus.MATCHED;
+        String orderNo = matched && credit.getPayment() != null ? credit.getPayment().getOrder().getOrderNo() : null;
+        eventPublisher.publishEvent(new BankCreditRecordedEvent(credit.getId(), credit.getAmount(), matched, orderNo));
         return credit;
     }
 
@@ -92,13 +102,17 @@ public class BankCreditService {
         // would be what that lock returns, however much the order changed in the meantime.
         UUID orderId = orderRepository.findIdByOrderNo(orderNo.trim())
                 .orElseThrow(() -> new NotFoundException("No such order: " + orderNo));
-        PaymentRecord payment = paymentRecordRepository.findByOrderId(orderId).stream()
-                .filter(p -> p.getMethod() == PaymentRecord.PaymentMethod.BANK)
-                .filter(p -> p.getStatus() == PaymentRecord.PaymentStatus.INITIATED
-                        || p.getStatus() == PaymentRecord.PaymentStatus.PENDING)
-                .findFirst()
+        UUID paymentId = paymentRecordRepository.findUnpaidBankPaymentIdsByOrderId(orderId).stream().findFirst()
                 .orElseThrow(() -> new ConflictException(
                         "Order " + orderNo + " has no unpaid bank payment to allocate this credit to"));
+        // Locked, then re-checked: the scalar query above can go stale the instant it runs (a claim
+        // approval or a callback confirming this exact payment right now), the same way an unlocked
+        // findByOrderId used to — see confirmAndMatch's callers for why nothing is decided before this.
+        PaymentRecord payment = paymentRecordRepository.lockById(paymentId).orElseThrow();
+        if (payment.getStatus() != PaymentRecord.PaymentStatus.INITIATED
+                && payment.getStatus() != PaymentRecord.PaymentStatus.PENDING) {
+            throw new ConflictException("Order " + orderNo + " has no unpaid bank payment to allocate this credit to");
+        }
         confirmAndMatch(credit, payment, staffEmail, blankToNull(note));
         return credit;
     }
@@ -130,10 +144,15 @@ public class BankCreditService {
             if (reference == null) {
                 continue;
             }
-            PaymentRecord payment = paymentRecordRepository.findByPaymentReference(reference).orElse(null);
-            if (payment == null) {
+            UUID paymentId = paymentRecordRepository.findIdByPaymentReference(reference).orElse(null);
+            if (paymentId == null) {
                 continue;
             }
+            // Locked before its status or amount is read, not after: this reference might belong to a
+            // payment a claim approval, a Co-op callback or a staff allocation is confirming at this exact
+            // moment, and reading it unlocked could see a stale INITIATED — the same "already paid" it
+            // would otherwise correctly refuse below, only missed because the row had already moved on.
+            PaymentRecord payment = paymentRecordRepository.lockById(paymentId).orElseThrow();
             if (payment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS) {
                 credit.setResolutionNote("Reference " + reference + " belongs to an order that is already paid: "
                         + "possible duplicate or overpayment, needs a person to look at it.");

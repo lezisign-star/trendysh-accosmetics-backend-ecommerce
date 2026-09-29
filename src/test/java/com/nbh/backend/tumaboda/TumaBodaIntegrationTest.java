@@ -160,13 +160,18 @@ class TumaBodaIntegrationTest {
     }
 
     private MvcResult checkoutRaw(String sessionId, String method, boolean dropoff) throws Exception {
+        return checkoutRaw(sessionId, method, dropoff, "");
+    }
+
+    /** {@code extraJson} is appended inside the request object, e.g. {@code ,"expectedDeliveryFee":450}. */
+    private MvcResult checkoutRaw(String sessionId, String method, boolean dropoff, String extraJson) throws Exception {
         String body = """
                 {"customerName":"Wanjiku Mwangi","guestEmail":"%s","guestPhone":"%s",
                  "fulfilmentType":"DELIVERY_COURIER","deliveryAddress":"Kilimani, Wood Avenue, Nairobi",
-                 "deliveryMethod":"%s"%s}
+                 "deliveryMethod":"%s"%s%s}
                 """.formatted("t-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com",
                 "07" + String.format("%08d", ThreadLocalRandom.current().nextInt(100_000_000)), method,
-                dropoff ? ",\"dropoffLat\":-1.2921,\"dropoffLng\":36.8219" : "");
+                dropoff ? ",\"dropoffLat\":-1.2921,\"dropoffLng\":36.8219" : "", extraJson);
         return mvc.perform(post("/api/v1/checkout").header("X-Cart-Session", sessionId).contentType(JSON).content(body))
                 .andReturn();
     }
@@ -320,6 +325,29 @@ class TumaBodaIntegrationTest {
 
         // The same basket checks out fine by matatu straight after.
         assertThat(checkoutRaw(session, "MATATU", false).getResponse().getStatus()).isEqualTo(200);
+    }
+
+    /**
+     * TumaBoda sets the delivery fee, and it is asked again while the order is placed, so it can differ
+     * from the preview the shopper saw. The shopper is never charged a fee they were not shown: the order
+     * is refused (409 PRICE_CHANGED), nothing is left behind, and the same basket then checks out at the
+     * fee they now see.
+     */
+    @Test
+    void aDeliveryFeeThatDiffersFromTheOneShownIsRefusedAndPlacesNothing() throws Exception {
+        String session = cartWith("1000", 1);
+        long ordersBefore = jdbc.queryForObject("SELECT count(*) FROM customer_order", Long.class);
+
+        MvcResult refused = checkoutRaw(session, "BODA", true, ",\"expectedSubtotal\":1000,\"expectedDeliveryFee\":300");
+
+        assertThat(refused.getResponse().getStatus()).isEqualTo(409);
+        assertThat(json.readTree(refused.getResponse().getContentAsString()).get("code").asText()).isEqualTo("PRICE_CHANGED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM customer_order", Long.class)).as("no order left behind").isEqualTo(ordersBefore);
+
+        MvcResult placed = checkoutRaw(session, "BODA", true, ",\"expectedSubtotal\":1000,\"expectedDeliveryFee\":450");
+        assertThat(placed.getResponse().getStatus()).as(placed.getResponse().getContentAsString()).isEqualTo(200);
+        assertThat(json.readTree(placed.getResponse().getContentAsString()).get("order").get("deliveryFee").decimalValue())
+                .isEqualByComparingTo("450");
     }
 
     @Test

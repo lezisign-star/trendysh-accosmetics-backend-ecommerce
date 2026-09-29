@@ -77,6 +77,20 @@ public class OrderTrackingService {
                 .orElseThrow(() -> new NotFoundException("We couldn't find an order with that number"));
     }
 
+    /**
+     * The canonical form of an order number that really exists, for the live-updates stream: it must
+     * refuse an unknown number the same way {@link #status} does, rather than silently opening a
+     * connection that will never hear anything.
+     */
+    @Transactional(readOnly = true)
+    public String verifiedOrderNo(String rawOrderNo) {
+        String orderNo = normalizeOrderNo(rawOrderNo);
+        if (orders.findStatusByOrderNo(orderNo).isEmpty()) {
+            throw new NotFoundException("We couldn't find an order with that number");
+        }
+        return orderNo;
+    }
+
     /** Always succeeds from the caller's side: never reveals whether the email has orders. */
     @Transactional
     public void requestCode(String rawEmail) {

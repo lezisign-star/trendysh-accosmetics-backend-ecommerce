@@ -1,5 +1,6 @@
 package com.nbh.backend.payment.service;
 
+import com.nbh.backend.common.event.PaymentClaimSubmittedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.TooManyRequestsException;
@@ -11,6 +12,7 @@ import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentClaimRepository;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.stock.service.StockReservationService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +44,7 @@ public class PaymentClaimService {
     private final PaymentReferenceGenerator referenceGenerator;
     private final PaymentService paymentService;
     private final StockReservationService reservationService;
+    private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
     public PaymentClaimService(PaymentRecordRepository paymentRecordRepository,
@@ -49,12 +52,14 @@ public class PaymentClaimService {
                                 PaymentReferenceGenerator referenceGenerator,
                                 PaymentService paymentService,
                                 StockReservationService reservationService,
+                                ApplicationEventPublisher eventPublisher,
                                 Clock clock) {
         this.paymentRecordRepository = paymentRecordRepository;
         this.claimRepository = claimRepository;
         this.referenceGenerator = referenceGenerator;
         this.paymentService = paymentService;
         this.reservationService = reservationService;
+        this.eventPublisher = eventPublisher;
         this.clock = clock;
     }
 
@@ -103,6 +108,9 @@ public class PaymentClaimService {
         if (firstClaim) {
             holdItemsForReview(payment);
         }
+        // Staff have to check this against the statement: tell any open dashboard as soon as it commits.
+        eventPublisher.publishEvent(new PaymentClaimSubmittedEvent(
+                claim.getId(), payment.getId(), payment.getOrder().getOrderNo(), amount));
         return claim;
     }
 

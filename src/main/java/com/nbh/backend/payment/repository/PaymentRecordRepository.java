@@ -72,4 +72,19 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
     @Query("select p.id from PaymentRecord p where p.paymentReference = :reference and p.order.orderNo = :orderNo")
     Optional<UUID> findIdByReferenceAndOrderNo(@org.springframework.data.repository.query.Param("reference") String reference,
                                                @org.springframework.data.repository.query.Param("orderNo") String orderNo);
+
+    /** Same as {@link #findByPaymentReference}, but the id only — see {@link #findIdByReferenceAndOrderNo}'s javadoc for why. */
+    @Query("select p.id from PaymentRecord p where p.paymentReference = :reference")
+    Optional<UUID> findIdByPaymentReference(@org.springframework.data.repository.query.Param("reference") String reference);
+
+    /**
+     * A bank payment on this order that nothing has paid yet, oldest first, id only: the caller locks
+     * before deciding anything from it, since this list itself can be stale the instant it is read.
+     */
+    @Query("select p.id from PaymentRecord p where p.order.id = :orderId "
+            + "and p.method = com.nbh.backend.payment.entity.PaymentRecord.PaymentMethod.BANK "
+            + "and p.status in (com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.INITIATED, "
+            + "com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.PENDING) "
+            + "order by p.createdAt asc")
+    List<UUID> findUnpaidBankPaymentIdsByOrderId(@org.springframework.data.repository.query.Param("orderId") UUID orderId);
 }
