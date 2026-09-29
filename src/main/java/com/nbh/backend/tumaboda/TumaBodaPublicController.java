@@ -19,8 +19,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -40,7 +44,9 @@ public class TumaBodaPublicController {
     private static final String SESSION_HEADER = "X-Cart-Session";
     private static final int MIN_SEARCH_LENGTH = 3;
     private static final int MAX_SEARCH_LENGTH = 120;
-    private static final Pattern PLACE_ID = Pattern.compile("[A-Za-z0-9_\\-]{5,300}");
+    // Colon included alongside TumaBoda's own alphanumeric+underscore+hyphen ids: CommonDeliveryAreaService
+    // hands out its own suggestions under a synthetic "area:<uuid>" id (see its class javadoc).
+    private static final Pattern PLACE_ID = Pattern.compile("[A-Za-z0-9_:\\-]{5,300}");
 
     public record QuoteRequest(@NotNull BigDecimal lat, @NotNull BigDecimal lng) {}
 
@@ -57,14 +63,17 @@ public class TumaBodaPublicController {
     private final TumaBodaQuoteService quotes;
     private final TumaBodaThrottle throttle;
     private final CartService cartService;
+    private final CommonDeliveryAreaService commonAreas;
 
     public TumaBodaPublicController(TumaBodaConfig config, TumaBodaClient client, TumaBodaQuoteService quotes,
-                                    TumaBodaThrottle throttle, CartService cartService) {
+                                    TumaBodaThrottle throttle, CartService cartService,
+                                    CommonDeliveryAreaService commonAreas) {
         this.config = config;
         this.client = client;
         this.quotes = quotes;
         this.throttle = throttle;
         this.cartService = cartService;
+        this.commonAreas = commonAreas;
     }
 
     /** Lets the checkout decide whether to offer an address search at all. */
@@ -73,6 +82,14 @@ public class TumaBodaPublicController {
         return Map.of("enabled", config.enabled());
     }
 
+    /**
+     * TumaBoda's live search first; the seeded {@link CommonDeliveryAreaService} fills in behind it
+     * (deduplicated by description, live results leading) rather than being tried only on failure — a
+     * live call can succeed and still come back thin for an under-specified query, and the seeded list is
+     * known-good for exactly the well-known areas a customer is likely typing. A live call that throws
+     * (unreachable, rate-limited by TumaBoda itself) still leaves the seeded matches standing, which is
+     * the whole point of seeding them.
+     */
     @GetMapping("/maps/autocomplete")
     public List<PlaceSuggestion> autocomplete(@RequestParam String input, HttpServletRequest request) {
         String text = input.trim();
@@ -83,11 +100,39 @@ public class TumaBodaPublicController {
             throw new IllegalArgumentException("That search is too long");
         }
         throttle.lookup(caller(request));
+        List<PlaceSuggestion> live;
         try {
-            return client.autocomplete(text);
+            live = client.autocomplete(text);
         } catch (TumaBodaException e) {
-            throw unavailable("address search", e);
+            log.warn("TumaBoda address search failed ({}), falling back to the seeded area list: {}",
+                    e.errorCode(), e.getMessage());
+            live = List.of();
         }
+        List<PlaceSuggestion> seeded = commonAreas.fuzzySearch(text);
+        if (seeded.isEmpty()) {
+            return live;
+        }
+        List<PlaceSuggestion> combined = new ArrayList<>(live);
+        Set<String> seen = new LinkedHashSet<>();
+        for (PlaceSuggestion s : live) {
+            seen.add(s.description().toLowerCase(Locale.ROOT));
+        }
+        for (PlaceSuggestion s : seeded) {
+            if (seen.add(s.description().toLowerCase(Locale.ROOT))) {
+                combined.add(s);
+            }
+        }
+        return combined;
+    }
+
+    /** The picker's quick-pick chips — a handful of well-known areas, always from the seeded list (never TumaBoda itself). */
+    @GetMapping("/maps/common-areas")
+    public List<PlaceSuggestion> quickPickAreas(HttpServletRequest request) {
+        if (!config.enabled()) {
+            return List.of();
+        }
+        throttle.lookup(caller(request));
+        return commonAreas.quickPicks();
     }
 
     @GetMapping("/maps/place-details")
@@ -99,12 +144,11 @@ public class TumaBodaPublicController {
             throw new EntityNotFoundException("Address lookup isn't available right now");
         }
         throttle.lookup(caller(request));
-        PlaceDetails details;
-        try {
-            details = client.placeDetails(placeId).orElse(null);
-        } catch (TumaBodaException e) {
-            throw unavailable("place lookup", e);
-        }
+        // A seeded area resolves straight from our own table, no TumaBoda call and nothing to retry —
+        // it is not a real TumaBoda placeId, so client.placeDetails would only ever 404 on it.
+        PlaceDetails details = commonAreas.isAreaId(placeId)
+                ? commonAreas.resolve(placeId).orElse(null)
+                : lookUpLive(placeId);
         if (details == null) {
             throw new EntityNotFoundException("Couldn't find that place on the map");
         }
@@ -112,6 +156,45 @@ public class TumaBodaPublicController {
             throw new UnprocessableException("That place isn't in Kenya");
         }
         return details;
+    }
+
+    /**
+     * "Use my location": the browser's own GPS point, reverse-geocoded to something readable for the
+     * customer to confirm. Always answers 200 with the same coordinates the caller sent — {@code address}
+     * is TumaBoda's own label, then the nearest seeded area's name, then null (the picker shows a plainer
+     * confirmation in that last case) — since the coordinates alone are already enough to price and book;
+     * a label is only ever a confidence check, never a requirement.
+     */
+    @GetMapping("/maps/reverse-geocode")
+    public PlaceDetails reverseGeocode(@RequestParam BigDecimal lat, @RequestParam BigDecimal lng,
+                                       HttpServletRequest request) {
+        if (!TumaBodaQuoteService.isPlausibleKenyanPoint(lat, lng)) {
+            throw new UnprocessableException("That location doesn't look like an address in Kenya");
+        }
+        if (!config.enabled()) {
+            return fallbackReverseGeocode(lat, lng);
+        }
+        throttle.lookup(caller(request));
+        try {
+            return client.reverseGeocode(lat, lng).orElseGet(() -> fallbackReverseGeocode(lat, lng));
+        } catch (TumaBodaException e) {
+            log.warn("TumaBoda reverse-geocode failed ({}), falling back to the seeded area list: {}",
+                    e.errorCode(), e.getMessage());
+            return fallbackReverseGeocode(lat, lng);
+        }
+    }
+
+    private PlaceDetails fallbackReverseGeocode(BigDecimal lat, BigDecimal lng) {
+        String label = commonAreas.nearestAreaLabel(lat, lng).orElse(null);
+        return new PlaceDetails(null, lat, lng, label, null);
+    }
+
+    private PlaceDetails lookUpLive(String placeId) {
+        try {
+            return client.placeDetails(placeId).orElse(null);
+        } catch (TumaBodaException e) {
+            throw unavailable("place lookup", e);
+        }
     }
 
     @PostMapping("/quote")

@@ -800,23 +800,29 @@ class TumaBodaIntegrationTest {
         MvcResult tooShort = mvc.perform(get("/api/v1/public/tumaboda/maps/autocomplete").param("input", "Ki")
                 .header("X-Forwarded-For", caller())).andReturn();
 
+        // Live leads; the seeded "Kilimani" area fills in behind it (2026-09-29: CommonDeliveryAreaService)
+        // rather than being dropped — real matches from both sources are worth showing, not just live's.
         JsonNode suggestions = json.readTree(found.getResponse().getContentAsString());
-        assertThat(suggestions).hasSize(1);
-        assertThat(suggestions.get(0).get("placeId").asText()).isEqualTo("place-1");
+        assertThat(suggestions.get(0).get("placeId").asText()).as("the live result leads").isEqualTo("place-1");
         assertThat(suggestions.get(0).get("description").asText()).isEqualTo("Kilimani, Nairobi, Kenya");
+        assertThat(suggestions.findValuesAsText("description")).anyMatch(d -> d.startsWith("Kilimani, Nairobi"));
         assertThat(json.readTree(tooShort.getResponse().getContentAsString())).isEmpty();
         assertThat(FAKE.requestsTo("GET", "/v1/partner/maps/autocomplete")).hasSize(1);
     }
 
     @Test
-    void whenTumabodaIsDownAddressSearchAnswersWithoutLeakingItsError() throws Exception {
+    void whenTumabodaIsDownAddressSearchFallsBackToSeededAreasWithoutLeakingItsError() throws Exception {
         FAKE.route("GET", "/v1/partner/maps/autocomplete", Reply.error(500, "SECRET_INTERNAL_CODE", "stack trace here"));
 
         MvcResult result = mvc.perform(get("/api/v1/public/tumaboda/maps/autocomplete").param("input", "Kilimani")
                 .header("X-Forwarded-For", caller())).andReturn();
 
-        assertThat(result.getResponse().getStatus()).isEqualTo(502);
+        // 2026-09-29: a live failure no longer surfaces as an error at all — the seeded area list is
+        // exactly the resilience this exists for, so the search box still answers with something real.
+        assertThat(result.getResponse().getStatus()).isEqualTo(200);
         assertThat(result.getResponse().getContentAsString()).doesNotContain("SECRET_INTERNAL_CODE").doesNotContain("stack trace");
+        JsonNode suggestions = json.readTree(result.getResponse().getContentAsString());
+        assertThat(suggestions.findValuesAsText("description")).anyMatch(d -> d.startsWith("Kilimani"));
     }
 
     @Test

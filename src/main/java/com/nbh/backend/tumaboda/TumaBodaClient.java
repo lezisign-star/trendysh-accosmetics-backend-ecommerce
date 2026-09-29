@@ -175,6 +175,23 @@ public class TumaBodaClient {
                 new BigDecimal(location.get("lng").asText()), text(result, "formatted_address"), text(result, "name")));
     }
 
+    /**
+     * The address at a raw point — "use my location" reverse-geocoded to something readable. Empty when
+     * TumaBoda found nothing there (ZERO_RESULTS): the caller falls back to the seeded area list or the
+     * raw coordinates, never an exception, since a customer's own GPS reading is still perfectly usable
+     * for pricing even with no label for it.
+     */
+    public Optional<PlaceDetails> reverseGeocode(BigDecimal lat, BigDecimal lng) {
+        JsonNode json = fetch("/v1/partner/geocode?latlng={latlng}", lat.toPlainString() + "," + lng.toPlainString());
+        JsonNode location = json.path("location");
+        if (!location.hasNonNull("latitude") || !location.hasNonNull("longitude")) {
+            return Optional.empty();
+        }
+        return Optional.of(new PlaceDetails(text(location, "placeId"),
+                new BigDecimal(location.get("latitude").asText()), new BigDecimal(location.get("longitude").asText()),
+                text(location, "formattedAddress"), null));
+    }
+
     // ---- HTTP ----
 
     private JsonNode send(String path, Object body) {
