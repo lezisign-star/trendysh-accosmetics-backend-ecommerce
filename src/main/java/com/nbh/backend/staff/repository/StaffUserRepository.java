@@ -11,4 +11,10 @@ public interface StaffUserRepository extends JpaRepository<StaffUser, UUID> {
     Optional<StaffUser> findByEmailIgnoreCaseAndDeletedFalse(String email);
     boolean existsByEmailIgnoreCase(String email);
     List<StaffUser> findByDeletedFalseOrderByCreatedAtDesc();
+
+    /** Everyone the stock-alert emails go to: enabled accounts that haven't been switched off. */
+    List<StaffUser> findByEnabledTrueAndDeletedFalseAndReceivesStockAlertsTrue();
+
+    /** Active holders of a role other than {@code id} — used to keep at least one Super Admin around. */
+    long countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndIdNot(String roleName, UUID id);
 }

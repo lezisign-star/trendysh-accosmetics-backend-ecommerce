@@ -157,6 +157,59 @@ class StaffManagementIntegrationTest {
                 .andExpect(status().is(422));
     }
 
+    private StaffUser staffWithRole(String role) {
+        StaffUser user = new StaffUser();
+        user.setEmail(role.toLowerCase() + "-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com");
+        user.setPassword(passwordEncoder.encode("irrelevant-password"));
+        user.setFirstName("Test");
+        user.setLastName(role);
+        user.setStaffRole(staffRoles.findByName(role).orElseThrow());
+        return staffUsers.save(user);
+    }
+
+    @Test
+    void theDeveloperRoleIsOnlyOfferedToADeveloper() throws Exception {
+        mvc.perform(get("/api/v1/admin/staff/roles").header("Authorization", "Bearer " + superAdminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.name=='DEVELOPER')]").isEmpty());
+
+        String developerToken = jwtService.generateAccessToken(staffWithRole("DEVELOPER"));
+        mvc.perform(get("/api/v1/admin/staff/roles").header("Authorization", "Bearer " + developerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.name=='DEVELOPER')]").exists());
+    }
+
+    @Test
+    void aSuperAdminCannotInviteAnAccountAsDeveloper() throws Exception {
+        mvc.perform(post("/api/v1/admin/staff/invite").header("Authorization", "Bearer " + superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + uniqueEmail() + "\",\"firstName\":\"A\",\"lastName\":\"B\","
+                                + "\"roleName\":\"DEVELOPER\"}"))
+                .andExpect(status().is(422));
+    }
+
+    @Test
+    void aStaffMemberCannotChangeTheirOwnRole() throws Exception {
+        mvc.perform(patch("/api/v1/admin/staff/" + superAdmin.getId() + "/role")
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"roleName\":\"CASHIER\"}"))
+                .andExpect(status().is(422));
+    }
+
+    @Test
+    void aSuperAdminCannotChangeOrDisableTheDeveloperAccount() throws Exception {
+        StaffUser developer = staffWithRole("DEVELOPER");
+
+        mvc.perform(patch("/api/v1/admin/staff/" + developer.getId() + "/role")
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"roleName\":\"CASHIER\"}"))
+                .andExpect(status().is(422));
+        mvc.perform(patch("/api/v1/admin/staff/" + developer.getId() + "/status")
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
+                .andExpect(status().is(422));
+    }
+
     @Test
     void listRolesReturnsTheSeededDefaults() throws Exception {
         mvc.perform(get("/api/v1/admin/staff/roles").header("Authorization", "Bearer " + superAdminToken))

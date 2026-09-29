@@ -52,6 +52,10 @@ public class StaffUser extends BaseEntity implements UserDetails {
 
     private Instant tempPasswordExpiresAt;
 
+    /** Gets the low-stock emails and the daily digest. On for everyone by default; an admin switches people off in Settings. */
+    @Column(nullable = false)
+    private boolean receivesStockAlerts = true;
+
     @Column(nullable = false)
     private boolean deleted = false;
 

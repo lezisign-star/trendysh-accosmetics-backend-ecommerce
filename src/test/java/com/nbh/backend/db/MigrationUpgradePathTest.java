@@ -44,6 +44,7 @@ class MigrationUpgradePathTest {
     private final UUID vehicleOrder = UUID.randomUUID();
     private final UUID bodaOrder = UUID.randomUUID();
     private final UUID pickupOrder = UUID.randomUUID();
+    private final UUID legacyStaff = UUID.randomUUID();
 
     private Connection connect() throws SQLException {
         Connection connection = DriverManager.getConnection(URL, USER, PASSWORD);
@@ -80,6 +81,9 @@ class MigrationUpgradePathTest {
             insertOrder(s, vehicleOrder, "SO-LEGACY-VEHICLE", "DELIVERY_COURIER", "VEHICLE");
             insertOrder(s, bodaOrder, "SO-LEGACY-BODA", "DELIVERY_COURIER", "BODA");
             insertOrder(s, pickupOrder, "SO-LEGACY-PICKUP", "PICKUP", null);
+            // A staff login that existed long before stock alerts (V43) — it must not silently drop off the list.
+            s.execute("INSERT INTO staff_user (id, email, password, first_name, last_name) VALUES ('" + legacyStaff
+                    + "', 'legacy-staff@example.com', 'x', 'Legacy', 'Staffer')");
         }
 
         flyway("latest").migrate();
@@ -159,6 +163,44 @@ class MigrationUpgradePathTest {
                     assertThat(rs.getInt(1) - rs.getInt(2)).as("%s.%s whole digits", column[0], column[1]).isGreaterThanOrEqualTo(12);
                 }
             }
+        }
+    }
+
+    private int count(Statement s, String sql) throws SQLException {
+        try (ResultSet rs = s.executeQuery(sql)) {
+            assertThat(rs.next()).isTrue();
+            return rs.getInt(1);
+        }
+    }
+
+    @Test
+    void existingOrdersAndCategoriesAreNotTreatedAsDemoData() throws Exception {
+        // V42: rows that already existed must come out as real data, or the demo toggle could hide them.
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM customer_order")).as("legacy orders survived").isGreaterThanOrEqualTo(3);
+            assertThat(count(s, "SELECT count(*) FROM customer_order WHERE is_mock_data")).isZero();
+            assertThat(count(s, "SELECT count(*) FROM category")).as("launch categories survived").isGreaterThan(0);
+            assertThat(count(s, "SELECT count(*) FROM category WHERE is_mock_data")).isZero();
+            for (String table : new String[]{"product", "category", "profession", "customer_order"}) {
+                assertThat(count(s, "SELECT count(*) FROM information_schema.columns WHERE table_schema = '" + SCHEMA
+                        + "' AND table_name = '" + table + "' AND column_name = 'is_mock_data' AND is_nullable = 'NO'"))
+                        .as("%s.is_mock_data exists and is NOT NULL", table).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
+    void existingStaffStartOnTheStockAlertListAndTheSettingsRowHasSaneDefaults() throws Exception {
+        // V43: everyone is on the alert list by default, including accounts created before it existed.
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM staff_user WHERE id = '" + legacyStaff + "' AND receives_stock_alerts")).isEqualTo(1);
+            assertThat(count(s, "SELECT count(*) FROM staff_user WHERE NOT receives_stock_alerts")).isZero();
+
+            assertThat(count(s, "SELECT count(*) FROM stock_alert_settings")).as("exactly one settings row").isEqualTo(1);
+            assertThat(count(s, "SELECT count(*) FROM stock_alert_settings WHERE lead_time_days = 7 AND safety_days = 3 AND digest_enabled"))
+                    .isEqualTo(1);
+            assertThatThrownBy(() -> s.execute("UPDATE stock_alert_settings SET lead_time_days = 500"))
+                    .hasMessageContaining("lead_time_days");
         }
     }
 

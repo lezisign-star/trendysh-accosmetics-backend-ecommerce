@@ -1,5 +1,34 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-09-30 — demo-data toggle, flash deals, staff role guards, stock alerts + forecast (V42, V43)
+
+`main` auto-deploys; **deploy this before the frontend** (new endpoints and card fields). V42/V43 are additive and are proven on
+legacy-shaped rows by `MigrationUpgradePathTest`. Full suite 513 green on the combined tree, plus 2 added upgrade-path tests.
+
+- **Publish no longer bumps `updatedAt`** (`ProductService.setPublished` -> `ProductRepository.updatePublishedState`; new `JpaAuditingConfig`
+  truncates audit timestamps to microseconds app-wide, wired via `@EnableJpaAuditing(dateTimeProviderRef=...)`). Fixes a false "someone else
+  changed this product" 409 when saving right after publishing. Regression test in `ProductSaveIntegrationTest`. (Built by another session.)
+- **Storefront card + search:** `CatalogVariantCardDto` gained `availableQty`, `sku`, `description`, `siblingCount`; `searchSellable` (`q`) now
+  matches description, SKU, category/parent category and a kit's profession label.
+- **Developer-only demo data (V42):** `is_mock_data` on product/category/profession/customer_order. `MockDataSeederService` generates ~109
+  products (templates in `CategoryTemplates`), 5 profession kits, fake reviews/sales (backed by fake `customer_order` rows), flash deals
+  (refreshed on every enable) and a few fast-selling low-stock products. Toggle = bulk flip of `is_published` on tagged rows, so no storefront
+  query changed; re-enable restores the same rows. `POST/GET /api/v1/admin/mock-data/{enable,disable,status}` is `hasRole('DEVELOPER')`, NOT a
+  permission (SUPER_ADMIN holds the same permissions). Images are Picsum placeholders (`fetchStockPhotoUrl`) — Unsplash's keyword source is dead.
+- **Flash deals from the admin (`FlashDealBulkService`, `POST /products/flash-deal[/end]`):** "N% off until <time>" on every sellable variant of
+  the chosen products, whole shillings, kits skipped.
+- **Staff role guards (`StaffManagementService`):** the DEVELOPER role is hidden from and unassignable by non-developers; a non-developer cannot
+  change/disable a developer account; nobody changes their own role; the last active SUPER_ADMIN cannot be demoted or disabled.
+  `StaffUserSeeder` also renames the developer account from the old "Owner Admin" placeholder to "Developer Account".
+- **Stock alerts + forecast (V43, package `stock.insights`):** `product_variant.reorder_level` is now settable (`PUT /stock/insights/variants/{id}/reorder-level`,
+  it had no writer before). `StockForecastService` = 30 days of `product_sale_event` vs `StockAvailabilityService` + open PO lines -> days left,
+  runs-out date, restock-for-a-month, suggested reorder level (`ForecastMath`). `LowStockAlertListener` (async, after commit; `AsyncConfig`
+  enables `@Async`) emails on `LowStockThresholdCrossedEvent`; `StockDigestScheduler` sends a 07:00 Africa/Nairobi digest, once a day
+  (`stock_alert_settings.last_digest_on`). Recipients: `staff_user.receives_stock_alerts`, default TRUE for everyone (an admin edits it in
+  Settings). Demo products are excluded from every email. **Expect the first digest after deploy to email all staff (Brevo is live).**
+- **Not verified:** none of the new admin screens has been click-tested (admin sign-in is not scriptable from the assistant). Known limits: no digest
+  catch-up if the app is down at 07:00; days out of stock understate demand.
+
 ## 2026-09-29 — checkout re-prices on every read, live order/payment updates, one more lock-order fix
 
 Built on top of the range below (still `main`, no new migration). Backend + frontend both touched; see the frontend HANDOFF for its half.

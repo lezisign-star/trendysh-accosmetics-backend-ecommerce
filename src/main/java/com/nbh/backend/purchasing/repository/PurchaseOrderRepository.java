@@ -10,6 +10,9 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,4 +38,18 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UU
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select po from PurchaseOrder po where po.id = :id")
     Optional<PurchaseOrder> lockById(@Param("id") UUID id);
+
+    /** Units ordered from suppliers but not yet received, per variant — stock that is already on its way. */
+    @Query("""
+            SELECT l.variant.id AS variantId, SUM(l.qtyOrdered - l.qtyReceived) AS qty
+            FROM PurchaseOrderLine l
+            WHERE l.purchaseOrder.status IN :statuses AND l.qtyOrdered > l.qtyReceived
+            GROUP BY l.variant.id
+            """)
+    List<OnOrderSummary> outstandingByVariant(@Param("statuses") Collection<PurchaseOrderStatus> statuses);
+
+    interface OnOrderSummary {
+        UUID getVariantId();
+        BigDecimal getQty();
+    }
 }

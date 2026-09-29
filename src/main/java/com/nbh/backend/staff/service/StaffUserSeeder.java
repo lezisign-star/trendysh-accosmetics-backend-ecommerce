@@ -69,6 +69,13 @@ public class StaffUserSeeder {
         // environment that already has this row (dev, test, Railway production), simply re-pointing
         // developer-emails at it wouldn't change its existing role. Idempotent: a no-op once moved.
         moveToRoleIfPresent("mdaucodes@gmail.com", "DEVELOPER");
+        // That move fixed the ROLE but not the display name — this account was originally seeded
+        // via seedEmails(..., "Owner", "Admin") below, back when it was the SUPER_ADMIN default, so
+        // "Signed in as Owner Admin" / "Welcome, Owner" still showed on every admin screen despite
+        // the role already correctly reading DEVELOPER underneath. Client's own SUPER_ADMIN account
+        // keeps "Owner" — only this specific known-stale placeholder is touched, so a name changed
+        // later through the account's own profile settings is never overwritten.
+        renameIfStillDefault("mdaucodes@gmail.com", "Owner", "Admin", "Developer", "Account");
 
         seedEmails(additionalAdminEmails, "SUPER_ADMIN", "Owner", "Admin");
         seedEmails(developerEmails, "DEVELOPER", "Developer", "Account");
@@ -111,6 +118,17 @@ public class StaffUserSeeder {
                 user.setStaffRole(role);
                 staffUserRepository.save(user);
                 log.info("Moved {} from {} to {}", email, previous, roleName);
+            }
+        });
+    }
+
+    private void renameIfStillDefault(String email, String oldFirst, String oldLast, String newFirst, String newLast) {
+        staffUserRepository.findByEmailIgnoreCaseAndDeletedFalse(email).ifPresent(user -> {
+            if (oldFirst.equals(user.getFirstName()) && oldLast.equals(user.getLastName())) {
+                user.setFirstName(newFirst);
+                user.setLastName(newLast);
+                staffUserRepository.save(user);
+                log.info("Renamed {} from \"{} {}\" to \"{} {}\"", email, oldFirst, oldLast, newFirst, newLast);
             }
         });
     }

@@ -44,6 +44,15 @@ public interface ProductSaleEventRepository extends JpaRepository<ProductSaleEve
         BigDecimal getTotalQty();
     }
 
+    /** Units sold per variant since {@code since} — the demand the stock forecast averages over. */
+    @Query("""
+            SELECT s.variant.id AS variantId, COALESCE(SUM(s.qty), 0) AS totalQty
+            FROM ProductSaleEvent s
+            WHERE s.occurredAt >= :since
+            GROUP BY s.variant.id
+            """)
+    List<VariantSoldSummary> unitsSoldByVariantSince(@Param("since") Instant since);
+
     /**
      * The admin analytics "top sellers" list — {@code since} is REQUIRED
      * (never null; pass {@code Instant.EPOCH} for "all time"), same reason

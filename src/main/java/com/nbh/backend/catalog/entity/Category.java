@@ -29,4 +29,8 @@ public class Category extends BaseEntity {
 
     @Column(nullable = false)
     private boolean isPublished = true;
+
+    /** Developer-toggleable demo content (2026-09-29) — see MockDataSeederService. */
+    @Column(nullable = false)
+    private boolean isMockData = false;
 }

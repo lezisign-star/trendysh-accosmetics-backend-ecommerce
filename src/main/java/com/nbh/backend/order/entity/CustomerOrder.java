@@ -161,4 +161,9 @@ public class CustomerOrder extends BaseEntity {
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<CustomerOrderItem> items = new ArrayList<>();
+
+    /** Developer-toggleable demo content (2026-09-29) — backs fabricated reviews/sale-events only,
+     *  never a real order. See MockDataSeederService. */
+    @Column(nullable = false)
+    private boolean isMockData = false;
 }

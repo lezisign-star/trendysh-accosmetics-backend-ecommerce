@@ -153,14 +153,17 @@ public class CatalogService {
         ProductReviewRepository.RatingSummary rating = ratingByProduct.get(p.getId());
         List<UUID> categoryIds = p.getCategories().stream().map(Category::getId).toList();
 
+        BigDecimal availableQty = availableByVariant.getOrDefault(v.getId(), BigDecimal.ZERO);
         return new CatalogVariantCardDto(
                 v.getId(), p.getId(), p.getSlug(), p.getName(), variantName, displayName,
                 imageByVariant.get(v.getId()), categoryIds, categoryIds.isEmpty() ? null : categoryIds.get(0),
                 price.effectivePrice(), price.originalPrice(), price.onDeal(), price.dealEndsAt(),
-                v.isKit() || availableByVariant.getOrDefault(v.getId(), BigDecimal.ZERO).signum() > 0,
+                v.isKit() || availableQty.signum() > 0,
                 p.isPopular(), p.isNewArrival(),
                 rating != null ? rating.getAvgRating() : 0.0, rating != null ? rating.getReviewCount() : 0L,
-                soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO), (int) Math.max(0, sellableCount - 1));
+                soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO),
+                v.isKit() ? BigDecimal.ZERO : availableQty, v.getSku(), p.getDescription(),
+                (int) Math.max(0, sellableCount - 1));
     }
 
     private Map<UUID, Long> sellableVariantCountByProduct(List<UUID> productIds) {

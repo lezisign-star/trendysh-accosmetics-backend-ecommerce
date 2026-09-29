@@ -17,6 +17,23 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
 
     List<ProductVariant> findByProductId(UUID productId);
 
+    /** One variant with its product already loaded — for callers that build a message from both outside a transaction. */
+    @Query("SELECT v FROM ProductVariant v JOIN FETCH v.product WHERE v.id = :id")
+    Optional<ProductVariant> findWithProductById(@Param("id") UUID id);
+
+    /**
+     * Every variant that could actually run out on the shelf: sellable, not a kit (kits hold no stock of
+     * their own — their components do), on a product that is live in the shop. Product is fetched in the
+     * same query because the stock forecast reads its name for every row.
+     */
+    @Query("""
+            SELECT v FROM ProductVariant v JOIN FETCH v.product p
+            WHERE v.deleted = false AND v.isActive = true AND v.isKit = false
+              AND v.sellingPrice IS NOT NULL
+              AND p.deleted = false AND p.isPublished = true
+            """)
+    List<ProductVariant> findForecastable();
+
     /** Batch fetch for a page of products — avoids one query per product (audit finding F12). */
     List<ProductVariant> findByProductIdIn(Collection<UUID> productIds);
 
@@ -36,20 +53,36 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
      * The storefront's one-card-per-variant browse (Phase 3, 2026-09-24 — replaces the old
      * one-card-per-product catalogue). {@code v.isSellable()} can't be expressed in JPQL directly
      * (it's a plain Java method, not a mapped property), so its three conditions are spelled out
-     * here instead: not deleted, active, and has a price. {@code q} matches the product name or
-     * this variant's own name. Same {@code CAST(:q AS string)} null-parameter fix and explicit
-     * {@code LEFT JOIN c.parent parent} landmine-avoidance as {@code ProductRepository}'s
-     * equivalent queries — see their javadoc for why both are required.
+     * here instead: not deleted, active, and has a price. Same {@code CAST(:q AS string)}
+     * null-parameter fix and explicit {@code LEFT JOIN c.parent parent} landmine-avoidance as
+     * {@code ProductRepository}'s equivalent queries — see their javadoc for why both are required.
+     *
+     * {@code q} matches as much of "what this product actually is" as reasonably makes it
+     * findable (2026-09-29 — client's own request, "as much as possible: category, description,
+     * name, sku, inclusion in a kit"): product/variant name, product description, SKU, this
+     * variant's own category and its parent, and — for a kit's own line only — the profession it's
+     * curated for (so "brow artist" finds a kit named something else entirely, as long as it's
+     * filed under that profession). {@code Kit} isn't reachable from {@code ProductVariant} via a
+     * mapped association (the FK lives on {@code kit.variant_id}, not the other way around), hence
+     * the explicit ad-hoc {@code ON} join rather than a normal path join.
      */
     @Query("""
             SELECT DISTINCT v FROM ProductVariant v
             JOIN v.product p
             LEFT JOIN p.categories c
             LEFT JOIN c.parent parent
+            LEFT JOIN Kit kit ON kit.variant = v
+            LEFT JOIN kit.profession prof
             WHERE v.deleted = false AND v.isActive = true AND v.sellingPrice IS NOT NULL
               AND p.isPublished = true AND p.deleted = false
-              AND (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
-                   OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+              AND (:q IS NULL
+                   OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(p.description) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(c.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(parent.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(prof.label) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
               AND (:categorySlug IS NULL OR c.slug = :categorySlug OR parent.slug = :categorySlug)
               AND (:popular IS NULL OR p.isPopular = :popular)
               AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)

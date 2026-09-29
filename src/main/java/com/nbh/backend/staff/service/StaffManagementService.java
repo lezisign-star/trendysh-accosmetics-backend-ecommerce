@@ -26,6 +26,8 @@ import java.util.UUID;
 @Service
 public class StaffManagementService {
 
+    private static final String DEVELOPER_ROLE = "DEVELOPER";
+    private static final String SUPER_ADMIN_ROLE = "SUPER_ADMIN";
     private static final String ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
     private final SecureRandom random = new SecureRandom();
 
@@ -47,19 +49,24 @@ public class StaffManagementService {
         return staffUsers.findByDeletedFalseOrderByCreatedAtDesc().stream().map(StaffDto::from).toList();
     }
 
+    /** The roles {@code actor} may hand out: everyone but a developer never sees DEVELOPER offered. */
     @Transactional(readOnly = true)
-    public List<RoleDto> roles() {
-        return staffRoles.findByDeletedFalseOrderByDisplayName().stream().map(RoleDto::from).toList();
+    public List<RoleDto> roles(StaffUser actor) {
+        return staffRoles.findByDeletedFalseOrderByDisplayName().stream()
+                .filter(r -> isDeveloper(actor) || !DEVELOPER_ROLE.equals(r.getName()))
+                .map(RoleDto::from)
+                .toList();
     }
 
     @Transactional
-    public StaffDto invite(InviteRequest request) {
+    public StaffDto invite(InviteRequest request, StaffUser actor) {
         String email = request.email().trim().toLowerCase();
         if (staffUsers.existsByEmailIgnoreCase(email)) {
             throw new ConflictException("A staff account with that email already exists");
         }
         StaffRole role = staffRoles.findByName(request.roleName())
                 .orElseThrow(() -> new UnprocessableException("Unknown role: " + request.roleName()));
+        requireMayAssign(role, actor);
 
         StaffUser user = new StaffUser();
         user.setEmail(email);
@@ -75,10 +82,18 @@ public class StaffManagementService {
     }
 
     @Transactional
-    public StaffDto updateRole(UUID id, String roleName) {
+    public StaffDto updateRole(UUID id, String roleName, StaffUser actor) {
         StaffUser user = find(id);
         StaffRole role = staffRoles.findByName(roleName)
                 .orElseThrow(() -> new UnprocessableException("Unknown role: " + roleName));
+        if (user.getId().equals(actor.getId())) {
+            throw new UnprocessableException("You can't change your own role");
+        }
+        requireMayManage(user, actor);
+        requireMayAssign(role, actor);
+        if (SUPER_ADMIN_ROLE.equals(user.getStaffRole().getName()) && !SUPER_ADMIN_ROLE.equals(role.getName())) {
+            requireAnotherActiveSuperAdmin(user);
+        }
         user.setStaffRole(role);
         return StaffDto.from(staffUsers.save(user));
     }
@@ -89,8 +104,37 @@ public class StaffManagementService {
         if (!enabled && user.getId().equals(actingStaff.getId())) {
             throw new UnprocessableException("You can't disable your own account");
         }
+        requireMayManage(user, actingStaff);
+        if (!enabled && user.isEnabled() && SUPER_ADMIN_ROLE.equals(user.getStaffRole().getName())) {
+            requireAnotherActiveSuperAdmin(user);
+        }
         user.setEnabled(enabled);
         return StaffDto.from(staffUsers.save(user));
+    }
+
+    private static boolean isDeveloper(StaffUser user) {
+        return user.getStaffRole() != null && DEVELOPER_ROLE.equals(user.getStaffRole().getName());
+    }
+
+    /** The developer's own account is off limits to everyone else, including the client's owner. */
+    private static void requireMayManage(StaffUser target, StaffUser actor) {
+        if (isDeveloper(target) && !isDeveloper(actor)) {
+            throw new UnprocessableException("The developer account can't be changed from here");
+        }
+    }
+
+    /** Handing out DEVELOPER would unlock developer-only tools (e.g. the demo-data toggle), so only a developer may. */
+    private static void requireMayAssign(StaffRole role, StaffUser actor) {
+        if (DEVELOPER_ROLE.equals(role.getName()) && !isDeveloper(actor)) {
+            throw new UnprocessableException("Only a developer can assign the Developer role");
+        }
+    }
+
+    /** Stops the shop being left with nobody who can manage staff. */
+    private void requireAnotherActiveSuperAdmin(StaffUser leaving) {
+        if (staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndIdNot(SUPER_ADMIN_ROLE, leaving.getId()) == 0) {
+            throw new UnprocessableException("There must always be at least one active Super Admin");
+        }
     }
 
     private StaffUser find(UUID id) {

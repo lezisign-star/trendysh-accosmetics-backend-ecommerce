@@ -1,0 +1,144 @@
+package com.nbh.backend.catalog;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nbh.backend.catalog.entity.Category;
+import com.nbh.backend.catalog.repository.CategoryRepository;
+import com.nbh.backend.catalog.repository.ProductRepository;
+import com.nbh.backend.common.security.JwtService;
+import com.nbh.backend.staff.entity.StaffUser;
+import com.nbh.backend.staff.repository.StaffRoleRepository;
+import com.nbh.backend.staff.repository.StaffUserRepository;
+import com.nbh.backend.catalog.service.MockDataSeederService;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+/**
+ * The developer-only demo-data toggle: enable generates a realistic catalogue tagged is_mock_data,
+ * disable hides it (rows kept, not deleted), a second enable brings the SAME rows back without
+ * regenerating, and only the DEVELOPER role — not SUPER_ADMIN, which holds the identical permission
+ * set — can use any of it. See MockDataSeederService for the design.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class MockDataToggleIntegrationTest {
+
+    private static final List<String> TOP_LEVEL = List.of("nails", "lashes", "brows", "make-up", "spa", "salon-equipment");
+
+    @Autowired private MockMvc mvc;
+    @Autowired private ObjectMapper json;
+    @Autowired private JwtService jwtService;
+    @Autowired private StaffUserRepository staffUsers;
+    @Autowired private StaffRoleRepository staffRoles;
+    @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private CategoryRepository categories;
+    @Autowired private ProductRepository products;
+    @Autowired private MockDataSeederService seeder;
+
+    private String developerToken;
+    private String superAdminToken;
+
+    @BeforeEach
+    void setUp() {
+        for (String slug : TOP_LEVEL) {
+            if (categories.findBySlug(slug).isEmpty()) {
+                Category c = new Category();
+                c.setSlug(slug);
+                c.setName(slug);
+                categories.save(c);
+            }
+        }
+        developerToken = jwtService.generateAccessToken(staffWithRole("DEVELOPER"));
+        superAdminToken = jwtService.generateAccessToken(staffWithRole("SUPER_ADMIN"));
+    }
+
+    /** The generated rows stay in the shared test DB (hidden, not deleted — that's the feature), so hide them again so no other test sees ~100 published products. */
+    @AfterEach
+    void hideMockDataAgain() {
+        seeder.disable();
+    }
+
+    private StaffUser staffWithRole(String role) {
+        StaffUser user = new StaffUser();
+        user.setEmail("mock-toggle-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com");
+        user.setPassword(passwordEncoder.encode("irrelevant-password"));
+        user.setFirstName("Test");
+        user.setLastName(role);
+        user.setStaffRole(staffRoles.findByName(role).orElseThrow());
+        return staffUsers.save(user);
+    }
+
+    private JsonNode call(boolean isPost, String path, String token) throws Exception {
+        var request = isPost ? post(path) : get(path);
+        MvcResult result = mvc.perform(request.header("Authorization", "Bearer " + token)).andReturn();
+        assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200);
+        return json.readTree(result.getResponse().getContentAsString());
+    }
+
+    private String searchCatalogue(String query) throws Exception {
+        return mvc.perform(get("/api/v1/catalog/variants").param("q", query))
+                .andReturn().getResponse().getContentAsString();
+    }
+
+    @Test
+    void superAdminIsForbiddenFromEveryEndpointEvenThoughItHoldsTheSamePermissionsAsDeveloper() throws Exception {
+        mvc.perform(get("/api/v1/admin/mock-data/status").header("Authorization", "Bearer " + superAdminToken))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/admin/mock-data/enable").header("Authorization", "Bearer " + superAdminToken))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/admin/mock-data/disable").header("Authorization", "Bearer " + superAdminToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void enableGeneratesTheCatalogueDisableHidesItAndReEnableRestoresTheSameRows() throws Exception {
+        JsonNode enabled = call(true, "/api/v1/admin/mock-data/enable", developerToken);
+        assertThat(enabled.get("enabled").asBoolean()).isTrue();
+        int productCount = enabled.get("productCount").asInt();
+        assertThat(productCount).as("~100 mock products across the 6 real categories").isBetween(90, 120);
+        assertThat(enabled.get("kitCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(enabled.get("professionCount").asInt()).isGreaterThanOrEqualTo(1);
+        String generatedAt = enabled.get("generatedAt").asText();
+
+        // The shopper-facing catalogue really shows them.
+        assertThat(searchCatalogue("Chrome Mirror Gel Polish")).contains("Chrome Mirror Gel Polish");
+
+        // The Flash Deals rail has something to show.
+        JsonNode dealCards = json.readTree(mvc.perform(get("/api/v1/catalog/variants").param("deal", "true"))
+                .andReturn().getResponse().getContentAsString());
+        assertThat(dealCards.get("content").size()).as("demo flash deals").isGreaterThanOrEqualTo(8);
+
+        // The Forecast tab has products to warn about.
+        JsonNode forecastSummary = call(false, "/api/v1/stock/insights/summary", developerToken);
+        assertThat(forecastSummary.get("needsAttention").asInt()).as("demo restock pressure").isGreaterThanOrEqualTo(10);
+
+        JsonNode disabled = call(true, "/api/v1/admin/mock-data/disable", developerToken);
+        assertThat(disabled.get("enabled").asBoolean()).isFalse();
+        assertThat(disabled.get("productCount").asInt()).as("hidden, not deleted").isEqualTo(productCount);
+        assertThat(products.findAll().stream().filter(p -> p.isMockData() && p.isPublished()).count()).isZero();
+
+        assertThat(searchCatalogue("Chrome Mirror Gel Polish")).doesNotContain("Chrome Mirror Gel Polish");
+
+        JsonNode reEnabled = call(true, "/api/v1/admin/mock-data/enable", developerToken);
+        assertThat(reEnabled.get("enabled").asBoolean()).isTrue();
+        assertThat(reEnabled.get("productCount").asInt()).as("no regeneration").isEqualTo(productCount);
+        assertThat(reEnabled.get("generatedAt").asText()).isEqualTo(generatedAt);
+    }
+}

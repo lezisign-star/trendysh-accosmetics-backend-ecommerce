@@ -16,6 +16,21 @@ import java.util.UUID;
  * (after any deal or active campaign — what the shopper actually pays), matching what
  * {@code CartService} locks in. {@code siblingCount} is how many OTHER sellable variants this
  * product has — the "+3 more" the product-detail page's sibling strip expands on.
+ *
+ * {@code availableQty} is {@link com.nbh.backend.stock.service.StockAvailabilityService}'s own
+ * "SHOP on-hand minus reserved" figure (2026-09-29) — the same number {@code inStock} is already
+ * derived from, just not rounded down to a boolean. Present on every card (grid, siblings, kit
+ * components) but only the product-detail page renders it today; a kit's own line carries
+ * {@link BigDecimal#ZERO} here since availability isn't tracked per kit, only per real variant.
+ *
+ * {@code sku} (2026-09-29) is now customer-facing per the client's own call — a wholesale/trade
+ * buyer reordering wants a code to reference, not just a name. Was admin-only before this.
+ *
+ * {@code description} (2026-09-29) is the product's own description (shared by every variant,
+ * same source as {@code CatalogVariantDetailDto.aboutProduct}) — added here specifically to feed
+ * the frontend's client-side fuzzy search ({@code lib/search.ts}), which already had description
+ * matching built in but nothing to match against (every card's description was hardcoded to "" in
+ * {@code toProduct()}); not rendered anywhere on a card, search-only.
  */
 public record CatalogVariantCardDto(
         UUID variantId,
@@ -37,6 +52,9 @@ public record CatalogVariantCardDto(
         double avgRating,
         long reviewCount,
         BigDecimal unitsSold,
+        BigDecimal availableQty,
+        String sku,
+        String description,
         int siblingCount
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */

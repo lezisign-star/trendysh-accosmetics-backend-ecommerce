@@ -24,4 +24,11 @@ public class Profession extends BaseEntity {
 
     @Column(nullable = false, length = 100)
     private String label;
+
+    /** Developer-toggleable demo content (2026-09-29) — bookkeeping only, not read by any query
+     *  filter. A profession with zero currently-visible kits already drops out of the public "Shop
+     *  by profession" grouping on its own (see KitService.listPublicKits), so toggling mock kits'
+     *  backing products is enough to hide mock professions too without this flag being consulted. */
+    @Column(nullable = false)
+    private boolean isMockData = false;
 }

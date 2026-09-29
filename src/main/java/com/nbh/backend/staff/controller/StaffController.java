@@ -40,20 +40,21 @@ public class StaffController {
 
     @PreAuthorize("hasAuthority('PERM_USER_VIEW')")
     @GetMapping("/roles")
-    public List<RoleDto> roles() {
-        return service.roles();
+    public List<RoleDto> roles(@AuthenticationPrincipal StaffUser staff) {
+        return service.roles(staff);
     }
 
     @PreAuthorize("hasAuthority('PERM_USER_CREATE')")
     @PostMapping("/invite")
-    public StaffDto invite(@Valid @RequestBody InviteRequest body) {
-        return service.invite(body);
+    public StaffDto invite(@Valid @RequestBody InviteRequest body, @AuthenticationPrincipal StaffUser staff) {
+        return service.invite(body, staff);
     }
 
     @PreAuthorize("hasAuthority('PERM_USER_MANAGE_ROLES')")
     @PatchMapping("/{id}/role")
-    public StaffDto updateRole(@PathVariable UUID id, @Valid @RequestBody RoleUpdateRequest body) {
-        return service.updateRole(id, body.roleName());
+    public StaffDto updateRole(@PathVariable UUID id, @Valid @RequestBody RoleUpdateRequest body,
+                                @AuthenticationPrincipal StaffUser staff) {
+        return service.updateRole(id, body.roleName(), staff);
     }
 
     @PreAuthorize("hasAuthority('PERM_USER_MANAGE_ROLES')")

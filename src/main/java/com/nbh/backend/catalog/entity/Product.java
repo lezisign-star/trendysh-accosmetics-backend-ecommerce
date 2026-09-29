@@ -89,4 +89,10 @@ public class Product extends BaseEntity {
     private UUID createdBy;
 
     private UUID updatedBy;
+
+    /** Developer-toggleable demo content (2026-09-29) — see MockDataSeederService. Bulk-flipping
+     *  isPublished on every row where this is true is the entire enable/disable mechanism; nothing
+     *  else in the codebase needs to know this flag exists. */
+    @Column(nullable = false)
+    private boolean isMockData = false;
 }
