@@ -108,10 +108,11 @@ class KitIntegrationTest {
                 .get("id").asText();
     }
 
+    /** Published, not a draft — a real kit component must be independently purchasable (see
+     *  KitDtos.isComponentAvailable), so an admin-picked component is never left as an unpublished
+     *  draft in practice, and neither is this test data. */
     private String newComponentVariant(BigDecimal sellingPrice) throws Exception {
-        String body = "{\"name\":\"" + unique("Kit component") + "\",\"categoryIds\":[],\"published\":false,"
-                + "\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"" + sellingPrice + "\",\"isActive\":true}]}";
-        return ok(post("/api/v1/products/draft"), body).get("variants").get(0).get("id").asText();
+        return newToggleableComponent(sellingPrice).get("variants").get(0).get("id").asText();
     }
 
     /**
@@ -426,5 +427,100 @@ class KitIntegrationTest {
         assertThat(reFetched.get("components")).hasSize(1);
         assertThat(reFetched.get("components").get(0).get("variantId").asText()).isEqualTo(newComponent);
         assertThat(reFetched.get("name").asText()).isEqualTo("Updated Kit Name");
+    }
+
+    /** A product created as a draft (unpublished), then immediately published — gives a variant
+     *  whose publish state this session controls with a single follow-up call. */
+    private JsonNode newToggleableComponent(BigDecimal sellingPrice) throws Exception {
+        String body = "{\"name\":\"" + unique("Toggleable component") + "\",\"categoryIds\":[],\"published\":false,"
+                + "\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"" + sellingPrice + "\",\"isActive\":true}]}";
+        JsonNode product = ok(post("/api/v1/products/draft"), body);
+        ok(post("/api/v1/products/" + product.get("id").asText() + "/publish"), null);
+        return product;
+    }
+
+    private JsonNode findKitByVariantId(JsonNode kitsBody, String variantId) {
+        for (JsonNode k : kitsBody) {
+            if (k.get("variantId").asText().equals(variantId)) {
+                return k;
+            }
+        }
+        return null;
+    }
+
+    private JsonNode fetchPublicKits() throws Exception {
+        return json.readTree(mvc.perform(get("/api/v1/catalog/kits")).andReturn().getResponse().getContentAsString());
+    }
+
+    @Test
+    void aDisabledComponentIsAutoExcludedAndReappearsWhenReEnabled() throws Exception {
+        String categoryId = newCategory();
+        String professionId = newProfession();
+
+        JsonNode toggleProduct = newToggleableComponent(new BigDecimal("300"));
+        String toggleProductId = toggleProduct.get("id").asText();
+        String toggleVariantId = toggleProduct.get("variants").get(0).get("id").asText();
+        String stableComponent = newComponentVariant(new BigDecimal("400"));
+        receiveStock(Map.of(toggleVariantId, new BigDecimal("5"), stableComponent, new BigDecimal("5")));
+
+        JsonNode kit = createKit(categoryId, professionId, "Two real components, one toggled",
+                List.of(toggleVariantId, stableComponent), List.of("1", "1"), "600");
+        String kitVariantId = kit.get("variantId").asText();
+
+        JsonNode beforeMatch = findKitByVariantId(fetchPublicKits(), kitVariantId);
+        assertThat(beforeMatch).as("kit should be listed while both components are available").isNotNull();
+        assertThat(beforeMatch.get("items")).hasSize(2);
+        assertThat(beforeMatch.get("packagePrice").decimalValue()).isEqualByComparingTo("600");
+
+        // Disable one component's product — the kit keeps selling, minus that item, at the SAME price.
+        ok(post("/api/v1/products/" + toggleProductId + "/unpublish"), null);
+
+        JsonNode duringMatch = findKitByVariantId(fetchPublicKits(), kitVariantId);
+        assertThat(duringMatch).as("kit should still be listed with its one remaining component").isNotNull();
+        assertThat(duringMatch.get("items")).hasSize(1);
+        assertThat(duringMatch.get("items").get(0).get("variantId").asText()).isEqualTo(stableComponent);
+        assertThat(duringMatch.get("packagePrice").decimalValue()).isEqualByComparingTo("600");
+
+        // Admin view keeps showing BOTH components (full defined composition), flagged as needing attention.
+        JsonNode adminView = ok(get("/api/v1/admin/kits/" + kit.get("id").asText()), null);
+        assertThat(adminView.get("components")).hasSize(2);
+        assertThat(adminView.get("hasUnavailableComponent").asBoolean()).isTrue();
+        assertThat(adminView.get("sumOfComponents").decimalValue()).isEqualByComparingTo("700");
+
+        // Checkout only reserves the one remaining real component.
+        String sessionId = "kit-toggle-session-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
+        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"), checkoutRequestBody("kit-toggle@example.com"), sessionId);
+        String orderId = checkoutResult.get("order").get("id").asText();
+        List<StockReservation> reservations = reservationRepository.findByReferenceTypeAndReferenceId(
+                "CUSTOMER_ORDER", UUID.fromString(orderId));
+        assertThat(reservations).hasSize(1);
+
+        // Re-enable it — the component (and the kit's full contents) reappear automatically.
+        ok(post("/api/v1/products/" + toggleProductId + "/publish"), null);
+        JsonNode afterMatch = findKitByVariantId(fetchPublicKits(), kitVariantId);
+        assertThat(afterMatch).as("kit should list both components again once re-enabled").isNotNull();
+        assertThat(afterMatch.get("items")).hasSize(2);
+    }
+
+    @Test
+    void aKitWithAllComponentsDisabledDisappearsFromThePublicListing() throws Exception {
+        String categoryId = newCategory();
+        String professionId = newProfession();
+
+        JsonNode toggleProduct = newToggleableComponent(new BigDecimal("300"));
+        String toggleProductId = toggleProduct.get("id").asText();
+        String toggleVariantId = toggleProduct.get("variants").get(0).get("id").asText();
+        receiveStock(Map.of(toggleVariantId, new BigDecimal("5")));
+
+        JsonNode kit = createKit(categoryId, professionId, "Kit with a single, soon-disabled component",
+                List.of(toggleVariantId), List.of("1"), "250");
+        String kitVariantId = kit.get("variantId").asText();
+
+        ok(post("/api/v1/products/" + toggleProductId + "/unpublish"), null);
+
+        assertThat(findKitByVariantId(fetchPublicKits(), kitVariantId))
+                .as("a kit with zero purchasable components must not be listed publicly")
+                .isNull();
     }
 }

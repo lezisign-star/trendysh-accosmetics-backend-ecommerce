@@ -31,8 +31,10 @@ public class KitController {
 
     @GetMapping
     public Page<KitAdminDto> list(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) UUID professionId,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return service.list(pageable);
+        return service.list(q, professionId, pageable);
     }
 
     @GetMapping("/{id}")

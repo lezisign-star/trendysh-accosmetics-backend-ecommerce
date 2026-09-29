@@ -10,6 +10,7 @@ import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
+import com.nbh.backend.kits.dto.KitDtos;
 import com.nbh.backend.kits.dto.KitDtos.ComponentInput;
 import com.nbh.backend.kits.dto.KitDtos.KitAdminDto;
 import com.nbh.backend.kits.dto.KitDtos.SaveKitRequest;
@@ -73,8 +74,9 @@ public class KitService {
     // ---- admin CRUD ----
 
     @Transactional(readOnly = true)
-    public Page<KitAdminDto> list(Pageable pageable) {
-        return kits.findAll(pageable).map(KitAdminDto::from);
+    public Page<KitAdminDto> list(String q, UUID professionId, Pageable pageable) {
+        String query = q == null || q.isBlank() ? null : q.trim();
+        return kits.searchAdmin(query, professionId, pageable).map(KitAdminDto::from);
     }
 
     @Transactional(readOnly = true)
@@ -219,6 +221,10 @@ public class KitService {
         List<UUID> kitIds = active.stream().map(Kit::getId).toList();
         Map<UUID, List<KitComponent>> componentsByKit = componentRepository.findByKitIdInOrderByLineNoAsc(kitIds)
                 .stream()
+                // A component whose own product has since been unpublished/deleted/deactivated is
+                // silently excluded — the kit keeps selling with what's left, at its unchanged
+                // package price. See KitDtos.isComponentAvailable's javadoc.
+                .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
                 .collect(Collectors.groupingBy(c -> c.getKit().getId()));
 
         Set<UUID> productIds = new LinkedHashSet<>();
@@ -233,15 +239,22 @@ public class KitService {
         Map<UUID, String> imageByProduct = coverImageByProduct(productIds);
 
         return active.stream()
-                .map(k -> toPublicDto(k, componentsByKit.getOrDefault(k.getId(), List.of()), imageByProduct))
+                // A kit with NOTHING left purchasable disappears from the storefront entirely — the
+                // moment a component is re-enabled it reappears on its own, no admin action needed.
+                // A kit can never legitimately have zero components (creation requires at least
+                // one), so an absent map entry here means every one of them is unavailable right now.
+                .filter(k -> componentsByKit.containsKey(k.getId()))
+                .map(k -> toPublicDto(k, componentsByKit.get(k.getId()), imageByProduct))
                 .toList();
     }
 
-    /** The one method {@code CheckoutService} calls — empty for any variant that isn't a kit. */
+    /** The one method {@code CheckoutService} calls — empty for any variant that isn't a kit, or
+     *  for a kit whose components have all since become unavailable. */
     @Transactional(readOnly = true)
     public List<KitComponentLine> componentsForVariant(UUID variantId) {
         return kits.findByVariantId(variantId)
                 .map(k -> componentRepository.findByKitIdOrderByLineNoAsc(k.getId()).stream()
+                        .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
                         .map(c -> new KitComponentLine(c.getComponentVariant(), c.getQty()))
                         .toList())
                 .orElse(List.of());
