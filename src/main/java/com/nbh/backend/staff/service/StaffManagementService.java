@@ -98,6 +98,22 @@ public class StaffManagementService {
         return StaffDto.from(staffUsers.save(user));
     }
 
+    /**
+     * Name only — email is deliberately not editable here: it is also the sign-in identifier, and
+     * changing it well needs its own confirmation flow (verify the new address, handle an
+     * already-open session) that nothing has asked for yet. Unlike role/status, editing your OWN
+     * name is allowed — there is no security reason to forbid it, and the same permission (managing
+     * the staff list) already implies you may see and correct a colleague's spelling too.
+     */
+    @Transactional
+    public StaffDto updateName(UUID id, String firstName, String lastName, StaffUser actingStaff) {
+        StaffUser user = find(id);
+        requireMayManage(user, actingStaff);
+        user.setFirstName(firstName.trim());
+        user.setLastName(lastName.trim());
+        return StaffDto.from(staffUsers.save(user));
+    }
+
     @Transactional
     public StaffDto setEnabled(UUID id, boolean enabled, StaffUser actingStaff) {
         StaffUser user = find(id);

@@ -150,6 +150,46 @@ class StaffManagementIntegrationTest {
     }
 
     @Test
+    void aStaffMembersNameCanBeCorrectedThroughTheApiIncludingTheirOwn() throws Exception {
+        StaffUser target = staffWithRole("CASHIER");
+
+        mvc.perform(patch("/api/v1/admin/staff/" + target.getId() + "/name")
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"firstName\":\"Jane\",\"lastName\":\"Wanjiru\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.firstName").value("Jane"))
+                .andExpect(jsonPath("$.lastName").value("Wanjiru"));
+
+        // Unlike /role and /status, there is no rule against editing your own name.
+        mvc.perform(patch("/api/v1/admin/staff/" + superAdmin.getId() + "/name")
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"firstName\":\"Corrected\",\"lastName\":\"Self\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.firstName").value("Corrected"));
+    }
+
+    @Test
+    void renamingRequiresUserManageRolesJustLikeRoleAndStatus() throws Exception {
+        String managerToken = managerToken(); // has USER_VIEW, not USER_MANAGE_ROLES
+        StaffUser target = staffWithRole("CASHIER");
+
+        mvc.perform(patch("/api/v1/admin/staff/" + target.getId() + "/name")
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"firstName\":\"Nope\",\"lastName\":\"Nope\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aSuperAdminCannotRenameTheDeveloperAccount() throws Exception {
+        StaffUser developer = staffWithRole("DEVELOPER");
+
+        mvc.perform(patch("/api/v1/admin/staff/" + developer.getId() + "/name")
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"firstName\":\"Nope\",\"lastName\":\"Nope\"}"))
+                .andExpect(status().is(422));
+    }
+
+    @Test
     void aStaffMemberCannotDisableTheirOwnAccount() throws Exception {
         mvc.perform(patch("/api/v1/admin/staff/" + superAdmin.getId() + "/status")
                         .header("Authorization", "Bearer " + superAdminToken)

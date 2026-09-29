@@ -22,6 +22,8 @@ public final class StaffDtos {
 
     public record RoleUpdateRequest(@NotBlank String roleName) {}
 
+    public record NameUpdateRequest(@NotBlank @Size(max = 100) String firstName, @NotBlank @Size(max = 100) String lastName) {}
+
     public record StatusUpdateRequest(boolean enabled) {}
 
     public record RoleDto(UUID id, String name, String displayName) {

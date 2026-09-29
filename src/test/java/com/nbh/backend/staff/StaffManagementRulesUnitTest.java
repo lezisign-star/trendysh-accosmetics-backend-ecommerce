@@ -2,6 +2,7 @@ package com.nbh.backend.staff;
 
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.staff.dto.StaffDtos.InviteRequest;
+import com.nbh.backend.staff.dto.StaffDtos.StaffDto;
 import com.nbh.backend.staff.entity.StaffRole;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.staff.repository.StaffRoleRepository;
@@ -122,7 +123,31 @@ class StaffManagementRulesUnitTest {
                 .isInstanceOf(UnprocessableException.class).hasMessageContaining("developer account");
         assertThatThrownBy(() -> service.setEnabled(developer.getId(), false, superAdmin))
                 .isInstanceOf(UnprocessableException.class).hasMessageContaining("developer account");
+        assertThatThrownBy(() -> service.updateName(developer.getId(), "New", "Name", superAdmin))
+                .isInstanceOf(UnprocessableException.class).hasMessageContaining("developer account");
         assertThat(developer.isEnabled()).isTrue();
+        assertThat(developer.getFirstName()).isEqualTo("Test");
+    }
+
+    @Test
+    void aStaffMembersNameCanBeCorrectedIncludingTheirOwn() {
+        StaffUser cashier = user(cashierRole);
+        StaffUser superAdmin = user(superAdminRole);
+
+        StaffDto updated = service.updateName(cashier.getId(), "  Jane  ", "  Wanjiru  ", superAdmin);
+        assertThat(updated.firstName()).isEqualTo("Jane");
+        assertThat(updated.lastName()).isEqualTo("Wanjiru");
+
+        // Unlike role/status, there's no rule against a staff member editing their own name.
+        StaffDto ownNameFixed = service.updateName(superAdmin.getId(), "Corrected", "Self", superAdmin);
+        assertThat(ownNameFixed.firstName()).isEqualTo("Corrected");
+    }
+
+    @Test
+    void aDeveloperMayRenameTheDeveloperAccount() {
+        StaffUser developer = user(developerRole);
+        StaffDto result = service.updateName(developer.getId(), "Renamed", "Developer", developer);
+        assertThat(result.firstName()).isEqualTo("Renamed");
     }
 
     @Test

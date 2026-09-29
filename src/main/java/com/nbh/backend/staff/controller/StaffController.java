@@ -1,6 +1,7 @@
 package com.nbh.backend.staff.controller;
 
 import com.nbh.backend.staff.dto.StaffDtos.InviteRequest;
+import com.nbh.backend.staff.dto.StaffDtos.NameUpdateRequest;
 import com.nbh.backend.staff.dto.StaffDtos.RoleDto;
 import com.nbh.backend.staff.dto.StaffDtos.RoleUpdateRequest;
 import com.nbh.backend.staff.dto.StaffDtos.StaffDto;
@@ -55,6 +56,13 @@ public class StaffController {
     public StaffDto updateRole(@PathVariable UUID id, @Valid @RequestBody RoleUpdateRequest body,
                                 @AuthenticationPrincipal StaffUser staff) {
         return service.updateRole(id, body.roleName(), staff);
+    }
+
+    @PreAuthorize("hasAuthority('PERM_USER_MANAGE_ROLES')")
+    @PatchMapping("/{id}/name")
+    public StaffDto updateName(@PathVariable UUID id, @Valid @RequestBody NameUpdateRequest body,
+                                @AuthenticationPrincipal StaffUser staff) {
+        return service.updateName(id, body.firstName(), body.lastName(), staff);
     }
 
     @PreAuthorize("hasAuthority('PERM_USER_MANAGE_ROLES')")
