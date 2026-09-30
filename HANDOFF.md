@@ -2,10 +2,12 @@
 
 ## 2026-09-30 (later) — `GET /catalog/variants` now has a stable order
 
-`ProductVariantRepository.searchSellable` had no `ORDER BY`, so paging through the catalogue could skip or repeat variants. It now orders by
-`v.createdAt ASC, v.id ASC` (oldest first — the same order shoppers already saw). The frontend loader fetches the catalogue in 500-card chunks and
-depends on this once a catalogue passes 500. `CatalogVariantCardsIntegrationTest` walks the catalogue two at a time and asserts every variant appears
-exactly once, in creation order.
+`ProductVariantRepository.searchSellable` had no `ORDER BY`, so its order was whatever Postgres happened to return (and paging through it could
+skip or repeat variants). It now orders by `v.createdAt DESC, v.id DESC` — **newest first**, which is also what the shop's "Default sorting" shows,
+since the shop applies no sort of its own. This is a deliberate change to what shoppers see first: new products lead the shop and the homepage
+"Featured products" instead of arriving on the last page. The frontend loader fetches the catalogue in 500-card chunks and depends on a stable order
+once a catalogue passes 500. `CatalogVariantCardsIntegrationTest` walks the catalogue two at a time and asserts every variant appears exactly once,
+newest first.
 
 ## 2026-09-30 — demo-data toggle, flash deals, staff role guards, stock alerts + forecast (V42, V43)
 

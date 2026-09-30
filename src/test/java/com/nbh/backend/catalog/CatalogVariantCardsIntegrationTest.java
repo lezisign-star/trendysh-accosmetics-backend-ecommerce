@@ -208,6 +208,9 @@ class CatalogVariantCardsIntegrationTest {
         }
 
         assertThat(seen).as("no variant repeated or skipped across pages").doesNotHaveDuplicates().containsExactlyInAnyOrderElementsOf(created);
-        assertThat(seen).as("insertion order, so the walk is repeatable").containsExactlyElementsOf(created);
+        java.util.List<String> newestFirst = new java.util.ArrayList<>(created);
+        java.util.Collections.reverse(newestFirst);
+        assertThat(seen).as("newest first, so the walk is repeatable and new products lead the shop")
+                .containsExactlyElementsOf(newestFirst);
     }
 }
