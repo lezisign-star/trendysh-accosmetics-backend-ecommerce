@@ -88,6 +88,7 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
               AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)
               AND (:deal IS NULL OR :deal = false
                    OR (v.dealPrice IS NOT NULL AND v.dealEndsAt > CURRENT_TIMESTAMP))
+            ORDER BY v.createdAt ASC, v.id ASC
             """)
     Page<ProductVariant> searchSellable(@Param("q") String q, @Param("categorySlug") String categorySlug,
                                          @Param("deal") Boolean deal, @Param("popular") Boolean popular,

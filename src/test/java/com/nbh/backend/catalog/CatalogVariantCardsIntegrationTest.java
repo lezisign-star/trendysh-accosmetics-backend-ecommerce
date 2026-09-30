@@ -184,4 +184,30 @@ class CatalogVariantCardsIntegrationTest {
         assertThat(soloDetail.get("card").get("variantName").isNull()).isTrue();
         assertThat(soloDetail.get("card").get("siblingCount").asInt()).isZero();
     }
+
+    @Test
+    void walkingTheCatalogueInSmallPagesReturnsEveryVariantExactlyOnceInAStableOrder() throws Exception {
+        String q = unique("Paging Walk");
+        java.util.List<String> created = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            JsonNode product = newDraft(q + " " + i, null, true,
+                    "[{\"variantName\":\"Only\",\"sellingPrice\":\"100\",\"isActive\":true}]");
+            created.add(product.get("variants").get(0).get("id").asText());
+        }
+
+        // Page through this run's products two at a time, the way the storefront loads a big catalogue in chunks.
+        java.util.List<String> seen = new java.util.ArrayList<>();
+        int page = 0;
+        while (true) {
+            JsonNode result = asShopper(get("/api/v1/catalog/variants")
+                    .param("q", q).param("size", "2").param("page", String.valueOf(page)));
+            result.get("content").forEach(c -> seen.add(c.get("variantId").asText()));
+            if (result.get("last").asBoolean()) break;
+            page++;
+            assertThat(page).as("the walk must terminate").isLessThan(20);
+        }
+
+        assertThat(seen).as("no variant repeated or skipped across pages").doesNotHaveDuplicates().containsExactlyInAnyOrderElementsOf(created);
+        assertThat(seen).as("insertion order, so the walk is repeatable").containsExactlyElementsOf(created);
+    }
 }

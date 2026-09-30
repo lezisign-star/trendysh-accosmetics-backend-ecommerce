@@ -1,5 +1,12 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-09-30 (later) — `GET /catalog/variants` now has a stable order
+
+`ProductVariantRepository.searchSellable` had no `ORDER BY`, so paging through the catalogue could skip or repeat variants. It now orders by
+`v.createdAt ASC, v.id ASC` (oldest first — the same order shoppers already saw). The frontend loader fetches the catalogue in 500-card chunks and
+depends on this once a catalogue passes 500. `CatalogVariantCardsIntegrationTest` walks the catalogue two at a time and asserts every variant appears
+exactly once, in creation order.
+
 ## 2026-09-30 — demo-data toggle, flash deals, staff role guards, stock alerts + forecast (V42, V43)
 
 `main` auto-deploys; **deploy this before the frontend** (new endpoints and card fields). V42/V43 are additive and are proven on
