@@ -78,6 +78,12 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
      * matches a product tagged with that category directly, or with one of its subcategories
      * (Phase 3, 2026-09-24 — products can belong to several categories now).
      * Same {@code CAST(... AS string)} null-parameter fix as {@link #searchPublished}.
+     *
+     * <p>Mock data is only ever meant to be visible while {@code MockDataSeederService} considers
+     * it "enabled" (any mock product currently published) — the demo toggle's {@code disable()}
+     * flips {@code isPublished=false} on every mock product in lockstep, so the final clause
+     * excludes them regardless of whatever {@code :published} filter the admin screen itself has
+     * selected.
      */
     @Query("""
             SELECT DISTINCT p FROM Product p
@@ -103,6 +109,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                             SELECT 1 FROM StockBalance b
                             WHERE b.variant.product = p AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
                               AND (b.onHandQty - b.reservedQty) > 0)))
+              AND (p.isMockData = false OR p.isPublished = true)
             """)
     Page<Product> searchAdmin(@Param("q") String q,
                                @Param("categoryId") UUID categoryId,

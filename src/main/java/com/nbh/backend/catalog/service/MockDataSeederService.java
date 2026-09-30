@@ -111,7 +111,9 @@ public class MockDataSeederService {
                 .flatMap(p -> variantRepository.findByProductId(p.getId()).stream())
                 .filter(ProductVariant::isKit).count();
         long professionCount = professionRepository.findAll().stream().filter(Profession::isMockData).count();
-        return new MockDataStatusDto(enabled, generatedAt, mockProducts.size(), (int) kitCount, (int) professionCount);
+        long orderCount = orderRepository.countByIsMockDataTrue();
+        return new MockDataStatusDto(enabled, generatedAt, mockProducts.size(), (int) kitCount,
+                (int) professionCount, (int) orderCount);
     }
 
     @Transactional

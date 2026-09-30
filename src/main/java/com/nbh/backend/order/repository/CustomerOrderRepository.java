@@ -130,6 +130,13 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
      * parameter reused inside LOWER/LIKE otherwise defaults to bytea on
      * PostgreSQL and crashes every unfiltered call, not just filtered ones
      * (found live in session 10; same fix applied here pre-emptively).
+     *
+     * <p>The 28 {@code MOCK-}-prefixed orders {@code MockDataSeederService} creates (as review/
+     * sale-event FK targets, never through real checkout) have no {@code isPublished} field of
+     * their own to flip, unlike mock products/categories — so the final clause mirrors {@link
+     * com.nbh.backend.catalog.repository.ProductRepository#searchAdmin}'s fix by checking the same
+     * live signal {@code MockDataSeederService.status()} uses for "enabled" (any mock product
+     * currently published), rather than a separate flag that could drift out of sync with it.
      */
     @Query("""
             SELECT NEW com.nbh.backend.order.dto.OrderSummaryDto(
@@ -142,10 +149,16 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                    OR LOWER(o.customerName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR o.guestPhone LIKE CONCAT('%', CAST(:phoneQ AS string), '%'))
+              AND (o.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
             ORDER BY o.createdAt DESC
             """)
     Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q,
                                   @Param("phoneQ") String phoneQ, Pageable pageable);
+
+    /** For MockDataSeederService.status()'s order count — how many of the synthetic
+     *  review/sale-event FK orders currently exist, regardless of enabled/disabled state. */
+    long countByIsMockDataTrue();
 
     /** A signed-in customer's own orders, newest first. Lightweight projection — no line items are loaded. */
     @Query("""

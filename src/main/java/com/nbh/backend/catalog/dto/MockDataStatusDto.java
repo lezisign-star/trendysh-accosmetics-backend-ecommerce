@@ -8,5 +8,9 @@ public record MockDataStatusDto(
         Instant generatedAt,
         int productCount,
         int kitCount,
-        int professionCount) {
+        int professionCount,
+        /** The synthetic orders review/sale-event generation needs as an FK target — never real
+         *  checkouts, and never shown to a customer, but real rows in the admin orders list
+         *  while enabled (see CustomerOrderRepository.search's mock-data clause). */
+        int orderCount) {
 }

@@ -141,4 +141,36 @@ class MockDataToggleIntegrationTest {
         assertThat(reEnabled.get("productCount").asInt()).as("no regeneration").isEqualTo(productCount);
         assertThat(reEnabled.get("generatedAt").asText()).isEqualTo(generatedAt);
     }
+
+    /** Found live: the admin Products screen's default "all" filter sends published=null, which
+     *  showed disabled mock products (isPublished=false) right alongside real unpublished ones —
+     *  ProductRepository.searchAdmin now excludes mock rows outright unless currently enabled,
+     *  regardless of the :published filter the screen has selected. */
+    @Test
+    void mockProductsOnlyAppearInTheAdminProductListWhileEnabled() throws Exception {
+        call(true, "/api/v1/admin/mock-data/enable", developerToken);
+        JsonNode enabledList = call(false, "/api/v1/products?size=200", developerToken);
+        assertThat(enabledList.toString()).contains("Chrome Mirror Gel Polish");
+
+        call(true, "/api/v1/admin/mock-data/disable", developerToken);
+        JsonNode disabledList = call(false, "/api/v1/products?size=200", developerToken);
+        assertThat(disabledList.toString()).doesNotContain("Chrome Mirror Gel Polish");
+    }
+
+    /** Found live alongside the product-list gap: CustomerOrder has no isPublished-equivalent field
+     *  the way Product/Category do, so the 28 "MOCK-"-prefixed orders createFakeOrder() generates
+     *  (as review/sale-event FK targets, never real checkouts) had NO gate at all — always visible
+     *  in the admin orders list regardless of the toggle. CustomerOrderRepository.search now checks
+     *  the same live "any mock product currently published" signal MockDataSeederService.status()
+     *  already uses for "enabled". */
+    @Test
+    void mockOrdersOnlyAppearInTheAdminOrderListWhileEnabled() throws Exception {
+        call(true, "/api/v1/admin/mock-data/enable", developerToken);
+        JsonNode enabledList = call(false, "/api/v1/orders?size=200", developerToken);
+        assertThat(enabledList.toString()).as("mock orders visible while enabled").contains("MOCK-");
+
+        call(true, "/api/v1/admin/mock-data/disable", developerToken);
+        JsonNode disabledList = call(false, "/api/v1/orders?size=200", developerToken);
+        assertThat(disabledList.toString()).as("mock orders hidden once disabled").doesNotContain("MOCK-");
+    }
 }
