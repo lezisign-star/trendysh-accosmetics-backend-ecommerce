@@ -11,9 +11,10 @@ import java.util.UUID;
  * locations). It is filled in by the admin list/detail endpoints and null elsewhere (e.g. right
  * after creating a variant, where it is simply zero).
  *
- * {@code dealPrice}/{@code dealEndsAt} are the raw stored values, not resolved through
- * {@code EffectivePriceResolver} — this is the admin/staff view of the variant, which needs to see
- * and edit exactly what's set, including an already-expired deal it forgot to clear.
+ * {@code dealPrice}/{@code dealEndsAt} and {@code wholesaleMinQty}/{@code wholesalePrice} are the
+ * raw stored values, not resolved through {@code EffectivePriceResolver} — this is the admin/staff
+ * view of the variant, which needs to see and edit exactly what's set, including an already-expired
+ * deal it forgot to clear.
  */
 public record ProductVariantDto(
         UUID id,
@@ -31,7 +32,9 @@ public record ProductVariantDto(
         boolean isActive,
         BigDecimal availableQty,
         BigDecimal dealPrice,
-        Instant dealEndsAt
+        Instant dealEndsAt,
+        Integer wholesaleMinQty,
+        BigDecimal wholesalePrice
 ) {
     public static ProductVariantDto from(ProductVariant v) {
         return from(v, null);
@@ -42,6 +45,7 @@ public record ProductVariantDto(
                 v.getId(), v.getSku(), v.getVariantName(), v.getDescription(), v.getSortOrder(),
                 v.getSellingPrice(), v.getCompareAtPrice(),
                 v.getStandardCost(), v.getUom(), v.getVatRate(), v.isVatExempt(), v.getReorderLevel(), v.isActive(),
-                availableQty, v.getDealPrice(), v.getDealEndsAt());
+                availableQty, v.getDealPrice(), v.getDealEndsAt(),
+                v.getWholesaleMinQty(), v.getWholesalePrice());
     }
 }

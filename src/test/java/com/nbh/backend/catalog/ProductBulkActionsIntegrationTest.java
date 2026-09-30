@@ -154,6 +154,30 @@ class ProductBulkActionsIntegrationTest {
     }
 
     @Test
+    void adjustPriceClearsAWholesaleTierThatsNoLongerBelowTheNewPriceButKeepsOneThatStillIs() throws Exception {
+        JsonNode stale = newDraft(unique("Adjust Wholesale Stale"), null, "100");
+        String staleId = stale.get("id").asText();
+        ok(put("/api/v1/products/" + staleId + "/variants/" + stale.get("variants").get(0).get("id").asText()
+                + "/wholesale"), "{\"minQty\":10,\"wholesalePrice\":\"80\"}");
+        JsonNode kept = newDraft(unique("Adjust Wholesale Kept"), null, "100");
+        String keptId = kept.get("id").asText();
+        ok(put("/api/v1/products/" + keptId + "/variants/" + kept.get("variants").get(0).get("id").asText()
+                + "/wholesale"), "{\"minQty\":10,\"wholesalePrice\":\"50\"}");
+
+        // -30% takes both to 70: the 80 tier would now cost MORE than the regular price, the 50 one wouldn't.
+        JsonNode result = ok(post("/api/v1/products/bulk"), "{\"action\":\"ADJUST_PRICE\","
+                + "\"productIds\":[\"" + staleId + "\",\"" + keptId + "\"],\"percent\":-30}");
+        assertThat(result.get("warnings")).anyMatch(w -> w.asText().contains("wholesale"));
+
+        JsonNode staleVariant = ok(get("/api/v1/products/" + staleId), null).get("variants").get(0);
+        assertThat(staleVariant.get("wholesalePrice").isNull()).isTrue();
+        assertThat(staleVariant.get("wholesaleMinQty").isNull()).isTrue();
+        JsonNode keptVariant = ok(get("/api/v1/products/" + keptId), null).get("variants").get(0);
+        assertThat(keptVariant.get("wholesalePrice").asDouble()).isEqualTo(50.0);
+        assertThat(keptVariant.get("wholesaleMinQty").asInt()).isEqualTo(10);
+    }
+
+    @Test
     void adjustPriceSkipsAPricelessVariantWithAWarningInsteadOfFailing() throws Exception {
         JsonNode draft = ok(post("/api/v1/products/draft"), "{\"name\":\"" + unique("Priceless Bulk Product")
                 + "\",\"categoryIds\":[],\"published\":false,"

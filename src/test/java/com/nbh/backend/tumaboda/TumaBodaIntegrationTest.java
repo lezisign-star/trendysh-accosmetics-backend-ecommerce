@@ -500,7 +500,9 @@ class TumaBodaIntegrationTest {
     @Test
     void a409FromTumabodaIsRecoveredIntoTheDeliveryItAlreadyHas() throws Exception {
         FAKE.enqueue("POST", CREATE, Reply.error(409, "DUPLICATE", "reference already used"));
-        FAKE.route("GET", BY_REFERENCE, request -> Reply.ok(delivery("tb-already-there", "TB-EXISTING", "in_transit", "rider-3")));
+        // Unique per run: the shared test DB keeps orders between runs and the delivery id is unique.
+        String existingId = "tb-already-there-" + UUID.randomUUID();
+        FAKE.route("GET", BY_REFERENCE, request -> Reply.ok(delivery(existingId, "TB-EXISTING", "in_transit", "rider-3")));
         Placed placed = placeTumaboda();
         pay(placed);
 

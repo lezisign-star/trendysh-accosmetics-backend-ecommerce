@@ -380,6 +380,11 @@ public class ProductService {
                         v.setDealEndsAt(null);
                         warnings.add(v.getSku() + ": its sale price was no longer below the new price, so the sale was cleared");
                     }
+                    if (v.getWholesalePrice() != null && v.getWholesalePrice().compareTo(newPrice) >= 0) {
+                        v.setWholesaleMinQty(null);
+                        v.setWholesalePrice(null);
+                        warnings.add(v.getSku() + ": its wholesale price was no longer below the new price, so the wholesale tier was cleared");
+                    }
                     variantRepository.save(v);
                     affectedVariants++;
                 }

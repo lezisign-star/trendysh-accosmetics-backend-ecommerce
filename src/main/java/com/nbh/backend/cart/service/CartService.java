@@ -79,7 +79,7 @@ public class CartService {
         return cartRepository.findBySessionId(sessionId)
                 .filter(cart -> cart.getStatus() == Cart.CartStatus.ACTIVE)
                 .map(cart -> cartItemRepository.findByCartId(cart.getId()).stream()
-                        .map(item -> currentPrice(item, campaign).multiply(item.getQty()))
+                        .map(item -> currentPrice(item, campaign).effectivePrice().multiply(item.getQty()))
                         .reduce(BigDecimal.ZERO, BigDecimal::add))
                 .orElse(BigDecimal.ZERO);
     }
@@ -138,10 +138,7 @@ public class CartService {
         // adding 2 more used to pass because each add was compared to stock on its own.
         checkCourtesyAvailability(variant, item.getQty().add(qty));
         item.setQty(item.getQty().add(qty));
-        // The real, server-computed price — a variant's own deal, else an active site-wide campaign, else
-        // the plain selling price (see EffectivePriceResolver). This snapshot is what checkout later
-        // trusts without re-resolving, so it must be right here, not just at display time.
-        item.setUnitPriceSnapshot(priceResolver.resolve(variant, promoCampaignService.getActiveOrNull()).effectivePrice());
+        applyPriceForQty(item);
         item.setProductNameSnapshot(variant.getProduct().getName());
         item.setVariantNameSnapshot(variant.getVariantName());
         cartItemRepository.save(item);
@@ -162,9 +159,26 @@ public class CartService {
         requireSellable(item.getVariant());
         checkCourtesyAvailability(item.getVariant(), qty);
         item.setQty(qty);
+        // Repriced here rather than left to toDto's refresh: crossing a wholesale threshold is the
+        // shopper's own doing, not a price that moved under them, so it must not come back flagged
+        // as previousUnitPrice ("was KSh X, now KSh Y").
+        applyPriceForQty(item);
         cartItemRepository.save(item);
 
         return toDto(cart);
+    }
+
+    /**
+     * The real, server-computed price for the line's current quantity — a variant's own deal, else an
+     * active site-wide campaign, else its wholesale price if the quantity qualifies (cheapest of those
+     * wins), else the plain selling price (see EffectivePriceResolver). This snapshot is what checkout
+     * later trusts without re-resolving, so it must be right here, not just at display time.
+     */
+    private void applyPriceForQty(CartItem item) {
+        EffectivePriceResolver.EffectivePrice price =
+                priceResolver.resolve(item.getVariant(), promoCampaignService.getActiveOrNull(), item.getQty());
+        item.setUnitPriceSnapshot(price.effectivePrice());
+        item.setWholesaleApplied(price.source() == EffectivePriceResolver.Source.WHOLESALE);
     }
 
     @Transactional
@@ -273,10 +287,15 @@ public class CartService {
         PromoCampaign campaign = promoCampaignService.getActiveOrNull();
         Map<UUID, BigDecimal> changedFrom = new HashMap<>();
         for (CartItem item : items) {
-            BigDecimal current = currentPrice(item, campaign);
-            if (current.compareTo(item.getUnitPriceSnapshot()) != 0) {
-                changedFrom.put(item.getId(), item.getUnitPriceSnapshot());
-                item.setUnitPriceSnapshot(current);
+            EffectivePriceResolver.EffectivePrice current = currentPrice(item, campaign);
+            boolean wholesaleApplied = current.source() == EffectivePriceResolver.Source.WHOLESALE;
+            if (current.effectivePrice().compareTo(item.getUnitPriceSnapshot()) != 0
+                    || wholesaleApplied != item.isWholesaleApplied()) {
+                if (current.effectivePrice().compareTo(item.getUnitPriceSnapshot()) != 0) {
+                    changedFrom.put(item.getId(), item.getUnitPriceSnapshot());
+                }
+                item.setUnitPriceSnapshot(current.effectivePrice());
+                item.setWholesaleApplied(wholesaleApplied);
                 cartItemRepository.save(item);
             }
         }
@@ -287,11 +306,12 @@ public class CartService {
      * Today's price for a line. A product that can no longer be bought (unpublished, deleted, no price)
      * keeps the price it had: there is nothing to look up, and the line is reported as unavailable instead.
      */
-    private BigDecimal currentPrice(CartItem item, PromoCampaign campaign) {
+    private EffectivePriceResolver.EffectivePrice currentPrice(CartItem item, PromoCampaign campaign) {
         ProductVariant variant = item.getVariant();
         if (!isPurchasable(variant)) {
-            return item.getUnitPriceSnapshot();
+            return new EffectivePriceResolver.EffectivePrice(item.getUnitPriceSnapshot(), item.getUnitPriceSnapshot(),
+                    null, EffectivePriceResolver.Source.NONE);
         }
-        return priceResolver.resolve(variant, campaign).effectivePrice();
+        return priceResolver.resolve(variant, campaign, item.getQty());
     }
 }

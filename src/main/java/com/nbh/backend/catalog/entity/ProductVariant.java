@@ -65,6 +65,18 @@ public class ProductVariant extends BaseEntity {
     @Column(name = "deal_ends_at")
     private Instant dealEndsAt;
 
+    /**
+     * A single wholesale tier: reach this quantity of the SKU in one cart line and the price for the
+     * WHOLE line becomes wholesalePrice (not just the units above the threshold). Both null = no tier;
+     * WholesalePricingService enforces they're set/cleared together, same pattern as
+     * dealPrice/dealEndsAt. Cheapest-wins against a deal/campaign — see EffectivePriceResolver.
+     */
+    @Column(name = "wholesale_min_qty")
+    private Integer wholesaleMinQty;
+
+    @Column(name = "wholesale_price", precision = 14, scale = 2)
+    private BigDecimal wholesalePrice;
+
     @Column(precision = 14, scale = 2)
     private BigDecimal standardCost;
 

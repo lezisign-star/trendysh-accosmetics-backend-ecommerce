@@ -19,11 +19,18 @@ import java.time.Instant;
  *
  * Rule: a variant's own flash deal always wins over an active site-wide campaign (most-specific-
  * wins), so a product can never be discounted twice by accident.
+ *
+ * A variant may also carry a wholesale tier ({@code wholesaleMinQty}/{@code wholesalePrice}) — once
+ * {@code qty} reaches that threshold, its per-unit price is compared against whatever the deal/
+ * campaign logic above already produced, and the cheaper of the two wins ("cheapest wins", not
+ * "most-specific wins": a wholesale buyer should never pay more than a flash-deal shopper would).
+ * Callers with no meaningful cart quantity (e.g. building a storefront card) pass {@link
+ * BigDecimal#ZERO}, which can never qualify for a tier.
  */
 @Service
 public class EffectivePriceResolver {
 
-    public enum Source { NONE, PRODUCT_DEAL, CAMPAIGN }
+    public enum Source { NONE, PRODUCT_DEAL, CAMPAIGN, WHOLESALE }
 
     public record EffectivePrice(BigDecimal originalPrice, BigDecimal effectivePrice, Instant dealEndsAt, Source source) {
         public boolean onDeal() {
@@ -39,11 +46,13 @@ public class EffectivePriceResolver {
 
     /**
      * @param activeCampaign the currently-active campaign, or null if none is active right now
+     * @param qty the quantity being priced (e.g. a cart line's total), or null/zero if there is no
+     *        meaningful quantity context (e.g. a storefront card) — never qualifies for wholesale
      * @throws IllegalStateException if the variant has no price — callers on every sellable path
      *         must filter to {@link ProductVariant#isSellable()} first (Phase 3, 2026-09-24: a
      *         draft variant can now be saved with no price at all).
      */
-    public EffectivePrice resolve(ProductVariant variant, PromoCampaign activeCampaign) {
+    public EffectivePrice resolve(ProductVariant variant, PromoCampaign activeCampaign, BigDecimal qty) {
         BigDecimal original = variant.getSellingPrice();
         if (original == null) {
             throw new IllegalStateException("Variant " + variant.getId() + " has no price — filter to isSellable() first");
@@ -58,15 +67,23 @@ public class EffectivePriceResolver {
         }
         Instant now = Instant.now(clock);
 
+        EffectivePrice nonWholesale;
         if (variant.getDealPrice() != null && variant.getDealEndsAt() != null && variant.getDealEndsAt().isAfter(now)) {
-            return new EffectivePrice(original, variant.getDealPrice(), variant.getDealEndsAt(), Source.PRODUCT_DEAL);
-        }
-        if (activeCampaign != null) {
+            nonWholesale = new EffectivePrice(original, variant.getDealPrice(), variant.getDealEndsAt(), Source.PRODUCT_DEAL);
+        } else if (activeCampaign != null) {
             BigDecimal factor = BigDecimal.ONE.subtract(
                     activeCampaign.getPercentOff().movePointLeft(2));
             BigDecimal discounted = original.multiply(factor).setScale(2, RoundingMode.HALF_UP);
-            return new EffectivePrice(original, discounted, activeCampaign.getEndsAt(), Source.CAMPAIGN);
+            nonWholesale = new EffectivePrice(original, discounted, activeCampaign.getEndsAt(), Source.CAMPAIGN);
+        } else {
+            nonWholesale = new EffectivePrice(original, original, null, Source.NONE);
         }
-        return new EffectivePrice(original, original, null, Source.NONE);
+
+        if (variant.getWholesaleMinQty() != null && variant.getWholesalePrice() != null && qty != null
+                && qty.compareTo(BigDecimal.valueOf(variant.getWholesaleMinQty())) >= 0
+                && variant.getWholesalePrice().compareTo(nonWholesale.effectivePrice()) < 0) {
+            return new EffectivePrice(original, variant.getWholesalePrice(), null, Source.WHOLESALE);
+        }
+        return nonWholesale;
     }
 }

@@ -9,9 +9,11 @@ import com.nbh.backend.catalog.dto.ProductVariantDto;
 import com.nbh.backend.catalog.dto.SaveProductRequest;
 import com.nbh.backend.catalog.service.ProductService;
 import com.nbh.backend.catalog.service.VariantDealService;
+import com.nbh.backend.catalog.service.WholesalePricingService;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.stock.service.VariantStockService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -33,12 +35,15 @@ public class ProductController {
     private final ProductService productService;
     private final VariantStockService variantStockService;
     private final VariantDealService variantDealService;
+    private final WholesalePricingService wholesalePricingService;
 
     public ProductController(ProductService productService, VariantStockService variantStockService,
-                              VariantDealService variantDealService) {
+                              VariantDealService variantDealService,
+                              WholesalePricingService wholesalePricingService) {
         this.productService = productService;
         this.variantStockService = variantStockService;
         this.variantDealService = variantDealService;
+        this.wholesalePricingService = wholesalePricingService;
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_VIEW') or hasAuthority('PERM_PRODUCT_MANAGE')")
@@ -170,4 +175,23 @@ public class ProductController {
     }
 
     public record SetDealRequest(@NotNull BigDecimal dealPrice, @NotNull Instant dealEndsAt) {}
+
+    /** Sets a variant's wholesale tier. See {@link WholesalePricingService}'s javadoc for the validation rules. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PutMapping("/{id}/variants/{variantId}/wholesale")
+    @org.springframework.transaction.annotation.Transactional
+    public ProductVariantDto setWholesalePrice(@PathVariable UUID id, @PathVariable UUID variantId,
+                                                @Valid @RequestBody SetWholesaleRequest request) {
+        return ProductVariantDto.from(wholesalePricingService.setWholesalePrice(
+                id, variantId, request.minQty(), request.wholesalePrice()));
+    }
+
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @DeleteMapping("/{id}/variants/{variantId}/wholesale")
+    @org.springframework.transaction.annotation.Transactional
+    public ProductVariantDto clearWholesalePrice(@PathVariable UUID id, @PathVariable UUID variantId) {
+        return ProductVariantDto.from(wholesalePricingService.clearWholesalePrice(id, variantId));
+    }
+
+    public record SetWholesaleRequest(@NotNull @Min(2) Integer minQty, @NotNull BigDecimal wholesalePrice) {}
 }

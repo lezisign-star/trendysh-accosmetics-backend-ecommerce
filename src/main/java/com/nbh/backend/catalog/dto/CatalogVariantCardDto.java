@@ -31,6 +31,12 @@ import java.util.UUID;
  * the frontend's client-side fuzzy search ({@code lib/search.ts}), which already had description
  * matching built in but nothing to match against (every card's description was hardcoded to "" in
  * {@code toProduct()}); not rendered anywhere on a card, search-only.
+ *
+ * {@code wholesaleMinQty}/{@code wholesalePrice} (nullable, present only when the variant has a
+ * tier configured) advertise the tier for "buy N+ at KES X each" card messaging — unlike
+ * {@code price}/{@code originalPrice} these are the RAW stored values, never resolved against a
+ * cart quantity (a card has no cart-qty context). Null/null together = no tier, same convention
+ * as {@code dealPrice}.
  */
 public record CatalogVariantCardDto(
         UUID variantId,
@@ -55,7 +61,9 @@ public record CatalogVariantCardDto(
         BigDecimal availableQty,
         String sku,
         String description,
-        int siblingCount
+        int siblingCount,
+        Integer wholesaleMinQty,
+        BigDecimal wholesalePrice
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */
     public static boolean isMeaninglessName(String variantName) {

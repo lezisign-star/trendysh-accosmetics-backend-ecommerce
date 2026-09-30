@@ -149,7 +149,10 @@ public class CatalogService {
         String variantName = hideName ? null : v.getVariantName();
         String displayName = variantName != null ? p.getName() + " — " + variantName : p.getName();
 
-        EffectivePriceResolver.EffectivePrice price = priceResolver.resolve(v, activeCampaign);
+        // No cart-quantity context on a card, so BigDecimal.ZERO can never qualify for a wholesale
+        // tier here — the tier is advertised separately via wholesaleMinQty/wholesalePrice below,
+        // never through this resolved price/onDeal.
+        EffectivePriceResolver.EffectivePrice price = priceResolver.resolve(v, activeCampaign, BigDecimal.ZERO);
         ProductReviewRepository.RatingSummary rating = ratingByProduct.get(p.getId());
         List<UUID> categoryIds = p.getCategories().stream().map(Category::getId).toList();
 
@@ -163,7 +166,7 @@ public class CatalogService {
                 rating != null ? rating.getAvgRating() : 0.0, rating != null ? rating.getReviewCount() : 0L,
                 soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO),
                 v.isKit() ? BigDecimal.ZERO : availableQty, v.getSku(), p.getDescription(),
-                (int) Math.max(0, sellableCount - 1));
+                (int) Math.max(0, sellableCount - 1), v.getWholesaleMinQty(), v.getWholesalePrice());
     }
 
     private Map<UUID, Long> sellableVariantCountByProduct(List<UUID> productIds) {

@@ -71,11 +71,12 @@ public record AdminOrderDetailDto(
      * the parent line's own {@code lineTotal} (the package price) is what the order subtotal used.
      */
     public record Line(UUID variantId, String sku, String productName, String variantName,
-                       BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal, List<Line> components) {
+                       BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal, boolean wholesaleApplied,
+                       List<Line> components) {
         static Line from(CustomerOrderItem i, List<CustomerOrderItem> children) {
             return new Line(i.getVariant().getId(), i.getVariant().getSku(),
                     i.getVariant().getProduct().getName(), i.getVariant().getVariantName(),
-                    i.getQty(), i.getUnitPrice(), i.getLineTotal(),
+                    i.getQty(), i.getUnitPrice(), i.getLineTotal(), i.isWholesaleApplied(),
                     children.stream().map(c -> Line.from(c, List.of())).toList());
         }
     }

@@ -236,6 +236,7 @@ public class CheckoutService {
             orderItem.setVariant(cartItem.getVariant());
             orderItem.setQty(cartItem.getQty());
             orderItem.setUnitPrice(cartItem.getUnitPriceSnapshot());
+            orderItem.setWholesaleApplied(cartItem.isWholesaleApplied());
             orderItem.setVatRate(cartItem.getVariant().getVatRate());
             orderItem.setLineTotal(cartItem.getLineTotal());
             // Null for a kit — its own SKU holds no stock, so it gets no reservation; see the

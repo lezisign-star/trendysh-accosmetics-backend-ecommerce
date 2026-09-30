@@ -31,6 +31,10 @@ public class CartItem extends BaseEntity {
     @Column(name = "unit_price_snapshot", nullable = false, precision = 14, scale = 2)
     private BigDecimal unitPriceSnapshot;
 
+    /** Whether {@link #unitPriceSnapshot} is currently the variant's wholesale price — see EffectivePriceResolver. */
+    @Column(name = "wholesale_applied", nullable = false)
+    private boolean wholesaleApplied = false;
+
     @Column(name = "product_name_snapshot", nullable = false, length = 250)
     private String productNameSnapshot;
 

@@ -46,6 +46,10 @@ public class CustomerOrderItem {
     @Column(name = "line_total", nullable = false, precision = 14, scale = 2)
     private BigDecimal lineTotal;
 
+    /** Snapshot of whether {@link #unitPrice} was the variant's wholesale price at checkout. */
+    @Column(name = "wholesale_applied", nullable = false)
+    private boolean wholesaleApplied = false;
+
     /** Filled in at fulfilment time from the stock ledger's outbound entry — the real margin figure. */
     // Phase 0 fix (2026-09-27), D7: was scale 2, silently truncating the 4dp moving-average
     // cost this is sourced from (see StockLedgerEntry.unitCost's comment).

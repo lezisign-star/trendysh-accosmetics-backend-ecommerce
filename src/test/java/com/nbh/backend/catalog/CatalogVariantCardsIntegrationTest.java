@@ -213,4 +213,24 @@ class CatalogVariantCardsIntegrationTest {
         assertThat(seen).as("newest first, so the walk is repeatable and new products lead the shop")
                 .containsExactlyElementsOf(newestFirst);
     }
+
+    @Test
+    void aCardAdvertisesAConfiguredWholesaleTierButItsHeadlinePriceIsUnaffectedByIt() throws Exception {
+        String q = unique("Wholesale Card Product");
+        JsonNode product = newDraft(q, null, true,
+                "[{\"variantName\":\"Only\",\"sellingPrice\":\"1000\",\"isActive\":true}]");
+        String productId = product.get("id").asText();
+        String variantId = product.get("variants").get(0).get("id").asText();
+        asStaff(put("/api/v1/products/" + productId + "/variants/" + variantId + "/wholesale"),
+                "{\"minQty\":10,\"wholesalePrice\":\"700\"}");
+
+        JsonNode results = asShopper(get("/api/v1/catalog/variants").param("q", q));
+        JsonNode card = results.get("content").get(0);
+
+        assertThat(card.get("wholesaleMinQty").asInt()).isEqualTo(10);
+        assertThat(card.get("wholesalePrice").decimalValue()).isEqualByComparingTo("700");
+        // The card has no cart-qty context, so its headline price/onDeal must never become wholesale.
+        assertThat(card.get("price").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(card.get("onDeal").asBoolean()).isFalse();
+    }
 }

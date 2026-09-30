@@ -22,6 +22,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -66,6 +67,10 @@ class CartRepricingIntegrationTest {
     private record Item(String productId, String variantId) {}
 
     private Item newVariant(String price) throws Exception {
+        return newVariant(price, 10);
+    }
+
+    private Item newVariant(String price, int stockQty) throws Exception {
         String body = "{\"name\":\"Reprice " + UUID.randomUUID().toString().substring(0, 8) + "\",\"categoryIds\":[],"
                 + "\"published\":false,\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"" + price
                 + "\",\"isActive\":true}]}";
@@ -73,9 +78,26 @@ class CartRepricingIntegrationTest {
         String productId = product.get("id").asText();
         String variantId = product.get("variants").get(0).get("id").asText();
         okStaff(put("/api/v1/products/" + productId + "/variants/" + variantId + "/stock")
-                .contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":10,\"unitCost\":100}"));
+                .contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":" + stockQty + ",\"unitCost\":100}"));
         okStaff(post("/api/v1/products/" + productId + "/publish"));
         return new Item(productId, variantId);
+    }
+
+    private void setWholesale(Item item, int minQty, String wholesalePrice) throws Exception {
+        okStaff(put("/api/v1/products/" + item.productId() + "/variants/" + item.variantId() + "/wholesale")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"minQty\":" + minQty + ",\"wholesalePrice\":\"" + wholesalePrice + "\"}"));
+    }
+
+    private void clearWholesale(Item item) throws Exception {
+        okStaff(delete("/api/v1/products/" + item.productId() + "/variants/" + item.variantId() + "/wholesale"));
+    }
+
+    private JsonNode updateQty(String session, String itemId, int qty) throws Exception {
+        MvcResult result = mvc.perform(put("/api/v1/cart/items/" + itemId).header("X-Cart-Session", session)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"qty\":" + qty + "}")).andReturn();
+        assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200);
+        return json.readTree(result.getResponse().getContentAsString());
     }
 
     private JsonNode addToCart(String session, Item item, int qty) throws Exception {
@@ -232,5 +254,142 @@ class CartRepricingIntegrationTest {
         setPrice(item, "4000");
 
         assertThat(cartService.basketValue(session)).isEqualByComparingTo(new BigDecimal("8000"));
+    }
+
+    @Test
+    void addingBelowTheWholesaleThresholdKeepsThePlainPrice() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        String session = UUID.randomUUID().toString();
+
+        JsonNode added = addToCart(session, item, 9);
+
+        JsonNode line = added.get("items").get(0);
+        assertThat(line.get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(line.get("wholesaleApplied").asBoolean()).isFalse();
+        assertThat(line.get("wholesaleMinQty").asInt()).isEqualTo(10);
+        assertThat(line.get("wholesalePrice").decimalValue()).isEqualByComparingTo("700");
+    }
+
+    @Test
+    void addingEnoughToCrossTheWholesaleThresholdChargesTheWholeLineAtTheWholesalePrice() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        String session = UUID.randomUUID().toString();
+        addToCart(session, item, 4);
+
+        JsonNode added = addToCart(session, item, 6); // 4 + 6 = 10, crosses the threshold
+
+        JsonNode line = added.get("items").get(0);
+        assertThat(line.get("qty").decimalValue()).isEqualByComparingTo("10");
+        assertThat(line.get("unitPrice").decimalValue()).isEqualByComparingTo("700");
+        assertThat(line.get("lineTotal").decimalValue()).isEqualByComparingTo("7000");
+        assertThat(line.get("wholesaleApplied").asBoolean()).isTrue();
+    }
+
+    @Test
+    void updatingQtyAcrossTheWholesaleThresholdInOneCallRepricesTheLine() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        String session = UUID.randomUUID().toString();
+        JsonNode added = addToCart(session, item, 3);
+        String itemId = added.get("items").get(0).get("id").asText();
+
+        JsonNode updated = updateQty(session, itemId, 12);
+
+        JsonNode line = updated.get("items").get(0);
+        assertThat(line.get("unitPrice").decimalValue()).isEqualByComparingTo("700");
+        assertThat(line.get("wholesaleApplied").asBoolean()).isTrue();
+        // The shopper's own qty change, not a price that moved under them — no "was/now" notice.
+        assertThat(line.get("previousUnitPrice").isNull()).isTrue();
+    }
+
+    @Test
+    void droppingBackBelowTheThresholdRepricesUpAgain() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        String session = UUID.randomUUID().toString();
+        JsonNode added = addToCart(session, item, 12);
+        String itemId = added.get("items").get(0).get("id").asText();
+        assertThat(added.get("items").get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("700");
+
+        JsonNode updated = updateQty(session, itemId, 5);
+
+        JsonNode line = updated.get("items").get(0);
+        assertThat(line.get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(line.get("wholesaleApplied").asBoolean()).isFalse();
+        assertThat(line.get("previousUnitPrice").isNull()).isTrue();
+    }
+
+    @Test
+    void theCheaperOfAnActiveDealAndTheWholesalePriceIsCharged() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        // A deal at 900 is more expensive than the 700 wholesale price once qty qualifies.
+        okStaff(put("/api/v1/products/" + item.productId() + "/variants/" + item.variantId() + "/deal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"dealPrice\":\"900\",\"dealEndsAt\":\"" + java.time.Instant.now().plusSeconds(3600) + "\"}"));
+        String session = UUID.randomUUID().toString();
+
+        JsonNode added = addToCart(session, item, 10);
+
+        JsonNode line = added.get("items").get(0);
+        assertThat(line.get("unitPrice").decimalValue()).isEqualByComparingTo("700");
+        assertThat(line.get("wholesaleApplied").asBoolean()).isTrue();
+    }
+
+    @Test
+    void aDealCheaperThanWholesaleIsChargedInsteadOfWholesale() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        // A deal at 600 beats the 700 wholesale price.
+        okStaff(put("/api/v1/products/" + item.productId() + "/variants/" + item.variantId() + "/deal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"dealPrice\":\"600\",\"dealEndsAt\":\"" + java.time.Instant.now().plusSeconds(3600) + "\"}"));
+        String session = UUID.randomUUID().toString();
+
+        JsonNode added = addToCart(session, item, 10);
+
+        JsonNode line = added.get("items").get(0);
+        assertThat(line.get("unitPrice").decimalValue()).isEqualByComparingTo("600");
+        assertThat(line.get("wholesaleApplied").asBoolean()).isFalse();
+    }
+
+    @Test
+    void checkoutOnAWholesaleQualifyingLineSnapshotsWholesaleAppliedOnTheOrderItem() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        String session = UUID.randomUUID().toString();
+        addToCart(session, item, 10);
+
+        MvcResult placed = checkout(session, "");
+
+        assertThat(placed.getResponse().getStatus()).as(placed.getResponse().getContentAsString()).isEqualTo(200);
+        JsonNode order = json.readTree(placed.getResponse().getContentAsString()).get("order");
+        JsonNode orderLine = order.get("items").get(0);
+        assertThat(orderLine.get("unitPrice").decimalValue()).isEqualByComparingTo("700");
+        assertThat(orderLine.get("wholesaleApplied").asBoolean()).isTrue();
+        assertThat(order.get("subtotal").decimalValue()).isEqualByComparingTo("7000");
+
+        // Staff see it on the order detail too, so a line cheaper than the list price explains itself.
+        JsonNode detail = okStaff(get("/api/v1/orders/" + order.get("id").asText()));
+        assertThat(detail.get("items").get(0).get("wholesaleApplied").asBoolean()).isTrue();
+    }
+
+    @Test
+    void clearingTheWholesaleTierRepricesAnActiveCartBackDownOnNextRead() throws Exception {
+        Item item = newVariant("1000", 20);
+        setWholesale(item, 10, "700");
+        String session = UUID.randomUUID().toString();
+        JsonNode added = addToCart(session, item, 10);
+        assertThat(added.get("items").get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("700");
+
+        clearWholesale(item);
+        JsonNode after = readCart(session);
+
+        JsonNode line = after.get("items").get(0);
+        assertThat(line.get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(line.get("wholesaleApplied").asBoolean()).isFalse();
+        assertThat(line.get("wholesaleMinQty").isNull()).isTrue();
     }
 }
