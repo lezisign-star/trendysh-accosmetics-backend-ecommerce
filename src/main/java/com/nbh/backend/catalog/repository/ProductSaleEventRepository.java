@@ -57,11 +57,17 @@ public interface ProductSaleEventRepository extends JpaRepository<ProductSaleEve
      * The admin analytics "top sellers" list — {@code since} is REQUIRED
      * (never null; pass {@code Instant.EPOCH} for "all time"), same reason
      * and same live-found failure as {@code CustomerOrderRepository.totalRevenue}.
+     *
+     * <p>Excludes mock products' sale events unless demo data is still on, same gating and same bug
+     * as {@code CustomerOrderRepository.totalRevenue}/{@code countByStatus} — "top sellers" must not
+     * keep showing demo products once the toggle is off.
      */
     @Query("""
             SELECT s.product.id AS productId, s.product.name AS productName, SUM(s.qty) AS totalQty
             FROM ProductSaleEvent s
             WHERE s.occurredAt >= :since
+              AND (s.product.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
             GROUP BY s.product.id, s.product.name
             ORDER BY SUM(s.qty) DESC
             """)

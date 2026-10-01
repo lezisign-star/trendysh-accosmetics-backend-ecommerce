@@ -197,16 +197,26 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
      * runs, so casting bytea to timestamp is itself a Postgres error. Rather
      * than fight the driver further, the null case is pushed to the caller
      * (a real, always-bindable {@code Instant} value) instead of the query.
+     *
+     * <p>Excludes the 28 {@code MOCK-}-prefixed demo orders unless demo data is still switched on
+     * (same live signal as {@link #search} above — any mock product currently published) — found
+     * live: turning demo data off unpublished the mock products but these two queries kept summing
+     * and counting their orders anyway, so the dashboard's revenue/order figures never actually
+     * went back to zero like the rest of the demo experience did.
      */
     @Query("""
             SELECT COALESCE(SUM(o.grandTotal), 0) FROM CustomerOrder o
             WHERE o.status IN :statuses AND o.createdAt >= :since
+              AND (o.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
             """)
     BigDecimal totalRevenue(@Param("statuses") Collection<OrderStatus> statuses, @Param("since") Instant since);
 
     @Query("""
             SELECT o.status AS status, COUNT(o) AS count FROM CustomerOrder o
             WHERE o.createdAt >= :since
+              AND (o.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
             GROUP BY o.status
             """)
     List<StatusCount> countByStatus(@Param("since") Instant since);

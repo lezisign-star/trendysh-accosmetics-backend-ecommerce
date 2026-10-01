@@ -1,5 +1,25 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 — demo-data toggle: analytics dashboard was still counting mock orders when off
+
+Found live: the owner asked why the admin dashboard still showed demo-sized revenue/order numbers with the
+"Demo data" toggle switched off. `mvn -q compile` clean; **verified live** — turned demo data on (confirmed via
+`/admin/settings/demo-data`: 109 products, 28 mock orders), read the Overview dashboard (revenue jumped
+226,850 → 376,176.80, orders 251 → 279, low stock 2 → 10), turned it off, and confirmed all four numbers
+returned to the exact pre-demo baseline.
+
+- **Root cause**: `CustomerOrderRepository.search()` (the admin order list) already excludes the 28
+  `MOCK-`-prefixed synthetic orders once demo data is off, via `(o.isMockData = false OR EXISTS (… mock
+  product still published …))` — the same live signal `MockDataSeederService.status()` itself uses for
+  "enabled". But `totalRevenue()`, `countByStatus()` (both backing `/admin/analytics/summary`),
+  `ProductSaleEventRepository.topSellers()` and `StockBalanceRepository.countBelowReorderLevel()` never had
+  this filter — they summed/counted every order and sale event unconditionally, so turning demo data off
+  unpublished the mock products but the dashboard's revenue, order count, top sellers and low-stock tile kept
+  including the orphaned mock data forever.
+- **Fix**: added the identical gating clause to all four queries. No entity/DTO/migration change — this was
+  purely a missing `WHERE` clause repeated in four places that evidently never got the same fix `search()`
+  already had.
+
 ## 2026-09-30 (later) — `GET /catalog/variants` now has a stable order
 
 `ProductVariantRepository.searchSellable` had no `ORDER BY`, so its order was whatever Postgres happened to return (and paging through it could

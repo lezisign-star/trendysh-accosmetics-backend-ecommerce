@@ -128,12 +128,18 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
      * {@code browseInventory}'s filter, including the same Phase 1 fix (2026-09-27): starts
      * FROM ProductVariant now, so a never-received variant (zero stock, no balance row at
      * all) is correctly counted as below its reorder level instead of silently excluded.
+     *
+     * <p>Excludes mock products' variants unless demo data is still on — same gating/bug as
+     * {@code CustomerOrderRepository.totalRevenue}.
      */
     @Query("""
             SELECT COUNT(v) FROM ProductVariant v
+            JOIN v.product p
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
             WHERE v.deleted = false
               AND v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
+              AND (p.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
             """)
     long countBelowReorderLevel();
 }
