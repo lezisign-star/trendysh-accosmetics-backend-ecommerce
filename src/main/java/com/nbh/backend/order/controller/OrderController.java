@@ -52,10 +52,20 @@ public class OrderController {
     @GetMapping
     public Page<OrderSummaryDto> list(@RequestParam(required = false) OrderStatus status,
                                        @RequestParam(required = false) String q,
+                                       @RequestParam(defaultValue = "false") boolean needsAttentionOnly,
                                        @PageableDefault(size = 20) Pageable pageable) {
         String term = (q == null || q.isBlank()) ? null : q.trim();
-        return orderRepository.search(status, term, PhoneNumbers.searchFragment(term), pageable);
+        return orderRepository.search(status, term, PhoneNumbers.searchFragment(term), needsAttentionOnly, pageable);
     }
+
+    /** The Fulfilment tab's "Needs attention (N)" chip count — see {@code CustomerOrderRepository.countNeedingAttention}. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_VIEW') or hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @GetMapping("/needs-attention-count")
+    public NeedsAttentionCount needsAttentionCount() {
+        return new NeedsAttentionCount(orderRepository.countNeedingAttention());
+    }
+
+    public record NeedsAttentionCount(long count) {}
 
     // Guest tracking (order number alone = status only; email = emailed code, then its orders) lives in
     // OrderTrackingController. It used to be here, returning a full order for a number plus email.

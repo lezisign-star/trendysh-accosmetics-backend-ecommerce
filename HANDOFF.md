@@ -1,5 +1,26 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (still later) — "Needs attention" surfaced at the order-list level, not just per-order
+
+`mvn -q compile` clean. **Verified live**: the Fulfilment tab's new "Needs attention (18)" chip filtered to
+exactly 18 orders, every one flagged; opened one of them and confirmed its detail panel shows the identical
+reason ("Couldn't book a rider: no (1 try so far). Automatic tries have stopped.") that the list-level flag was
+computed from.
+
+- **What existed already**: `AdminOrderDetailDto.Tumaboda.needsAttention` — computed per-order, the moment a
+  TumaBoda booking's retries are exhausted or TumaBoda reports the delivery dead (and it hasn't been rerouted
+  to a phone-arranged transporter) — but only visible once staff opened that specific order. `OrderSummaryDto`
+  (the list-level projection `listOrders`/`search` return) didn't carry it at all.
+- **Fix**: `OrderSummaryDto` gained `needsAttention`/`tumabodaBookingFailure`. `CustomerOrderRepository.search`'s
+  JPQL now computes the identical boolean via a `CASE WHEN` (same dead-status set, same exhausted-retries
+  check) rather than inventing a new definition, plus a `needsAttentionOnly` filter param that combines with
+  the existing status/q filters. New `CustomerOrderRepository.countNeedingAttention()` backs
+  `GET /orders/needs-attention-count` for the chip's count, independent of whatever status filter is active.
+- **Deliberately not built this pass** (per the TumaBoda parity plan's Section D, which explicitly says not to
+  guess): a "dispatched but not confirmed delivered after some threshold" bucket — `markDelivered` in this
+  codebase is always staff-driven (phone/WhatsApp confirmation, no courier webhook), and a time threshold needs
+  real dispatch-to-delivery timing data first, not a guessed number.
+
 ## 2026-10-02 (yet later) — Co-op Bank: a real developer-only on/off switch, still defaulting off
 
 `mvn -q compile` clean; V46 applies cleanly on the dev DB (`payment_settings.coop_bank_enabled`, default

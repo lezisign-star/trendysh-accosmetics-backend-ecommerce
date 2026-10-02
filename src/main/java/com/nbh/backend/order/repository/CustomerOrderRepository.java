@@ -138,10 +138,22 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
      * live signal {@code MockDataSeederService.status()} uses for "enabled" (any mock product
      * currently published), rather than a separate flag that could drift out of sync with it.
      */
+    /**
+     * {@code needsAttention} mirrors {@code AdminOrderDetailDto.Tumaboda.from}'s per-order logic
+     * exactly (a booking's retries are exhausted, or TumaBoda reports the delivery dead, and staff
+     * haven't rerouted it to a phone-arranged transporter) — Phase 3 (2026-10-02): extends that
+     * existing signal to the list view instead of inventing new buckets. {@code needsAttentionOnly}
+     * filters to just those when true; combines with {@code status}/{@code q} like any other filter.
+     */
     @Query("""
             SELECT NEW com.nbh.backend.order.dto.OrderSummaryDto(
                 o.id, o.orderNo, o.status, o.customerName, o.guestEmail, o.guestPhone,
-                SIZE(o.items), o.grandTotal, o.createdAt)
+                SIZE(o.items), o.grandTotal, o.createdAt,
+                CASE WHEN o.tumabodaRerouted = true THEN false
+                     WHEN LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled') THEN true
+                     WHEN o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL THEN true
+                     ELSE false END,
+                o.tumabodaBookingFailure)
             FROM CustomerOrder o
             WHERE (:status IS NULL OR o.status = :status)
               AND (:q IS NULL
@@ -151,10 +163,26 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                    OR o.guestPhone LIKE CONCAT('%', CAST(:phoneQ AS string), '%'))
               AND (o.isMockData = false OR EXISTS (
                        SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND (:needsAttentionOnly = false
+                   OR (o.tumabodaRerouted = false
+                       AND (LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled')
+                            OR (o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL))))
             ORDER BY o.createdAt DESC
             """)
     Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q,
-                                  @Param("phoneQ") String phoneQ, Pageable pageable);
+                                  @Param("phoneQ") String phoneQ, @Param("needsAttentionOnly") boolean needsAttentionOnly,
+                                  Pageable pageable);
+
+    /** The "Needs attention (N)" chip's count — same predicate as {@code search}'s needsAttentionOnly branch, unfiltered by status/q. */
+    @Query("""
+            SELECT COUNT(o) FROM CustomerOrder o
+            WHERE o.tumabodaRerouted = false
+              AND (LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled')
+                   OR (o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL))
+              AND (o.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+            """)
+    long countNeedingAttention();
 
     /** For MockDataSeederService.status()'s order count — how many of the synthetic
      *  review/sale-event FK orders currently exist, regardless of enabled/disabled state. */

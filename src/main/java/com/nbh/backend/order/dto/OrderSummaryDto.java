@@ -24,5 +24,12 @@ public record OrderSummaryDto(
         String guestPhone,
         long itemCount,
         BigDecimal grandTotal,
-        Instant createdAt
+        Instant createdAt,
+        /**
+         * Same signal as {@code AdminOrderDetailDto.Tumaboda.needsAttention} — a booking is stuck
+         * or TumaBoda reports the delivery failed — now surfaced at list level too (Phase 3,
+         * 2026-10-02) instead of only once staff open the order.
+         */
+        boolean needsAttention,
+        String tumabodaBookingFailure
 ) {}
