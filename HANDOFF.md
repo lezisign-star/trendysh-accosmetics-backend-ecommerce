@@ -1,5 +1,25 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (yet later) — Co-op Bank: a real developer-only on/off switch, still defaulting off
+
+`mvn -q compile` clean; V46 applies cleanly on the dev DB (`payment_settings.coop_bank_enabled`, default
+false). **Verified live**: toggled it on as the developer account (persisted across a reload), confirmed the
+honest "still needs real Co-op Bank credentials" copy, then turned it back off to restore the default.
+
+- **What this is, and isn't**: the Co-op Bank INS webhook receiver (`POST /payments/coop/ins`) already existed
+  and already self-disables safely without real bank credentials (blank `COOP_INS_USERNAME`/`PASSWORD` = reject
+  everything). What was missing was any admin-facing control at all — `PaymentMethodsSection` just showed a
+  static "Coming soon" pill. This flag doesn't wire anything real; it's purely a developer-only visibility
+  switch, same pattern as the demo-data toggle (`hasRole('DEVELOPER')`, not a permission — the client's own
+  SUPER_ADMIN holds the identical permission set). Real bank credentials still don't exist, so the actual
+  integration stays blocked regardless of this flag's state.
+- **New**: `CoopBankToggleController`/`CoopBankToggleService` (`GET/POST /admin/coop-bank/{status,enable,
+  disable}`), mirroring `MockDataController`'s shape exactly. `PaymentSettings.coopBankEnabled` (V46).
+  Deliberately separate from `PaymentSettingsService`'s `PERM_SETTINGS_MANAGE`-gated update — this one's
+  role-gated, not permission-gated, on purpose.
+- **Explicitly out of scope**: wiring Co-op Bank as a selectable payment method in customer checkout — checkout
+  stays Paybill-only; this flag never reaches it.
+
 ## 2026-10-02 (even later) — customer returns: `POST /orders/{id}/returns`
 
 `mvn -q compile` clean; V45 applies cleanly on the dev DB (`returned_qty` added to `customer_order_item`,

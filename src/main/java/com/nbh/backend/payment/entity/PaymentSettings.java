@@ -44,4 +44,14 @@ public class PaymentSettings extends BaseEntity {
 
     @Column(name = "support_whatsapp", length = 30)
     private String supportWhatsapp;
+
+    /**
+     * Developer-only visibility switch for Co-op Bank automatic confirmation (V46) — defaults off.
+     * The INS webhook receiver ({@code POST /payments/coop/ins}) already exists and self-disables
+     * safely with blank credentials; this flag doesn't wire anything real, it only lets a developer
+     * show the capability exists without implying the real bank connection works. See
+     * {@code com.nbh.backend.payment.controller.CoopBankToggleController}.
+     */
+    @Column(name = "coop_bank_enabled", nullable = false)
+    private boolean coopBankEnabled = false;
 }
