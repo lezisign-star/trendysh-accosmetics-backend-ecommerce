@@ -1,5 +1,28 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (even more latest) — TumaBoda settlement ledger (V48)
+
+`mvn -q compile` clean; V48 applies cleanly on the dev DB (`tumaboda_settlement` table,
+`customer_order.tumaboda_settlement_id`). **Verified live** against 52 real costed deliveries already in the
+dev DB (KSh 450 each, KSh 23,400 total): recorded a settlement for the full amount, confirmed every one of the
+52 orders was swept (`tumabodaSettlementId` set), "Currently owed" dropped to KSh 0, and the new settlement
+appeared in history with the correct count and reference.
+
+- **What this is** (TumaBoda parity plan Section B): customer-facing collection is completely unchanged — the
+  TumaBoda fee is still bundled into the order total and charged upfront via M-Pesa. This is purely the other
+  side: what Trendysh owes TumaBoda for deliveries it already booked (`CustomerOrder.tumabodaCost`, already
+  existed, never read back as a report), settled periodically by bank transfer instead of per-order in real
+  time.
+- **New**: `TumaBodaSettlement` entity (date, amount, reference, notes — `amount` is what the bank statement
+  actually shows, the source of truth, not a figure the server re-derives). `TumaBodaSettlementService.record`
+  always sweeps *every* currently-outstanding costed delivery into the new settlement in one transaction — a
+  settlement is never a hand-picked subset, matching how this is actually paid (periodically, in full).
+  `GET/POST /admin/tumaboda-settlement/{outstanding,history,remote-balance,''}`, same permission gate as the
+  rest of Admin Payments (`PERM_PAYMENT_MANAGE` or `PERM_ORDER_MANAGE_ALL`).
+- **Reconciliation against TumaBoda's own balance API stays stubbed**, per the plan: `TumaBodaReconciliationService`
+  is an interface, `NoopTumaBodaReconciliationService` the only implementation (`Optional.empty()` always) until
+  real TumaBoda credentials and API docs exist — the rest of the ledger doesn't block on it.
+
 ## 2026-10-02 (latest) — delivery-contact phone: who the rider actually calls (V47)
 
 `mvn -q compile`/`test-compile` clean; V47 applies cleanly on the dev DB (`customer_order.delivery_contact_phone`,

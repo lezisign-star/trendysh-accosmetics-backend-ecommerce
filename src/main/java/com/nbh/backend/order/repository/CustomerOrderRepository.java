@@ -253,4 +253,29 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
         OrderStatus getStatus();
         long getCount();
     }
+
+    /**
+     * TumaBoda settlement ledger (V48): every costed delivery not yet swept into a settlement —
+     * {@code tumabodaCost} is only ever set once a booking actually happened (see
+     * {@code TumaBodaBookingService}), so this needs no further status filtering. Oldest first,
+     * matching how a bank reconciliation is normally worked.
+     */
+    @Query("""
+            SELECT NEW com.nbh.backend.tumaboda.TumaBodaSettlementDtos$OutstandingLine(
+                o.id, o.orderNo, o.customerName, o.tumabodaCost, o.createdAt)
+            FROM CustomerOrder o
+            WHERE o.tumabodaCost IS NOT NULL AND o.tumabodaSettlementId IS NULL
+            ORDER BY o.createdAt ASC
+            """)
+    List<com.nbh.backend.tumaboda.TumaBodaSettlementDtos.OutstandingLine> findOutstandingTumabodaDeliveries();
+
+    @Query("SELECT COALESCE(SUM(o.tumabodaCost), 0) FROM CustomerOrder o WHERE o.tumabodaCost IS NOT NULL AND o.tumabodaSettlementId IS NULL")
+    BigDecimal totalOutstandingTumabodaCost();
+
+    /** Sweeps every currently-outstanding costed delivery into one settlement — see {@code TumaBodaSettlementService.record}. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE CustomerOrder o SET o.tumabodaSettlementId = :settlementId WHERE o.tumabodaCost IS NOT NULL AND o.tumabodaSettlementId IS NULL")
+    int sweepOutstandingTumabodaDeliveries(@Param("settlementId") UUID settlementId);
+
+    long countByTumabodaSettlementId(UUID settlementId);
 }

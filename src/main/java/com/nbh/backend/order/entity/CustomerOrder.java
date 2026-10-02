@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Guest checkout is still supported alongside signed-in accounts (§4.7).
@@ -146,6 +147,14 @@ public class CustomerOrder extends BaseEntity {
     /** Staff moved this order back to a phone-arranged transporter after a booking problem. */
     @Column(name = "tumaboda_rerouted", nullable = false)
     private boolean tumabodaRerouted = false;
+
+    /**
+     * Which {@code TumaBodaSettlement} swept this order's {@link #tumabodaCost} into a remittance —
+     * null means still outstanding (V48). Plain UUID, not a mapped relation, same convention as the
+     * other staff/document id columns on this entity (e.g. {@code tumabodaDeliveryId}).
+     */
+    @Column(name = "tumaboda_settlement_id")
+    private UUID tumabodaSettlementId;
 
     /** True when this order is to be (or has been) delivered by a TumaBoda rider booked through the API. */
     public boolean isTumabodaApiDelivery() {
