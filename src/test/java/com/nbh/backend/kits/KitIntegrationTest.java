@@ -197,7 +197,7 @@ class KitIntegrationTest {
         String sessionId = "kit-session-" + UUID.randomUUID();
         cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
 
-        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"), checkoutRequestBody("kit-golden@example.com"), sessionId);
+        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"), checkoutRequestBody("kit-golden-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
         String orderId = checkoutResult.get("order").get("id").asText();
 
         JsonNode detail = ok(get("/api/v1/orders/" + orderId), null);
@@ -304,7 +304,7 @@ class KitIntegrationTest {
         // Adding to cart is unaffected — the courtesy check is bypassed entirely for kits.
         cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
 
-        MvcResult checkoutResult = cartRaw(post("/api/v1/checkout"), checkoutRequestBody("kit-starve@example.com"), sessionId);
+        MvcResult checkoutResult = cartRaw(post("/api/v1/checkout"), checkoutRequestBody("kit-starve-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
         assertThat(checkoutResult.getResponse().getStatus()).isEqualTo(409);
         String responseBody = checkoutResult.getResponse().getContentAsString();
         assertThat(responseBody).contains(kitName);
@@ -324,7 +324,7 @@ class KitIntegrationTest {
 
         String sessionId = "kit-cancel-session-" + UUID.randomUUID();
         cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
-        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"), checkoutRequestBody("kit-cancel@example.com"), sessionId);
+        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"), checkoutRequestBody("kit-cancel-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
         String orderId = checkoutResult.get("order").get("id").asText();
 
         ok(post("/api/v1/orders/" + orderId + "/cancel"), null);
@@ -490,7 +490,7 @@ class KitIntegrationTest {
         // Checkout only reserves the one remaining real component.
         String sessionId = "kit-toggle-session-" + UUID.randomUUID();
         cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
-        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"), checkoutRequestBody("kit-toggle@example.com"), sessionId);
+        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"), checkoutRequestBody("kit-toggle-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
         String orderId = checkoutResult.get("order").get("id").asText();
         List<StockReservation> reservations = reservationRepository.findByReferenceTypeAndReferenceId(
                 "CUSTOMER_ORDER", UUID.fromString(orderId));
