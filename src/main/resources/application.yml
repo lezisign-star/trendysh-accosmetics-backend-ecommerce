@@ -91,7 +91,7 @@ app:
     account-name: ${BANK_ACCOUNT_NAME:}
     account-number: ${BANK_ACCOUNT_NUMBER:}
     account-branch: ${BANK_ACCOUNT_BRANCH:}
-    support-whatsapp: ${SUPPORT_WHATSAPP:}
+    support-whatsapp: ${SUPPORT_WHATSAPP:0793506900}
   coop:
     ins:
       # Co-op Bank Instant Notification Service (deposit notifications). NOT tested against the real

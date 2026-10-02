@@ -36,7 +36,8 @@ public class PaymentSettingsService {
         settings.setAccountName(blankToNull(request.accountName()));
         settings.setAccountNumber(blankToNull(request.accountNumber()));
         settings.setAccountBranch(blankToNull(request.accountBranch()));
-        settings.setSupportWhatsapp(blankToNull(request.supportWhatsapp()));
+        String support = blankToNull(request.supportWhatsapp());
+        settings.setSupportWhatsapp(support == null ? BankPaymentSettings.DEFAULT_SUPPORT_PHONE : support);
         return PaymentSettingsDto.from(repository.save(settings));
     }
 

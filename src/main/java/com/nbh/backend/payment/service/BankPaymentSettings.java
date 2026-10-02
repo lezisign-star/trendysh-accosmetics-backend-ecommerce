@@ -151,7 +151,13 @@ public class BankPaymentSettings {
 
     public String accountBranch() { return orEmpty(current().getAccountBranch()); }
 
-    public String supportWhatsapp() { return orEmpty(current().getSupportWhatsapp()); }
+    /** The shop's one customer line, used whenever no number has been saved so customers always get one. */
+    public static final String DEFAULT_SUPPORT_PHONE = "0793506900";
+
+    public String supportWhatsapp() {
+        String saved = orEmpty(current().getSupportWhatsapp());
+        return saved.isBlank() ? DEFAULT_SUPPORT_PHONE : saved;
+    }
 
     /** Spring Data's own generated query methods already run in their own read-only transaction. */
     private PaymentSettings current() {

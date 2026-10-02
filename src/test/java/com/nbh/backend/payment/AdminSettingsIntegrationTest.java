@@ -77,6 +77,14 @@ class AdminSettingsIntegrationTest {
     }
 
     @Test
+    void aBlankSupportNumberFallsBackToTheShopLine() throws Exception {
+        JsonNode saved = ok(put("/api/v1/admin/settings/payment"),
+                "{\"bankName\":\"KCB\",\"paybillNumber\":\"522522\",\"accountName\":\"x\",\"accountNumber\":\"1\","
+                        + "\"supportWhatsapp\":\"\"}", superAdminToken);
+        assertThat(saved.get("supportWhatsapp").asText()).isEqualTo("0793506900");
+    }
+
+    @Test
     void aBlankFieldClearsItRatherThanBeingRejected() throws Exception {
         ok(put("/api/v1/admin/settings/payment"),
                 "{\"bankName\":\"Equity\",\"paybillNumber\":\"247247\",\"accountName\":\"x\",\"accountNumber\":\"1\"}",
