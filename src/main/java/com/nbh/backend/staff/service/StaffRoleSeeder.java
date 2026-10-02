@@ -81,7 +81,7 @@ public class StaffRoleSeeder {
                         Permission.STOCK_COUNT,
                         Permission.POS_SELL, Permission.POS_OPEN_SESSION, Permission.POS_CLOSE_SESSION,
                         Permission.POS_DISCOUNT, Permission.POS_VOID,
-                        Permission.PAYMENT_VIEW,
+                        Permission.PAYMENT_VIEW, Permission.PAYMENT_SETTINGS_MANAGE,
                         Permission.USER_VIEW,
                         Permission.ANALYTICS_VIEW,
                         Permission.CUSTOMER_VIEW

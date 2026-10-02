@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 /** The Settings tab's "real" half — bank/paybill/WhatsApp details a customer actually sees. */
 @RestController
 @RequestMapping("/api/v1/admin/settings/payment")
-@PreAuthorize("hasAuthority('PERM_SETTINGS_MANAGE')")
+@PreAuthorize("hasAnyAuthority('PERM_SETTINGS_MANAGE','PERM_PAYMENT_SETTINGS_MANAGE')")
 public class AdminSettingsController {
 
     private final PaymentSettingsService service;

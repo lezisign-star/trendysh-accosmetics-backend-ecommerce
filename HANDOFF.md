@@ -1,5 +1,35 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (late night) — AI photo cleanup (Gemini), and Managers can edit payment details (V51)
+
+`mvn -q compile`/`test-compile` clean; V51 applied. **Verified live against a local stand-in for Gemini and
+Cloudinary** (a throwaway Python server on :9099 via `GEMINI_BASE_URL` / `CLOUDINARY_UPLOAD_BASE_URL`), through the
+real admin UI and API: a 4-image, a 5-image and a 6-image batch each produced exactly that many images, the first
+primary with the original photo kept last; "undo batch" removed them and restored the original as sole primary and
+called Cloudinary destroy; a second run on an already-cleaned product was refused (422); the stamped output showed
+the logo small, centred and faint on the cream backdrop. **Not run against real Gemini/Cloudinary** — no keys here.
+
+- **Studied from Moments** (`ProductImageGenerationService/Runner/Writer`, `GeminiImageService`,
+  `ProductImagePromptBuilder`) and ported to package `imagecleanup`: batch + per-image tables, background runner,
+  one-batch-at-a-time, one retry on 429/5xx, quota error stops the whole batch (`STOPPED_GEMINI_QUOTA`), boot-time
+  `INTERRUPTED` reconciler, undo that restores the original photo, skip if the photo changed mid-run. No spend ceiling
+  (owner choice): it runs until Gemini's own limit.
+- **Trendysh specifics**: backdrop `#F3EBDD` (`IMAGE_CLEANUP_BACKGROUND`); up to **six** different views (hero, close
+  detail, wide opposite angle, front, elevated, side) each with its own frame-fill target; **images per product is
+  chosen per batch** (1-6, default 3) on the admin page and also per single product. The logo is NOT drawn by Gemini
+  (models garble small marks): `WatermarkService` composites `resources/branding/logo.png` at 20% width, centred, 30%
+  opacity, after the edit; the prompt forbids the model adding its own marks.
+- Cleaned images are normal `product_image` rows with new source `AI_CLEANED` (V51 widens the CHECK). Candidates =
+  live products whose primary product-level photo isn't AI-made and which have no cleaned image yet, respecting the
+  demo-or-real rule. Server-side signed Cloudinary upload/destroy (`CloudinaryUploader`, no SDK).
+- API: `/api/v1/admin/image-cleanup/{status,batches,run,run/{productId}}` + `DELETE batches/{id}` (undo), gated on
+  `PERM_PRODUCT_MANAGE`. Env: `GEMINI_API_KEY` (billing-enabled project), `CLOUDINARY_*` (already needed for uploads).
+  Progress pushes live via topic `IMAGE_CLEANUP` (staff only).
+- **Payment details access**: only Super Admin/Developer could view or edit them; a Manager got failing Settings
+  pages while the sidebar still showed them. New permission `PAYMENT_SETTINGS_MANAGE` (granted to Manager by the
+  role seeder, which syncs existing roles) now also opens `/admin/settings/payment`. The admin sidebar hides Settings
+  entries a role can't use. Verified: role table shows MANAGER holds it; GET/PUT as the developer works.
+
 ## 2026-10-02 (night) — demo data off now hides ALL demo side effects, not just products
 
 Owner screenshots (live site, demo data "Off") still showed demo revenue, 29 orders, demo top sellers, demo

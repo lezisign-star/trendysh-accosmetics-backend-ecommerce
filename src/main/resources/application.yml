@@ -120,6 +120,13 @@ app:
     # Blank (the default) means the callback endpoint rejects every request —
     # set this BEFORE the callback URL is ever registered with Safaricom.
     callback-secret: ${MPESA_CALLBACK_SECRET:}
+  image-cleanup:
+    # Gemini image editing for product photos (see imagecleanup package). Needs a billing-enabled key.
+    gemini-api-key: ${GEMINI_API_KEY:}
+    gemini-base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+    gemini-model: ${GEMINI_IMAGE_MODEL:gemini-2.5-flash-image}
+    cloudinary-upload-base-url: ${CLOUDINARY_UPLOAD_BASE_URL:https://api.cloudinary.com}
+    background-hex: ${IMAGE_CLEANUP_BACKGROUND:#F3EBDD}
   cloudinary:
     # UNSET PLACEHOLDERS — CloudinarySignatureService refuses to sign an
     # upload until all three are set. Get these from the Cloudinary console

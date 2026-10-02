@@ -44,5 +44,5 @@ public class ProductImage extends BaseEntity {
     private Integer height;
     private Integer byteSize;
 
-    public enum ImageSource { UPLOAD, CAMERA_CAPTURE }
+    public enum ImageSource { UPLOAD, CAMERA_CAPTURE, AI_CLEANED }
 }

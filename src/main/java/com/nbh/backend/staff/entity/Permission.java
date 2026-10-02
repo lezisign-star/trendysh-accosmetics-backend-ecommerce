@@ -46,6 +46,8 @@ public enum Permission {
     // Analytics & settings
     ANALYTICS_VIEW,
     SETTINGS_MANAGE,
+    /** Edit the Paybill/bank/WhatsApp details customers pay to — held by Managers without the rest of Settings. */
+    PAYMENT_SETTINGS_MANAGE,
 
     // Audit log
     AUDIT_VIEW,
