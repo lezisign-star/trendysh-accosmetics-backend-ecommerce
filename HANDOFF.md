@@ -1,5 +1,13 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (audit) — tests for everything shipped today
+
+Added integration/unit tests for returns, settlement, delivery contact phone, needs-attention, delivery places and suggestions, demo-data isolation, payment-settings permission, credentials and photo cleanup (Gemini client against a local stand-in, watermark, prompts, SecretCipher). Full suite on a fresh DB: 592 run, 0 failures.
+
+- `AdminSettingsIntegrationTest`: the forbidden-role case now uses CASHIER, because Managers legitimately hold `PAYMENT_SETTINGS_MANAGE`.
+- Frontend: `tsc --noEmit` clean. `eslint` only reports CRLF/prettier noise in untouched files (`login.tsx`, `verify-email.tsx`, `admin.login.tsx`, `HelpTip.tsx`, `VariantPicker.tsx`) plus fast-refresh warnings. Not changed.
+- Not yet redesigned to the new admin look: Products, Stock, Payments, Analytics screens.
+
 ## 2026-10-02 (final) — `GET /admin/analytics/daily` for the redesigned overview
 
 `mvn -q compile` clean. **Verified live**: the new Overview shows 14-day trend lines and revenue bars from it

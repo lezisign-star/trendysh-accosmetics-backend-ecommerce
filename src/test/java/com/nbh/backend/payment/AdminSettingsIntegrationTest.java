@@ -92,13 +92,15 @@ class AdminSettingsIntegrationTest {
     }
 
     @Test
-    void aRoleWithoutSettingsManageIsForbidden() throws Exception {
+    void aRoleWithNeitherSettingsPermissionIsForbidden() throws Exception {
+        // Managers used to be the example here; they now hold PAYMENT_SETTINGS_MANAGE on purpose (owner decision,
+        // 2026-10-02), so a Cashier stands in for "a role that may not edit payment details".
         StaffUser manager = new StaffUser();
         manager.setEmail("settings-test-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com");
         manager.setPassword(passwordEncoder.encode("irrelevant-password"));
-        manager.setFirstName("Branch");
-        manager.setLastName("Manager");
-        manager.setStaffRole(staffRoles.findByName("MANAGER").orElseThrow());
+        manager.setFirstName("Front");
+        manager.setLastName("Counter");
+        manager.setStaffRole(staffRoles.findByName("CASHIER").orElseThrow());
         staffUsers.save(manager);
         String token = jwtService.generateAccessToken(manager);
 
