@@ -1,6 +1,7 @@
 package com.nbh.backend.stock.repository;
 
 import com.nbh.backend.stock.dto.InventoryLineDto;
+import com.nbh.backend.stock.dto.ValuationLineDto;
 import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockBalance;
 import jakarta.persistence.LockModeType;
@@ -104,6 +105,45 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
     Page<InventoryLineDto> browseInventory(@Param("belowReorderOnly") boolean belowReorderOnly,
                                             @Param("q") String q,
                                             Pageable pageable);
+
+    /**
+     * The stock valuation report — {@code avgCost}/{@code stockValue} have been computed correctly on
+     * every SHOP balance row since migration V30 (moving-average cost, {@code StockPostingService.applyMovement}),
+     * nothing had ever read it back as a report. Same mock-data gating as the admin analytics dashboard
+     * (`CustomerOrderRepository.totalRevenue` et al.) — a variant never received (no balance row) has
+     * nothing to report, so this starts FROM StockBalance itself rather than ProductVariant (unlike
+     * {@link #browseInventory}, which must show "never received" rows to flag them as below reorder level;
+     * a valuation report has nothing to say about stock that was never received).
+     */
+    @Query("""
+            SELECT NEW com.nbh.backend.stock.dto.ValuationLineDto(
+                v.id, v.sku, v.variantName, p.name, b.onHandQty, b.avgCost, b.stockValue)
+            FROM StockBalance b
+            JOIN b.variant v
+            JOIN v.product p
+            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+              AND v.deleted = false
+              AND (p.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND (:q IS NULL
+                   OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+            ORDER BY p.name ASC, v.sku ASC
+            """)
+    Page<ValuationLineDto> valuationReport(@Param("q") String q, Pageable pageable);
+
+    /** The valuation report's grand total — same filters as {@link #valuationReport}, minus paging. */
+    @Query("""
+            SELECT COALESCE(SUM(b.stockValue), 0)
+            FROM StockBalance b
+            JOIN b.variant v
+            JOIN v.product p
+            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
+              AND v.deleted = false
+              AND (p.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+            """)
+    java.math.BigDecimal totalStockValue();
 
     /**
      * Sellable quantity per variant (on-hand minus reserved, SHOP only) — backs

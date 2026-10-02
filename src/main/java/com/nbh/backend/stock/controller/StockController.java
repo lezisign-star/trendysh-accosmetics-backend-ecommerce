@@ -200,6 +200,18 @@ public class StockController {
     }
 
     /**
+     * The stock valuation report — the moving-average-cost engine has computed this correctly on every
+     * balance row since migration V30; this is the first time it's been surfaced anywhere. Same
+     * permission as the other read-only stock views.
+     */
+    @PreAuthorize("hasAuthority('PERM_STOCK_VIEW')")
+    @GetMapping("/valuation")
+    public StockAvailabilityService.ValuationReport valuation(@RequestParam(required = false) String q,
+                                                               @PageableDefault(size = 20) Pageable pageable) {
+        return availabilityService.valuation(q, pageable);
+    }
+
+    /**
      * Phase 1 (2026-09-27): the movement-history view — the ledger has always had this data,
      * nothing had ever read it back. {@code from}/{@code to} are optional; an absent one
      * resolves to "the beginning of time" / "now" (see StockMovementQueryService).

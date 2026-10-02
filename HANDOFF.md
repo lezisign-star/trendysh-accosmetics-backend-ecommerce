@@ -1,5 +1,23 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (later) — stock valuation report, first time it's been surfaced anywhere
+
+`mvn -q compile` clean. **Verified live**: `GET /stock/valuation` against the real dev DB returned real variant
+rows (on-hand qty, avg cost, stock value) and a grand total (KSh 1,275,690) rendered on the new admin page.
+
+- **What this is**: `StockPostingService.applyMovement` has computed moving-average-cost valuation correctly
+  on every `StockBalance` row since migration V30 (`avgCost`/`stockValue`, confirmed against ERPNext's own
+  `get_moving_average_values`) — nothing had ever read it back as a report. No new valuation logic; this is
+  purely a read path over already-correct data.
+- **Backend**: `ValuationLineDto` (new); `StockBalanceRepository.valuationReport`/`totalStockValue` (same
+  mock-data gating clause as the admin analytics queries, starts FROM `StockBalance` rather than
+  `ProductVariant` — a variant never received has nothing to report, unlike `browseInventory` which must show
+  those rows to flag them as below reorder level); `StockAvailabilityService.valuation()` (new `ValuationReport`
+  record: paged lines + total); `GET /stock/valuation` on `StockController`, `PERM_STOCK_VIEW` same as the
+  other read-only stock endpoints.
+- **Frontend**: new `/admin/valuation` route (Inventory group, between Stock levels and Forecast), modeled on
+  `admin.stock.tsx`'s list pattern — search box, paged table, a "Total stock value" card.
+
 ## 2026-10-02 — demo-data toggle: analytics dashboard was still counting mock orders when off
 
 Found live: the owner asked why the admin dashboard still showed demo-sized revenue/order numbers with the

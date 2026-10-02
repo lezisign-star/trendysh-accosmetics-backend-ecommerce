@@ -1,6 +1,7 @@
 package com.nbh.backend.stock.service;
 
 import com.nbh.backend.stock.dto.InventoryLineDto;
+import com.nbh.backend.stock.dto.ValuationLineDto;
 import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.repository.StockBalanceRepository;
 import org.springframework.data.domain.Page;
@@ -76,6 +77,16 @@ public class StockAvailabilityService {
     public long countBelowReorderLevel() {
         return balanceRepository.countBelowReorderLevel();
     }
+
+    /** The stock valuation report (moving-average cost, already computed on every balance row — see
+     * {@link com.nbh.backend.stock.repository.StockBalanceRepository#valuationReport}'s javadoc). */
+    @Transactional(readOnly = true)
+    public ValuationReport valuation(String q, Pageable pageable) {
+        Page<ValuationLineDto> page = balanceRepository.valuationReport(q, pageable);
+        return new ValuationReport(page, balanceRepository.totalStockValue());
+    }
+
+    public record ValuationReport(Page<ValuationLineDto> lines, BigDecimal totalValue) {}
 
     /**
      * Phase 0 fix (2026-09-27): every account's balance row for one variant (SHOP plus the
