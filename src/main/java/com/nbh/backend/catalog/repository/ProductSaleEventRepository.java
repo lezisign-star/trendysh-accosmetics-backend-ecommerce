@@ -66,8 +66,7 @@ public interface ProductSaleEventRepository extends JpaRepository<ProductSaleEve
             SELECT s.product.id AS productId, s.product.name AS productName, SUM(s.qty) AS totalQty
             FROM ProductSaleEvent s
             WHERE s.occurredAt >= :since
-              AND (s.product.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((s.product.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (s.product.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             GROUP BY s.product.id, s.product.name
             ORDER BY SUM(s.qty) DESC
             """)

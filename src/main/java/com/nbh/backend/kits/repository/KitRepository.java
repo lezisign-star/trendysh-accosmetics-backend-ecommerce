@@ -20,12 +20,15 @@ public interface KitRepository extends JpaRepository<Kit, UUID> {
 
     /** Admin list search — {@code q} matches the kit's own product name, same short-circuit-when-null
      *  pattern as {@code ProductRepository.searchAdmin}. */
+    @Query("SELECT COUNT(mp) > 0 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true")
+    boolean demoDataOn();
+
     @Query("""
             SELECT k FROM Kit k
             JOIN k.variant v
             JOIN v.product p
             WHERE (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-              AND (p.isMockData = false OR p.isPublished = true)
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:professionId IS NULL OR k.profession.id = :professionId)
             """)
     Page<Kit> searchAdmin(@Param("q") String q, @Param("professionId") UUID professionId, Pageable pageable);

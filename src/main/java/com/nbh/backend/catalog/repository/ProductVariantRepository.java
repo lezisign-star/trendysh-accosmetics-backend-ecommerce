@@ -31,6 +31,7 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             WHERE v.deleted = false AND v.isActive = true AND v.isKit = false
               AND v.sellingPrice IS NOT NULL
               AND p.deleted = false AND p.isPublished = true
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)
     List<ProductVariant> findForecastable();
 
@@ -75,6 +76,7 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             LEFT JOIN kit.profession prof
             WHERE v.deleted = false AND v.isActive = true AND v.sellingPrice IS NOT NULL
               AND p.isPublished = true AND p.deleted = false
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:q IS NULL
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))

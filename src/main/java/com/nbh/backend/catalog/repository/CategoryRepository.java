@@ -11,6 +11,10 @@ import java.util.UUID;
 public interface CategoryRepository extends JpaRepository<Category, UUID> {
     List<Category> findByIsPublishedTrueOrderBySortOrderAsc();
 
+    /** Demo data is "on" while any mock product is published — the one live signal every demo gate uses. */
+    @Query("SELECT COUNT(mp) > 0 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true")
+    boolean demoDataOn();
+
     Optional<Category> findBySlug(String slug);
 
     boolean existsBySlug(String slug);
@@ -25,7 +29,7 @@ public interface CategoryRepository extends JpaRepository<Category, UUID> {
     @Query("""
             SELECT c.id, COUNT(DISTINCT p)
             FROM Product p JOIN p.categories c
-            WHERE p.deleted = false AND (p.isMockData = false OR p.isPublished = true)
+            WHERE p.deleted = false AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             GROUP BY c.id
             """)
     List<Object[]> liveProductCountsByCategory();

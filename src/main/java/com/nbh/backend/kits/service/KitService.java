@@ -210,7 +210,9 @@ public class KitService {
 
     @Transactional(readOnly = true)
     public List<KitPublicDto> listPublicKits() {
+        boolean demoOn = kits.demoDataOn();
         List<Kit> active = kits.findAll().stream()
+                .filter(k -> k.getVariant().getProduct().isMockData() == demoOn)
                 .filter(k -> k.getVariant().isSellable() && k.getVariant().getProduct().isPublished()
                         && !k.getVariant().getProduct().isDeleted())
                 .toList();

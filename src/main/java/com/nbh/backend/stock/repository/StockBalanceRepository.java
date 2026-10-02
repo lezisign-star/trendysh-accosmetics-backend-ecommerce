@@ -95,7 +95,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
             JOIN v.product p
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
             WHERE v.deleted = false
-              AND (p.isMockData = false OR p.isPublished = true)
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:belowReorderOnly = false
                    OR (v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel))
               AND (:q IS NULL
@@ -124,8 +124,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
             JOIN v.product p
             WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
               AND v.deleted = false
-              AND (p.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:q IS NULL
                    OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
@@ -141,8 +140,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
             JOIN v.product p
             WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
               AND v.deleted = false
-              AND (p.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)
     java.math.BigDecimal totalStockValue();
 
@@ -179,8 +177,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
             WHERE v.deleted = false
               AND v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
-              AND (p.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)
     long countBelowReorderLevel();
 }

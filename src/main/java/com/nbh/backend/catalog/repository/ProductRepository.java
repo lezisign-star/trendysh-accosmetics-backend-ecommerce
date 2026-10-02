@@ -57,6 +57,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             LEFT JOIN p.categories c
             LEFT JOIN c.parent parent
             WHERE p.isPublished = true AND p.deleted = false
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(p.shortDescription) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
               AND (:categorySlug IS NULL OR c.slug = :categorySlug OR parent.slug = :categorySlug)
@@ -109,7 +110,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                             SELECT 1 FROM StockBalance b
                             WHERE b.variant.product = p AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
                               AND (b.onHandQty - b.reservedQty) > 0)))
-              AND (p.isMockData = false OR p.isPublished = true)
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)
     Page<Product> searchAdmin(@Param("q") String q,
                                @Param("categoryId") UUID categoryId,
@@ -126,6 +127,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             JOIN p.categories c
             LEFT JOIN c.parent parent
             WHERE p.isPublished = true AND p.deleted = false AND p.id <> :excludeId
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (c.id IN :categoryIds OR parent.id IN :categoryIds)
             """)
     List<Product> findRelated(@Param("categoryIds") List<UUID> categoryIds,

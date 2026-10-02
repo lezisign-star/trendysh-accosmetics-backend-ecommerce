@@ -13,7 +13,12 @@ while on and returns to the exact same real value afterwards.
   **Stock levels**, **Stock movements** and **Holds** (per-product rule `isMockData = false OR isPublished`),
   on top of valuation/forecast/customers which were already gated. Locally: categories 12 -> 6, stock levels
   650 -> 541, movements 1272 -> 1044, valuation 5,271,826 -> 1,275,790, kits 55 -> 50, professions 52 -> 47.
-- Semantics: demo OFF = real data only; demo ON = demo catalogue shown alongside real data (unchanged).
+- **Semantics are now strict** (owner request): demo OFF = real data only; demo ON = demo data only. Every gate is
+  `(x.isMockData AND demoOn) OR (NOT x.isMockData AND NOT demoOn)` where `demoOn` = any mock product published.
+  Extended to the storefront too (product search, related, variant cards, categories, public kits) and to the
+  forecast list; real top-level categories always stay (mock subcategories hang under them). Verified locally
+  off -> on -> off: ON shows only demo (109 products, 28 orders, 5 kits/professions, revenue 149,326.80), OFF
+  shows only real (252 orders, 541 stock lines, 50 kits...) and returns to identical figures.
 
 ## 2026-10-02 (evening) — delivery places + prices CRUD, customer suggestions, backend-pushed live updates everywhere (V50)
 

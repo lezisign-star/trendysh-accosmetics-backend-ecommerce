@@ -38,8 +38,9 @@ public class CategoryController {
         for (Object[] row : categoryRepository.liveProductCountsByCategory()) {
             direct.merge((UUID) row[0], (Long) row[1], Long::sum);
         }
+        boolean demoOn = categoryRepository.demoDataOn();
         List<Category> all = categoryRepository.findAll().stream()
-                .filter(c -> !c.isMockData() || c.isPublished())
+                .filter(c -> (c.getParent() == null && !c.isMockData()) || c.isMockData() == demoOn)
                 .toList();
         // A top-level category's shown count rolls up its subcategories' products too (a product
         // in several categories, Phase 3 2026-09-24 — direct counts alone would undercount a

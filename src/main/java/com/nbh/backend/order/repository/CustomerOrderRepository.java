@@ -161,8 +161,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                    OR LOWER(o.customerName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR o.guestPhone LIKE CONCAT('%', CAST(:phoneQ AS string), '%'))
-              AND (o.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:needsAttentionOnly = false
                    OR (o.tumabodaRerouted = false
                        AND (LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled')
@@ -179,8 +178,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
             WHERE o.tumabodaRerouted = false
               AND (LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled')
                    OR (o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL))
-              AND (o.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)
     long countNeedingAttention();
 
@@ -235,16 +233,14 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Query("""
             SELECT COALESCE(SUM(o.grandTotal), 0) FROM CustomerOrder o
             WHERE o.status IN :statuses AND o.createdAt >= :since
-              AND (o.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)
     BigDecimal totalRevenue(@Param("statuses") Collection<OrderStatus> statuses, @Param("since") Instant since);
 
     @Query("""
             SELECT o.status AS status, COUNT(o) AS count FROM CustomerOrder o
             WHERE o.createdAt >= :since
-              AND (o.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             GROUP BY o.status
             """)
     List<StatusCount> countByStatus(@Param("since") Instant since);
@@ -293,8 +289,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                     THEN o.grandTotal ELSE 0 END), 0),
                 MAX(o.createdAt), CASE WHEN COUNT(o.customerAccount) > 0 THEN true ELSE false END)
             FROM CustomerOrder o
-            WHERE (o.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+            WHERE ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:q IS NULL
                    OR LOWER(COALESCE(o.customerName, '')) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
@@ -304,8 +299,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
             """,
             countQuery = """
             SELECT COUNT(DISTINCT o.guestPhone) FROM CustomerOrder o
-            WHERE (o.isMockData = false OR EXISTS (
-                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+            WHERE ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:q IS NULL
                    OR LOWER(COALESCE(o.customerName, '')) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
