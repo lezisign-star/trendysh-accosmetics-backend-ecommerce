@@ -1,7 +1,6 @@
 package com.nbh.backend.catalog.service;
 
 import com.nbh.backend.common.exception.ConfigurationException;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -29,20 +28,16 @@ import java.util.stream.Collectors;
 @Service
 public class CloudinarySignatureService {
 
-    private final String cloudName;
-    private final String apiKey;
-    private final String apiSecret;
+    private final com.nbh.backend.integrations.IntegrationSettingsService settings;
 
-    public CloudinarySignatureService(
-            @Value("${app.cloudinary.cloud-name:}") String cloudName,
-            @Value("${app.cloudinary.api-key:}") String apiKey,
-            @Value("${app.cloudinary.api-secret:}") String apiSecret) {
-        this.cloudName = cloudName;
-        this.apiKey = apiKey;
-        this.apiSecret = apiSecret;
+    public CloudinarySignatureService(com.nbh.backend.integrations.IntegrationSettingsService settings) {
+        this.settings = settings;
     }
 
     public UploadSignature sign(String folder) {
+        String cloudName = settings.get(com.nbh.backend.integrations.IntegrationKey.CLOUDINARY_CLOUD_NAME);
+        String apiKey = settings.get(com.nbh.backend.integrations.IntegrationKey.CLOUDINARY_API_KEY);
+        String apiSecret = settings.get(com.nbh.backend.integrations.IntegrationKey.CLOUDINARY_API_SECRET);
         if (cloudName.isBlank() || apiKey.isBlank() || apiSecret.isBlank()) {
             throw new ConfigurationException(
                     "Cloudinary is not configured — set CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET");

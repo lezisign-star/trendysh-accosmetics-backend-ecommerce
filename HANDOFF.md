@@ -1,5 +1,20 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (very late) — Gemini and Cloudinary keys are now set from the admin dashboard (V52)
+
+`mvn -q compile`/`test-compile` clean. **Verified live**: with no keys anywhere, the photo-cleanup page showed its
+"not set up" banner; saving the four values via the new endpoints made `geminiConfigured`/`cloudinaryConfigured`
+flip to true immediately (no restart); `GET` returned only `••••1234`-style hints, never a value; the DB rows are
+ciphertext. Test values removed afterwards.
+
+- New package `integrations`: `integration_setting` table (V52), AES-256-GCM `SecretCipher` (key = `APP_SECRETS_KEY`,
+  falling back to the JWT secret, so rotating either means re-entering the credentials), `IntegrationSettingsService`
+  (dashboard value wins, else the old environment variable; cached, cache dropped on change).
+  `/api/v1/admin/settings/integrations` GET / PUT `{key}` / DELETE `{key}`, `PERM_SETTINGS_MANAGE` (Super Admin and
+  Developer). Keys: `GEMINI_API_KEY`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`.
+- Consumers now read through it: the cleanup pipeline (`ImageCleanupConfig`, `GeminiImageClient`,
+  `CloudinaryUploader`) **and** `CloudinarySignatureService` (staff product-photo uploads), so one place configures both.
+
 ## 2026-10-02 (late night) — AI photo cleanup (Gemini), and Managers can edit payment details (V51)
 
 `mvn -q compile`/`test-compile` clean; V51 applied. **Verified live against a local stand-in for Gemini and

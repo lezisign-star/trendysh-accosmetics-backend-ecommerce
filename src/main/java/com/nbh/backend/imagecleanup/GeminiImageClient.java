@@ -130,7 +130,7 @@ public class GeminiImageClient {
         String url = config.getGeminiBaseUrl() + "/v1beta/models/" + config.getGeminiModel() + ":generateContent";
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("x-goog-api-key", config.getGeminiApiKey());
+        headers.set("x-goog-api-key", config.effectiveGeminiKey());
         JsonNode response = http.exchange(url, HttpMethod.POST,
                 new HttpEntity<>(Map.of("contents", List.of(Map.of("parts", parts))), headers), JsonNode.class).getBody();
         if (response == null) {

@@ -3,7 +3,8 @@ package com.nbh.backend.imagecleanup;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.nbh.backend.common.exception.ConfigurationException;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import com.nbh.backend.integrations.IntegrationKey;
+import com.nbh.backend.integrations.IntegrationSettingsService;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -34,23 +35,29 @@ public class CloudinaryUploader {
     public record Uploaded(String url, String publicId) {}
 
     private final ImageCleanupConfig config;
-    private final String cloudName;
-    private final String apiKey;
-    private final String apiSecret;
+    private final IntegrationSettingsService settings;
     private final RestTemplate http = new RestTemplate();
 
-    public CloudinaryUploader(ImageCleanupConfig config,
-                              @Value("${app.cloudinary.cloud-name:}") String cloudName,
-                              @Value("${app.cloudinary.api-key:}") String apiKey,
-                              @Value("${app.cloudinary.api-secret:}") String apiSecret) {
+    public CloudinaryUploader(ImageCleanupConfig config, IntegrationSettingsService settings) {
         this.config = config;
-        this.cloudName = cloudName;
-        this.apiKey = apiKey;
-        this.apiSecret = apiSecret;
+        this.settings = settings;
+    }
+
+    private String cloudName() {
+        return settings.get(IntegrationKey.CLOUDINARY_CLOUD_NAME);
+    }
+
+    private String apiKey() {
+        return settings.get(IntegrationKey.CLOUDINARY_API_KEY);
+    }
+
+    private String apiSecret() {
+        return settings.get(IntegrationKey.CLOUDINARY_API_SECRET);
     }
 
     public boolean configured() {
-        return !cloudName.isBlank() && !apiKey.isBlank() && !apiSecret.isBlank();
+        return settings.has(IntegrationKey.CLOUDINARY_CLOUD_NAME) && settings.has(IntegrationKey.CLOUDINARY_API_KEY)
+                && settings.has(IntegrationKey.CLOUDINARY_API_SECRET);
     }
 
     public Uploaded upload(byte[] png, String folder, String publicId) {
@@ -63,7 +70,7 @@ public class CloudinaryUploader {
 
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("file", "data:image/png;base64," + Base64.getEncoder().encodeToString(png));
-        form.add("api_key", apiKey);
+        form.add("api_key", apiKey());
         signed.forEach(form::add);
         form.add("signature", sign(signed));
 
@@ -87,7 +94,7 @@ public class CloudinaryUploader {
             signed.put("public_id", publicId);
             signed.put("timestamp", String.valueOf(timestamp));
             MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-            form.add("api_key", apiKey);
+            form.add("api_key", apiKey());
             signed.forEach(form::add);
             form.add("signature", sign(signed));
             post("/image/destroy", form);
@@ -99,13 +106,13 @@ public class CloudinaryUploader {
     private JsonNode post(String path, MultiValueMap<String, String> form) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-        String url = config.getCloudinaryUploadBaseUrl() + "/v1_1/" + cloudName + path;
+        String url = config.getCloudinaryUploadBaseUrl() + "/v1_1/" + cloudName() + path;
         return http.exchange(url, HttpMethod.POST, new HttpEntity<>(form, headers), JsonNode.class).getBody();
     }
 
     private String sign(Map<String, String> params) {
         String toSign = params.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue())
-                .collect(Collectors.joining("&")) + apiSecret;
+                .collect(Collectors.joining("&")) + apiSecret();
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(toSign.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
