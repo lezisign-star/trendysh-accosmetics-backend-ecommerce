@@ -275,6 +275,27 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
 
     long countByTumabodaSettlementId(UUID settlementId);
 
+    /** One row per Nairobi calendar day that had orders — the overview's trend lines. Same demo-or-real rule as every other view. */
+    interface DailyOrders {
+        java.sql.Date getDay();
+        long getOrders();
+        BigDecimal getRevenue();
+    }
+
+    @Query(value = """
+            SELECT CAST((o.created_at AT TIME ZONE 'Africa/Nairobi') AS date) AS day,
+                   COUNT(*) AS orders,
+                   COALESCE(SUM(CASE WHEN o.status IN ('PAID','PICKING','READY','DISPATCHED','DELIVERED')
+                                     THEN o.grand_total ELSE 0 END), 0) AS revenue
+            FROM customer_order o
+            WHERE o.created_at >= :since
+              AND ((o.is_mock_data AND EXISTS (SELECT 1 FROM product mp WHERE mp.is_mock_data AND mp.is_published))
+                   OR (NOT o.is_mock_data AND NOT EXISTS (SELECT 1 FROM product mp WHERE mp.is_mock_data AND mp.is_published)))
+            GROUP BY 1
+            ORDER BY 1
+            """, nativeQuery = true)
+    List<DailyOrders> dailyOrders(@Param("since") Instant since);
+
     /**
      * Staff customer list: one row per phone number, newest activity first. Same demo-data gating as the
      * other admin views, so turning demo data off hides its synthetic customers too.

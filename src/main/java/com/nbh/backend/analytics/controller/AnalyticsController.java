@@ -73,6 +73,29 @@ public class AnalyticsController {
         return new AnalyticsSummaryDto(revenue, total, byStatus, availabilityService.countBelowReorderLevel());
     }
 
+    /** Orders and confirmed revenue for each of the last {@code days} days (Nairobi time), oldest first, gaps filled with zero. */
+    @PreAuthorize("hasAuthority('PERM_ANALYTICS_VIEW')")
+    @GetMapping("/daily")
+    @Transactional(readOnly = true)
+    public List<com.nbh.backend.analytics.dto.DailyPointDto> daily(@RequestParam(defaultValue = "14") int days) {
+        int n = Math.max(1, Math.min(days, 90));
+        java.time.ZoneId nairobi = java.time.ZoneId.of("Africa/Nairobi");
+        java.time.LocalDate today = java.time.LocalDate.now(nairobi);
+        java.time.LocalDate first = today.minusDays(n - 1L);
+        Map<java.time.LocalDate, CustomerOrderRepository.DailyOrders> byDay = new java.util.HashMap<>();
+        for (var row : orderRepository.dailyOrders(first.atStartOfDay(nairobi).toInstant())) {
+            byDay.put(row.getDay().toLocalDate(), row);
+        }
+        List<com.nbh.backend.analytics.dto.DailyPointDto> out = new java.util.ArrayList<>();
+        for (java.time.LocalDate d = first; !d.isAfter(today); d = d.plusDays(1)) {
+            var row = byDay.get(d);
+            out.add(new com.nbh.backend.analytics.dto.DailyPointDto(d,
+                    row == null ? 0 : row.getOrders(),
+                    row == null ? java.math.BigDecimal.ZERO : row.getRevenue()));
+        }
+        return out;
+    }
+
     @PreAuthorize("hasAuthority('PERM_ANALYTICS_VIEW')")
     @GetMapping("/top-products")
     @Transactional(readOnly = true)

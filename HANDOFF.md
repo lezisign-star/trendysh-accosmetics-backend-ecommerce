@@ -1,5 +1,12 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (final) — `GET /admin/analytics/daily` for the redesigned overview
+
+`mvn -q compile` clean. **Verified live**: the new Overview shows 14-day trend lines and revenue bars from it
+(238 orders / KSh 217,650 over the last 14 days on the dev DB). Returns the last N days (default 14, max 90) in
+Nairobi time, oldest first, gaps filled with zero; orders per day plus confirmed-paid revenue; native query so the
+same demo-or-real gate is written out in SQL (`CustomerOrderRepository.dailyOrders`). `PERM_ANALYTICS_VIEW`.
+
 ## 2026-10-02 (very late) — Gemini and Cloudinary keys are now set from the admin dashboard (V52)
 
 `mvn -q compile`/`test-compile` clean. **Verified live**: with no keys anywhere, the photo-cleanup page showed its
