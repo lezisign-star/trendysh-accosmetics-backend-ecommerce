@@ -25,6 +25,7 @@ public interface KitRepository extends JpaRepository<Kit, UUID> {
             JOIN k.variant v
             JOIN v.product p
             WHERE (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+              AND (p.isMockData = false OR p.isPublished = true)
               AND (:professionId IS NULL OR k.profession.id = :professionId)
             """)
     Page<Kit> searchAdmin(@Param("q") String q, @Param("professionId") UUID professionId, Pageable pageable);

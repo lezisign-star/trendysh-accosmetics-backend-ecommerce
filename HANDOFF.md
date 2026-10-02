@@ -1,5 +1,20 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (night) — demo data off now hides ALL demo side effects, not just products
+
+Owner screenshots (live site, demo data "Off") still showed demo revenue, 29 orders, demo top sellers, demo
+kits and category counts. **Verified locally** by snapshotting off -> on -> off: every figure below differs
+while on and returns to the exact same real value afterwards.
+
+- Already gated (earlier commit `aeb1235`): analytics revenue / order counts / top sellers / low-stock tile,
+  admin orders list. The live site's numbers still showing demo values means that commit isn't what is running
+  there — check the backend deploy on `main` actually succeeded.
+- Newly gated: admin **Kits** list, **Professions** list, **Categories** list and their product counts,
+  **Stock levels**, **Stock movements** and **Holds** (per-product rule `isMockData = false OR isPublished`),
+  on top of valuation/forecast/customers which were already gated. Locally: categories 12 -> 6, stock levels
+  650 -> 541, movements 1272 -> 1044, valuation 5,271,826 -> 1,275,790, kits 55 -> 50, professions 52 -> 47.
+- Semantics: demo OFF = real data only; demo ON = demo catalogue shown alongside real data (unchanged).
+
 ## 2026-10-02 (evening) — delivery places + prices CRUD, customer suggestions, backend-pushed live updates everywhere (V50)
 
 `mvn -q compile`/`test-compile` clean; `LiveStreamsTest`, `LiveUpdateListenerTest` and the ArchUnit test pass.

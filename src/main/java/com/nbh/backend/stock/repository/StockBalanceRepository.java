@@ -95,6 +95,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
             JOIN v.product p
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
             WHERE v.deleted = false
+              AND (p.isMockData = false OR p.isPublished = true)
               AND (:belowReorderOnly = false
                    OR (v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel))
               AND (:q IS NULL

@@ -111,6 +111,7 @@ public interface StockReservationRepository extends JpaRepository<StockReservati
             JOIN FETCH r.variant v
             JOIN FETCH v.product
             WHERE (:status IS NULL OR r.status = :status)
+              AND (v.product.isMockData = false OR v.product.isPublished = true)
             ORDER BY r.createdAt DESC
             """)
     Page<StockReservation> browse(@Param("status") StockReservation.ReservationStatus status, Pageable pageable);

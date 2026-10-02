@@ -25,7 +25,7 @@ public interface CategoryRepository extends JpaRepository<Category, UUID> {
     @Query("""
             SELECT c.id, COUNT(DISTINCT p)
             FROM Product p JOIN p.categories c
-            WHERE p.deleted = false
+            WHERE p.deleted = false AND (p.isMockData = false OR p.isPublished = true)
             GROUP BY c.id
             """)
     List<Object[]> liveProductCountsByCategory();

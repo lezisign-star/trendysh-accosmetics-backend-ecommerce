@@ -58,6 +58,7 @@ public interface StockLedgerEntryRepository extends JpaRepository<StockLedgerEnt
             WHERE (:variantId IS NULL OR v.id = :variantId)
               AND (:documentType IS NULL OR d.documentType = :documentType)
               AND e.postedAt >= :from AND e.postedAt <= :to
+              AND (v.product.isMockData = false OR v.product.isPublished = true)
             ORDER BY e.postedAt DESC, e.id DESC
             """,
             countQuery = """
@@ -67,6 +68,7 @@ public interface StockLedgerEntryRepository extends JpaRepository<StockLedgerEnt
             WHERE (:variantId IS NULL OR v.id = :variantId)
               AND (:documentType IS NULL OR d.documentType = :documentType)
               AND e.postedAt >= :from AND e.postedAt <= :to
+              AND (v.product.isMockData = false OR v.product.isPublished = true)
             """)
     Page<StockLedgerEntry> search(@Param("variantId") UUID variantId,
                                    @Param("documentType") StockDocumentType documentType,
