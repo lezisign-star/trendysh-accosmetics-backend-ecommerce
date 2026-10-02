@@ -4,12 +4,14 @@ import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.dto.AdminOrderDetailDto;
 import com.nbh.backend.order.dto.AssignTransporterRequest;
 import com.nbh.backend.order.dto.OrderDto;
+import com.nbh.backend.order.dto.OrderReturnRequest;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.order.dto.OrderSummaryDto;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.order.service.OrderFulfilmentService;
+import com.nbh.backend.order.service.OrderReturnService;
 import com.nbh.backend.staff.entity.StaffUser;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
@@ -27,12 +29,14 @@ public class OrderController {
 
     private final CustomerOrderRepository orderRepository;
     private final OrderFulfilmentService fulfilmentService;
+    private final OrderReturnService returnService;
     private final PaymentRecordRepository paymentRecordRepository;
 
     public OrderController(CustomerOrderRepository orderRepository, OrderFulfilmentService fulfilmentService,
-                            PaymentRecordRepository paymentRecordRepository) {
+                            OrderReturnService returnService, PaymentRecordRepository paymentRecordRepository) {
         this.orderRepository = orderRepository;
         this.fulfilmentService = fulfilmentService;
+        this.returnService = returnService;
         this.paymentRecordRepository = paymentRecordRepository;
     }
 
@@ -120,6 +124,20 @@ public class OrderController {
     public OrderDto cancel(@PathVariable java.util.UUID id, @RequestBody(required = false) CancelOrderRequest request) {
         String reason = request != null ? request.reason() : null;
         return OrderDto.from(fulfilmentService.cancel(id, reason));
+    }
+
+    /**
+     * Records a customer return against a DISPATCHED/DELIVERED order — see
+     * {@code OrderReturnService} for the reversal-at-original-cost mechanics. Same permission
+     * as the other post-dispatch order actions; {@code @Transactional} so the response DTO's
+     * lazy item access below shares the service call's session.
+     */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/returns")
+    @Transactional
+    public AdminOrderDetailDto postReturn(@PathVariable java.util.UUID id, @jakarta.validation.Valid @RequestBody OrderReturnRequest request) {
+        CustomerOrder order = returnService.post(id, request);
+        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id));
     }
 
     public record CancelOrderRequest(String reason) {}

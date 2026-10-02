@@ -1,5 +1,29 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (even later) — customer returns: `POST /orders/{id}/returns`
+
+`mvn -q compile` clean; V45 applies cleanly on the dev DB (`returned_qty` added to `customer_order_item`,
+default 0). **Verified live**: posted a real return on a DISPATCHED order (SKU-001365, qty 1, restock) via the
+new admin panel. The ledger shows exactly the expected double-entry (`CR-20261002-000001`): SHOP +1 at **KSh
+100** (the variant's original sale cost, not whatever today's average happened to be), CUSTOMER -1; on-hand
+went 9 → 10. The order's item now reports `returnedQty: 1` and the "Record return" action correctly disappears
+once nothing is left to return.
+
+- **What existed already**: `StockDocumentType.CUSTOMER_RETURN`/`SUPPLIER_RETURN` enum values, unused by any
+  service. `StockPostingService.reverse()` deliberately refuses to reverse a `SALE_ONLINE` document (see its
+  javadoc: "a return can be damaged-not-restocked; a plain reversal can't distinguish that") — a return needed
+  its own posting path, not a generic undo.
+- **New**: `OrderReturnService` (package `order.service`) builds a fresh `CUSTOMER_RETURN` document per return —
+  one line per returned order item, `CUSTOMER -> SHOP` (restock) or `CUSTOMER -> ADJUSTMENT` (damaged, per-line
+  `restock` flag), valued at `CustomerOrderItem.unitCostAtSale` (the cost snapshot `OrderFulfilmentService.fulfil`
+  already captures at dispatch) rather than today's moving average. Caps each item at `qty - returnedQty`
+  outstanding and refuses an item with no reservation (a kit's own summary line never posted its own movement —
+  same skip `fulfil` already applies). Only DISPATCHED/DELIVERED orders are returnable (nothing shipped before
+  that). `OrderController.postReturn`, `PERM_ORDER_MANAGE_ALL` — same gate as the other post-dispatch actions.
+- **`AdminOrderDetailDto.Line`** now carries `itemId` and `returnedQty` so the admin UI can address a specific
+  order line and show what's still outstanding.
+- **V45**: `customer_order_item.returned_qty NUMERIC(14,3) NOT NULL DEFAULT 0`.
+
 ## 2026-10-02 (later) — stock valuation report, first time it's been surfaced anywhere
 
 `mvn -q compile` clean. **Verified live**: `GET /stock/valuation` against the real dev DB returned real variant

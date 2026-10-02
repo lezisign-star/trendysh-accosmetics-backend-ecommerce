@@ -56,6 +56,10 @@ public class CustomerOrderItem {
     @Column(name = "unit_cost_at_sale", precision = 14, scale = 4)
     private BigDecimal unitCostAtSale;
 
+    /** How much of {@link #qty} has already come back via {@code OrderReturnService} — caps further returns. */
+    @Column(name = "returned_qty", nullable = false, precision = 14, scale = 3)
+    private BigDecimal returnedQty = BigDecimal.ZERO;
+
     /** The hold this line is backed by — consumed (closed) when StockPostingService fulfils it at dispatch. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reservation_id")
