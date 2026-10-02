@@ -1,5 +1,14 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (phase 4) — fulfilment queue, urgency, customer confirms delivery, staff read reviews
+
+- `GET /orders?queue=true`: only orders still waiting on staff (PENDING_PAYMENT, PAID, PICKING, READY), oldest first; dispatched, delivered, cancelled and expired orders are handled and drop out. An explicit `status` can narrow the queue but never widens it. Every order row now carries `urgent` / `urgentReason` (`OrderUrgency`: placed before today in Nairobi time = "From yesterday", placed 20:00-06:00 = "Placed overnight").
+- `POST /orders/track/email/orders/{orderNo}/confirm-received` (X-Track-Token): the customer closes their own DISPATCHED order (-> DELIVERED, same path as staff's mark-delivered, so live events/stock/TumaBoda behave identically). Idempotent once delivered; not-dispatched -> 422; someone else's order -> 404. TumaBoda deliveries still auto-close from their own events.
+- `POST /orders/track/email/orders/{orderNo}/reviews` (X-Track-Token): rate a product from the order without re-entering a phone (the verified email proves ownership); lands PENDING. `OrderItemDto` now has `productId`.
+- `GET /admin/reviews?status=`: staff finally have a way to READ reviews (only approve/reject by id existed). Needs PRODUCT_MANAGE or ORDER_VIEW; approve/reject unchanged (PRODUCT_MANAGE).
+- Tests: `OrderQueueIntegrationTest` (7): urgency boundaries incl. UTC-vs-Nairobi day, queue order/handled/urgent, status filter can't widen, confirm-received rules, review once per product per order, staff list. Full suite 600 tests.
+
+
 ## 2026-10-02 (phase 1) — shop line is 0793506900 (V53)
 
 - `V53` overwrites the saved support number in payment settings; `app.bank.support-whatsapp` defaults to it, and a blank number saved in Settings (or never set) falls back to it (`BankPaymentSettings.DEFAULT_SUPPORT_PHONE`).

@@ -13,12 +13,15 @@ public record OrderItemDto(
         BigDecimal qty,
         BigDecimal unitPrice,
         BigDecimal lineTotal,
-        boolean wholesaleApplied
+        boolean wholesaleApplied,
+        /** The catalogue product behind this line — what a customer review attaches to. */
+        UUID productId
 ) {
     public static OrderItemDto from(CustomerOrderItem item) {
         return new OrderItemDto(
                 item.getVariant().getId(), item.getVariant().getSku(),
                 item.getVariant().getProduct().getName(), item.getVariant().getVariantName(),
-                item.getQty(), item.getUnitPrice(), item.getLineTotal(), item.isWholesaleApplied());
+                item.getQty(), item.getUnitPrice(), item.getLineTotal(), item.isWholesaleApplied(),
+                item.getVariant().getProduct().getId());
     }
 }

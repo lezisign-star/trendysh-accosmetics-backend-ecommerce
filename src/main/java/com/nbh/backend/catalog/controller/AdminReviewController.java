@@ -24,6 +24,15 @@ public class AdminReviewController {
         this.reviewService = reviewService;
     }
 
+    /** Every customer review (newest first), optionally just one status — e.g. PENDING for the moderation queue. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE') or hasAuthority('PERM_ORDER_VIEW')")
+    @org.springframework.web.bind.annotation.GetMapping
+    public org.springframework.data.domain.Page<com.nbh.backend.catalog.dto.AdminReviewDto> list(
+            @org.springframework.web.bind.annotation.RequestParam(required = false) ProductReview.ReviewStatus status,
+            @org.springframework.data.web.PageableDefault(size = 20) org.springframework.data.domain.Pageable pageable) {
+        return reviewService.listForStaff(status, pageable);
+    }
+
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
     @PostMapping("/{id}/approve")
     public ProductReviewDto approve(@PathVariable UUID id, Authentication authentication) {

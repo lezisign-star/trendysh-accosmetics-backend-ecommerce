@@ -73,6 +73,22 @@ public class OrderTrackingController {
         return tracking.orders(token, orderNo);
     }
 
+    /** The customer says the dispatched order has arrived — closes it (DELIVERED) and unlocks reviews. */
+    @PostMapping("/email/orders/{orderNo}/confirm-received")
+    public OrderDto confirmReceived(@RequestHeader(value = TOKEN_HEADER, required = false) String token,
+                                    @PathVariable String orderNo) {
+        return tracking.confirmReceived(token, orderNo);
+    }
+
+    /** Rate one product from a delivered order. Reviews wait for staff approval before they appear in the shop. */
+    @PostMapping("/email/orders/{orderNo}/reviews")
+    public Map<String, String> review(@RequestHeader(value = TOKEN_HEADER, required = false) String token,
+                                      @PathVariable String orderNo,
+                                      @Valid @RequestBody com.nbh.backend.order.dto.TrackingDtos.TrackedReviewRequest request) {
+        tracking.review(token, orderNo, request);
+        return Map.of("message", "Thanks — your review will show once our team has read it.");
+    }
+
     @GetMapping("/email/orders/{orderNo}")
     public OrderDto order(@RequestHeader(value = TOKEN_HEADER, required = false) String token,
                           @PathVariable String orderNo) {

@@ -3,6 +3,8 @@ package com.nbh.backend.order.service;
 import com.nbh.backend.common.email.EmailTemplates;
 import com.nbh.backend.common.event.CustomerEmailRequestedEvent;
 import com.nbh.backend.common.exception.NotFoundException;
+import com.nbh.backend.order.entity.CustomerOrder;
+import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.common.exception.UnauthorizedException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.common.util.Sha256;
@@ -53,11 +55,15 @@ public class OrderTrackingService {
     private final TrackingCodeThrottle throttle;
     private final ApplicationEventPublisher events;
     private final Clock clock;
+    private final OrderFulfilmentService fulfilment;
+    private final com.nbh.backend.catalog.service.ProductReviewService reviews;
     private final String frontendUrl;
 
     public OrderTrackingService(CustomerOrderRepository orders, OrderTrackingCodeRepository codes,
                                 OrderTrackingSessionRepository sessions, TrackingCodeThrottle throttle,
                                 ApplicationEventPublisher events, Clock clock,
+                                OrderFulfilmentService fulfilment,
+                                com.nbh.backend.catalog.service.ProductReviewService reviews,
                                 @Value("${app.frontend-url:http://localhost:5250}") String frontendUrl) {
         this.orders = orders;
         this.codes = codes;
@@ -65,6 +71,8 @@ public class OrderTrackingService {
         this.throttle = throttle;
         this.events = events;
         this.clock = clock;
+        this.fulfilment = fulfilment;
+        this.reviews = reviews;
         this.frontendUrl = frontendUrl.replaceAll("/+$", "");
     }
 
@@ -171,6 +179,34 @@ public class OrderTrackingService {
                 .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
                 .map(OrderDto::from)
                 .orElseThrow(() -> new NotFoundException("No order with that number under this email"));
+    }
+
+    /**
+     * The customer confirms their dispatched order arrived (DISPATCHED -> DELIVERED). Only the verified
+     * email's own orders qualify; confirming twice is harmless (an already-delivered order is returned
+     * as is), and an order that hasn't been dispatched yet is refused.
+     */
+    @Transactional
+    public OrderDto confirmReceived(String token, String rawOrderNo) {
+        String email = emailFor(token);
+        CustomerOrder order = orders.findByOrderNo(normalizeOrderNo(rawOrderNo))
+                .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
+                .orElseThrow(() -> new NotFoundException("No order with that number under this email"));
+        if (order.getStatus() == OrderStatus.DELIVERED) {
+            return OrderDto.from(order);
+        }
+        return OrderDto.from(fulfilment.markDelivered(order.getId()));
+    }
+
+    /** A review of one product on the verified email's own order; goes to staff to approve before it shows. */
+    @Transactional
+    public void review(String token, String rawOrderNo, com.nbh.backend.order.dto.TrackingDtos.TrackedReviewRequest request) {
+        String email = emailFor(token);
+        CustomerOrder order = orders.findByOrderNo(normalizeOrderNo(rawOrderNo))
+                .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
+                .orElseThrow(() -> new NotFoundException("No order with that number under this email"));
+        reviews.submitForVerifiedOrder(order, request.productId(), request.rating(), request.comment(),
+                request.reviewerName());
     }
 
     private String emailFor(String token) {

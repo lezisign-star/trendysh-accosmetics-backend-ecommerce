@@ -91,6 +91,43 @@ public class ProductReviewService {
         return ProductReviewDto.from(reviewRepository.save(review));
     }
 
+    /**
+     * A review from someone already proven to own {@code order} (the track page's verified-email session), so
+     * no phone check is needed. The same rules otherwise: the order must be paid, include the product, and a
+     * product can be reviewed once per order. Lands PENDING for staff to approve.
+     */
+    @Transactional
+    public ProductReviewDto submitForVerifiedOrder(CustomerOrder order, UUID productId, int rating, String comment,
+                                                   String reviewerName) {
+        if (!ELIGIBLE_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException("This order hasn't been paid yet — reviews open once payment is confirmed");
+        }
+        boolean orderedThisProduct = order.getItems().stream()
+                .anyMatch(item -> item.getVariant().getProduct().getId().equals(productId));
+        if (!orderedThisProduct) {
+            throw new UnprocessableException("That order doesn't include this product");
+        }
+        if (reviewRepository.existsByOrderIdAndProductId(order.getId(), productId)) {
+            throw new ConflictException("This order has already been used to review this product");
+        }
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new NotFoundException("No product: " + productId));
+        ProductReview review = new ProductReview();
+        review.setProduct(product);
+        review.setOrder(order);
+        review.setRating(rating);
+        review.setComment(comment);
+        review.setReviewerName(reviewerName.trim());
+        review.setReviewerPhone(order.getGuestPhone());
+        review.setStatus(ProductReview.ReviewStatus.PENDING);
+        return ProductReviewDto.from(reviewRepository.save(review));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<com.nbh.backend.catalog.dto.AdminReviewDto> listForStaff(ProductReview.ReviewStatus status, Pageable pageable) {
+        return reviewRepository.searchForStaff(status, pageable).map(com.nbh.backend.catalog.dto.AdminReviewDto::from);
+    }
+
     @Transactional(readOnly = true)
     public Page<ProductReviewDto> listApproved(UUID productId, Pageable pageable) {
         return reviewRepository

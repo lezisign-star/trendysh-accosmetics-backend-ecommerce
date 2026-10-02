@@ -3,6 +3,8 @@ package com.nbh.backend.order.dto;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -23,6 +25,12 @@ public final class TrackingDtos {
 
     /** {@code token} goes back in the {@code X-Track-Token} header; it is shown once and only its hash is stored. */
     public record SessionDto(String token, Instant expiresAt) {}
+
+    /** A review left from the track page; the verified email session already proves who is reviewing. */
+    public record TrackedReviewRequest(@jakarta.validation.constraints.NotNull java.util.UUID productId,
+                                       @Min(1) @Max(5) int rating,
+                                       @Size(max = 2000) String comment,
+                                       @NotBlank @Size(max = 150) String reviewerName) {}
 
     /** One row of "the orders under this email" — enough to pick one; details are a second call. */
     public record TrackedOrderSummaryDto(String orderNo, OrderStatus status, Instant createdAt, long itemCount,

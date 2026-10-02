@@ -14,6 +14,11 @@ public interface ProductReviewRepository extends JpaRepository<ProductReview, UU
 
     boolean existsByOrderIdAndProductId(UUID orderId, UUID productId);
 
+    /** Staff reading reviews: optional status filter, newest first; product and order are loaded with the page. */
+    @Query(value = "SELECT r FROM ProductReview r JOIN FETCH r.product JOIN FETCH r.order WHERE (:status IS NULL OR r.status = :status) ORDER BY r.createdAt DESC",
+            countQuery = "SELECT COUNT(r) FROM ProductReview r WHERE (:status IS NULL OR r.status = :status)")
+    Page<ProductReview> searchForStaff(@org.springframework.data.repository.query.Param("status") ProductReview.ReviewStatus status, Pageable pageable);
+
     Page<ProductReview> findByProductIdAndStatusOrderByCreatedAtDesc(
             UUID productId, ProductReview.ReviewStatus status, Pageable pageable);
 

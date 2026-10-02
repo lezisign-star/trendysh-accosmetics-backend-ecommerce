@@ -1,6 +1,7 @@
 package com.nbh.backend.order.dto;
 
 import com.nbh.backend.order.entity.OrderStatus;
+import com.nbh.backend.order.service.OrderUrgency;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -31,5 +32,23 @@ public record OrderSummaryDto(
          * 2026-10-02) instead of only once staff open the order.
          */
         boolean needsAttention,
-        String tumabodaBookingFailure
-) {}
+        String tumabodaBookingFailure,
+        /** Red-warning flag for the fulfilment queue — see {@link OrderUrgency}; filled in after the query. */
+        boolean urgent,
+        /** "From yesterday" or "Placed overnight" when {@link #urgent}, else null. */
+        String urgentReason
+) {
+    /** The shape the JPQL constructor expression selects; urgency is worked out afterwards. */
+    public OrderSummaryDto(UUID id, String orderNo, OrderStatus status, String customerName, String guestEmail,
+                           String guestPhone, long itemCount, BigDecimal grandTotal, Instant createdAt,
+                           boolean needsAttention, String tumabodaBookingFailure) {
+        this(id, orderNo, status, customerName, guestEmail, guestPhone, itemCount, grandTotal, createdAt,
+                needsAttention, tumabodaBookingFailure, false, null);
+    }
+
+    public OrderSummaryDto withUrgency(Instant now) {
+        String reason = OrderUrgency.reason(createdAt, now);
+        return new OrderSummaryDto(id, orderNo, status, customerName, guestEmail, guestPhone, itemCount, grandTotal,
+                createdAt, needsAttention, tumabodaBookingFailure, reason != null, reason);
+    }
+}

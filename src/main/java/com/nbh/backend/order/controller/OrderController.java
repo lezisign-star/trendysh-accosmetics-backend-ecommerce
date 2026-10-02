@@ -15,6 +15,9 @@ import com.nbh.backend.order.service.OrderReturnService;
 import com.nbh.backend.staff.entity.StaffUser;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -53,10 +56,31 @@ public class OrderController {
     public Page<OrderSummaryDto> list(@RequestParam(required = false) OrderStatus status,
                                        @RequestParam(required = false) String q,
                                        @RequestParam(defaultValue = "false") boolean needsAttentionOnly,
+                                       @RequestParam(defaultValue = "false") boolean queue,
                                        @PageableDefault(size = 20) Pageable pageable) {
         String term = (q == null || q.isBlank()) ? null : q.trim();
-        return orderRepository.search(status, term, PhoneNumbers.searchFragment(term), needsAttentionOnly, pageable);
+        String phone = PhoneNumbers.searchFragment(term);
+        Instant now = Instant.now();
+        if (queue) {
+            // The to-do list: only orders still waiting on staff, longest-waiting first. An explicit
+            // status narrows it further (e.g. just PAID), but never widens it to handled orders.
+            Collection<OrderStatus> open = status == null ? QUEUE_STATUSES
+                    : QUEUE_STATUSES.contains(status) ? List.of(status) : List.of();
+            if (open.isEmpty()) return Page.empty(pageable);
+            return orderRepository.searchQueue(open, term, phone, needsAttentionOnly, pageable)
+                    .map(o -> o.withUrgency(now));
+        }
+        return orderRepository.search(status, term, phone, needsAttentionOnly, pageable)
+                .map(o -> o.withUrgency(now));
     }
+
+    /**
+     * Orders still waiting on staff. Dispatched and delivered orders are handled, so they drop out of the
+     * queue (as do cancelled, failed and expired ones) — delivered is reached either by staff or by the
+     * customer confirming on the track page, or automatically for TumaBoda deliveries.
+     */
+    static final List<OrderStatus> QUEUE_STATUSES = List.of(
+            OrderStatus.PENDING_PAYMENT, OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY);
 
     /** The Fulfilment tab's "Needs attention (N)" chip count — see {@code CustomerOrderRepository.countNeedingAttention}. */
     @PreAuthorize("hasAuthority('PERM_ORDER_VIEW') or hasAuthority('PERM_ORDER_MANAGE_ALL')")

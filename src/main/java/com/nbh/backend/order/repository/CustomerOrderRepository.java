@@ -172,6 +172,38 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                                   @Param("phoneQ") String phoneQ, @Param("needsAttentionOnly") boolean needsAttentionOnly,
                                   Pageable pageable);
 
+    /**
+     * The fulfilment queue: only orders still waiting on staff ({@code statuses} — dispatched, delivered,
+     * cancelled and expired ones are handled and drop out), oldest first so the longest-waiting is on
+     * top. Same demo-data gating, search and needs-attention filters as {@link #search}.
+     */
+    @Query("""
+            SELECT NEW com.nbh.backend.order.dto.OrderSummaryDto(
+                o.id, o.orderNo, o.status, o.customerName, o.guestEmail, o.guestPhone,
+                SIZE(o.items), o.grandTotal, o.createdAt,
+                CASE WHEN o.tumabodaRerouted = true THEN false
+                     WHEN LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled') THEN true
+                     WHEN o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL THEN true
+                     ELSE false END,
+                o.tumabodaBookingFailure)
+            FROM CustomerOrder o
+            WHERE o.status IN :statuses
+              AND (:q IS NULL
+                   OR LOWER(o.orderNo) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(o.customerName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR o.guestPhone LIKE CONCAT('%', CAST(:phoneQ AS string), '%'))
+              AND ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
+              AND (:needsAttentionOnly = false
+                   OR (o.tumabodaRerouted = false
+                       AND (LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled')
+                            OR (o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL))))
+            ORDER BY o.createdAt ASC
+            """)
+    Page<OrderSummaryDto> searchQueue(@Param("statuses") java.util.Collection<OrderStatus> statuses,
+                                      @Param("q") String q, @Param("phoneQ") String phoneQ,
+                                      @Param("needsAttentionOnly") boolean needsAttentionOnly, Pageable pageable);
+
     /** The "Needs attention (N)" chip's count — same predicate as {@code search}'s needsAttentionOnly branch, unfiltered by status/q. */
     @Query("""
             SELECT COUNT(o) FROM CustomerOrder o
