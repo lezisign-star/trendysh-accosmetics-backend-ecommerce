@@ -278,7 +278,8 @@ public class TumaBodaClient {
         }
         return new Delivery(text(d, "id"), text(d, "deliveryNumber"), text(d, "status"), text(d, "trackingCode"),
                 text(d, "trackingUrl"), text(d, "riderId"),
-                d.hasNonNull("totalCostCents") ? centsToKes(d.get("totalCostCents")) : null);
+                d.hasNonNull("totalCostCents") ? centsToKes(d.get("totalCostCents")) : null,
+                text(d, "pickupOtp"));
     }
 
     private static String text(JsonNode node, String field) {

@@ -138,6 +138,7 @@ public class TumaBodaBookingService {
             order.setTumabodaStatus(null);
             order.setTumabodaRiderId(null);
             order.setTumabodaCost(null);
+            order.setTumabodaPickupOtp(null);
             order.setTumabodaLastWebhookAt(null);
             order.setTumabodaBookingAttempts(0);
             order.setTumabodaNextRetryAt(null);
@@ -251,6 +252,7 @@ public class TumaBodaBookingService {
         order.setTumabodaStatus(delivery.status());
         order.setTumabodaRiderId(delivery.riderId());
         order.setTumabodaCost(delivery.totalKes());
+        order.setTumabodaPickupOtp(delivery.pickupOtp());
     }
 
     private CustomerOrder lock(UUID orderId) {

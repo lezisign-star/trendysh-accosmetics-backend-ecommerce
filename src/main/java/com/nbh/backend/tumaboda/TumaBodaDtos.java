@@ -29,9 +29,14 @@ public final class TumaBodaDtos {
     /** {@code reference} is the idempotency key: the same reference always maps to the same TumaBoda delivery. */
     public record DeliveryRequest(Recipient recipient, String description, PackageSpec packageSpec, String reference) {}
 
-    /** A delivery as TumaBoda reports it. Any field may be null: the API fills them in as the delivery progresses. */
+    /**
+     * A delivery as TumaBoda reports it. Any field may be null: the API fills them in as the delivery
+     * progresses. {@code pickupOtp} is a placeholder field name (TBD against real API docs, per the TumaBoda
+     * parity plan Section C) for the code staff give the rider at pickup — display-only plumbing until
+     * TumaBoda's real API confirms the field exists.
+     */
     public record Delivery(String id, String deliveryNumber, String status, String trackingCode, String trackingUrl,
-                           String riderId, BigDecimal totalKes) {}
+                           String riderId, BigDecimal totalKes, String pickupOtp) {}
 
     /** One address suggestion; {@code placeId} is resolved to coordinates with a second call. */
     public record PlaceSuggestion(String placeId, String description) {}

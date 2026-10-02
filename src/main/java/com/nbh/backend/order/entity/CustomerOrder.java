@@ -124,6 +124,10 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "tumaboda_rider_id", length = 100)
     private String tumabodaRiderId;
 
+    /** The code staff give the rider at pickup (V49) — display-only until TumaBoda's real API confirms the field exists. */
+    @Column(name = "tumaboda_pickup_otp", length = 20)
+    private String tumabodaPickupOtp;
+
     @Column(name = "tumaboda_last_webhook_at")
     private Instant tumabodaLastWebhookAt;
 

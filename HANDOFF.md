@@ -1,5 +1,20 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (newest) — TumaBoda pickup OTP plumbing (V49)
+
+`mvn -q compile`/`test-compile` clean; V49 applies cleanly on the dev DB (`customer_order.tumaboda_pickup_otp`).
+**Verified live**: set a value directly on a real booked order (since TumaBoda is disabled locally, no real
+booking can return one yet), confirmed the admin order panel showed "Pickup code / Give the rider this code:
+4821" next to the tracking code and rider ID, then cleared it and confirmed the row disappears entirely when
+null — exactly like the other optional TumaBoda fields.
+
+- **What this is** (TumaBoda parity plan Section C): display-only plumbing for the code staff give the rider at
+  pickup. `pickupOtp` is a placeholder field name — TBD against real TumaBoda API docs once they exist. No
+  behavior depends on it; it's blank/hidden until the real API is live and confirmed to return it.
+- `TumaBodaDtos.Delivery` and `CustomerOrder.tumabodaPickupOtp` carry it; `TumaBodaBookingService.applyDelivery`
+  (the single copy point shared by booking and status refreshes) sets it, `restart` clears it along with the
+  rest of a dead delivery's state. Surfaced on `AdminOrderDetailDto.Tumaboda`.
+
 ## 2026-10-02 (even more latest) — TumaBoda settlement ledger (V48)
 
 `mvn -q compile` clean; V48 applies cleanly on the dev DB (`tumaboda_settlement` table,

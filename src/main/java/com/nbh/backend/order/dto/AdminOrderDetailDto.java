@@ -50,7 +50,8 @@ public record AdminOrderDetailDto(
      */
     public record Tumaboda(boolean rerouted, boolean booked, String deliveryNumber, String status, String trackingUrl,
                            String trackingCode, String riderId, BigDecimal cost, BigDecimal customerPaid,
-                           int bookingAttempts, Instant nextRetryAt, String bookingFailure, boolean needsAttention) {
+                           int bookingAttempts, Instant nextRetryAt, String bookingFailure, boolean needsAttention,
+                           String pickupOtp) {
         static Tumaboda from(CustomerOrder o) {
             if (!o.isTumabodaApiDelivery() && !o.isTumabodaRerouted()) {
                 return null;
@@ -62,7 +63,7 @@ public record AdminOrderDetailDto(
             return new Tumaboda(o.isTumabodaRerouted(), booked, o.getTumabodaDeliveryNumber(), o.getTumabodaStatus(),
                     o.getTumabodaTrackingUrl(), o.getTumabodaTrackingCode(), o.getTumabodaRiderId(),
                     o.getTumabodaCost(), o.getDeliveryFee(), o.getTumabodaBookingAttempts(), o.getTumabodaNextRetryAt(),
-                    o.getTumabodaBookingFailure(), needsAttention);
+                    o.getTumabodaBookingFailure(), needsAttention, o.getTumabodaPickupOtp());
         }
     }
 
