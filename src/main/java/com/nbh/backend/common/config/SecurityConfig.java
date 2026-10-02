@@ -80,6 +80,9 @@ public class SecurityConfig {
                     // lookups back the checkout's delivery step and are rate-limited per IP.
                     "/api/v1/tumaboda/webhook",
                     "/api/v1/public/tumaboda/**",
+                    // Storefront live hints and the delivery places/price comparison + suggestion form.
+                    "/api/v1/public/events",
+                    "/api/v1/public/delivery/**",
                     // Co-op Bank deposit notifications: authenticated inside the controller (shared Basic credential).
                     "/api/v1/payments/coop/ins",
                     // Public storefront browse/search/reviews — read-only, only

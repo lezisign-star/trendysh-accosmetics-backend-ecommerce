@@ -41,6 +41,8 @@ public class LiveStreams {
     static final int MAX_STREAMS_PER_ORDER = 5;
 
     private final Set<SseEmitter> staff = ConcurrentHashMap.newKeySet();
+    /** Anonymous storefront visitors, told only which topic changed. */
+    private final Set<SseEmitter> visitors = ConcurrentHashMap.newKeySet();
     private final Map<String, Set<SseEmitter>> byOrder = new ConcurrentHashMap<>();
     private final Executor executor;
     private final ObjectMapper json;
@@ -59,6 +61,17 @@ public class LiveStreams {
         SseEmitter emitter = newEmitter();
         staff.add(emitter);
         onClosed(emitter, () -> staff.remove(emitter));
+        greet(emitter);
+        return emitter;
+    }
+
+    public SseEmitter subscribePublic() {
+        if (customerStreams() >= MAX_CUSTOMER_STREAMS) {
+            throw new TooManyRequestsException("Too many people are connected right now. Please try again shortly.");
+        }
+        SseEmitter emitter = newEmitter();
+        visitors.add(emitter);
+        onClosed(emitter, () -> visitors.remove(emitter));
         greet(emitter);
         return emitter;
     }
@@ -95,6 +108,15 @@ public class LiveStreams {
         dispatch(() -> deliver(staff, () -> SseEmitter.event().data(payload)));
     }
 
+    /** Tells every open storefront that a public topic changed (e.g. PRODUCTS). */
+    public void publishToPublic(String topic) {
+        if (visitors.isEmpty()) {
+            return;
+        }
+        String payload = "{\"type\":\"DATA_CHANGED\",\"topic\":\"" + topic + "\"}";
+        dispatch(() -> deliver(visitors, () -> SseEmitter.event().data(payload)));
+    }
+
     /** Tells whoever is watching this order that something about it changed. */
     public void publishToOrder(String orderNo) {
         Set<SseEmitter> watchers = orderNo == null ? null : byOrder.get(orderNo);
@@ -107,11 +129,12 @@ public class LiveStreams {
     @Scheduled(fixedRateString = "${app.live.heartbeat-ms:20000}", initialDelayString = "${app.live.heartbeat-ms:20000}")
     public void heartbeat() {
         byOrder.values().removeIf(Set::isEmpty);
-        if (staff.isEmpty() && byOrder.isEmpty()) {
+        if (staff.isEmpty() && byOrder.isEmpty() && visitors.isEmpty()) {
             return;
         }
         dispatch(() -> {
             deliver(staff, () -> SseEmitter.event().comment("keep-alive"));
+            deliver(visitors, () -> SseEmitter.event().comment("keep-alive"));
             for (Set<SseEmitter> watchers : List.copyOf(byOrder.values())) {
                 deliver(watchers, () -> SseEmitter.event().comment("keep-alive"));
             }
@@ -125,7 +148,7 @@ public class LiveStreams {
     }
 
     public int customerStreams() {
-        return byOrder.values().stream().mapToInt(Set::size).sum();
+        return byOrder.values().stream().mapToInt(Set::size).sum() + visitors.size();
     }
 
     // ---- plumbing ----

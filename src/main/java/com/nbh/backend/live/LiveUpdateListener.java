@@ -1,6 +1,7 @@
 package com.nbh.backend.live;
 
 import com.nbh.backend.common.event.BankCreditRecordedEvent;
+import com.nbh.backend.common.event.DataChangedEvent;
 import com.nbh.backend.common.event.OrderCancelledEvent;
 import com.nbh.backend.common.event.OrderDeliveredEvent;
 import com.nbh.backend.common.event.OrderFulfilledEvent;
@@ -99,5 +100,24 @@ public class LiveUpdateListener {
     public void onTumaBodaDeliveryUpdated(TumaBodaDeliveryUpdatedEvent event) {
         streams.publishToStaff(AdminEvent.of(AdminEvent.Type.DELIVERY_UPDATED, event.orderNo()));
         streams.publishToOrder(event.orderNo());
+    }
+
+    /** Topics changed since the last flush: a bulk edit marks the same topic thousands of times but is pushed once. */
+    private final java.util.Set<DataChangedEvent.Topic> dirty = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onDataChanged(DataChangedEvent event) {
+        dirty.add(event.topic());
+    }
+
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${app.live.data-flush-ms:400}")
+    public void flushDataChanges() {
+        for (DataChangedEvent.Topic topic : java.util.List.copyOf(dirty)) {
+            dirty.remove(topic);
+            streams.publishToStaff(AdminEvent.dataChanged(topic.name()));
+            if (topic.isPublic()) {
+                streams.publishToPublic(topic.name());
+            }
+        }
     }
 }

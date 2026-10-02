@@ -278,4 +278,40 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     int sweepOutstandingTumabodaDeliveries(@Param("settlementId") UUID settlementId);
 
     long countByTumabodaSettlementId(UUID settlementId);
+
+    /**
+     * Staff customer list: one row per phone number, newest activity first. Same demo-data gating as the
+     * other admin views, so turning demo data off hides its synthetic customers too.
+     */
+    @Query(value = """
+            SELECT NEW com.nbh.backend.customer.dto.AdminCustomerDto(
+                o.guestPhone, MAX(o.customerName), MAX(o.guestEmail), COUNT(o),
+                COALESCE(SUM(CASE WHEN o.status IN (
+                        com.nbh.backend.order.entity.OrderStatus.PAID, com.nbh.backend.order.entity.OrderStatus.PICKING,
+                        com.nbh.backend.order.entity.OrderStatus.READY, com.nbh.backend.order.entity.OrderStatus.DISPATCHED,
+                        com.nbh.backend.order.entity.OrderStatus.DELIVERED)
+                    THEN o.grandTotal ELSE 0 END), 0),
+                MAX(o.createdAt), CASE WHEN COUNT(o.customerAccount) > 0 THEN true ELSE false END)
+            FROM CustomerOrder o
+            WHERE (o.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND (:q IS NULL
+                   OR LOWER(COALESCE(o.customerName, '')) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR o.guestPhone LIKE CONCAT('%', CAST(:phoneQ AS string), '%'))
+            GROUP BY o.guestPhone
+            ORDER BY MAX(o.createdAt) DESC
+            """,
+            countQuery = """
+            SELECT COUNT(DISTINCT o.guestPhone) FROM CustomerOrder o
+            WHERE (o.isMockData = false OR EXISTS (
+                       SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true))
+              AND (:q IS NULL
+                   OR LOWER(COALESCE(o.customerName, '')) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR o.guestPhone LIKE CONCAT('%', CAST(:phoneQ AS string), '%'))
+            """)
+    Page<com.nbh.backend.customer.dto.AdminCustomerDto> searchCustomers(@Param("q") String q,
+                                                                          @Param("phoneQ") String phoneQ,
+                                                                          Pageable pageable);
 }

@@ -17,6 +17,7 @@ import java.util.UUID;
  */
 @Getter
 @Setter
+@jakarta.persistence.EntityListeners(com.nbh.backend.live.EntityChangeListener.class)
 @Entity
 @Table(name = "product")
 public class Product extends BaseEntity {

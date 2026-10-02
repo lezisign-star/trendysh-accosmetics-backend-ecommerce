@@ -19,6 +19,7 @@ import java.math.BigDecimal;
  */
 @Getter
 @Setter
+@jakarta.persistence.EntityListeners(com.nbh.backend.live.EntityChangeListener.class)
 @Entity
 @Table(name = "stock_balance", uniqueConstraints = {
         @UniqueConstraint(columnNames = {"variant_id", "account"})

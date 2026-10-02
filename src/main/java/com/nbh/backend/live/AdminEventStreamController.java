@@ -23,7 +23,7 @@ public class AdminEventStreamController {
     }
 
     @GetMapping(produces = "text/event-stream")
-    @PreAuthorize("hasAnyAuthority('PERM_ORDER_VIEW','PERM_ORDER_MANAGE_ALL','PERM_PAYMENT_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PERM_ORDER_VIEW','PERM_ORDER_MANAGE_ALL','PERM_PAYMENT_MANAGE','PERM_SETTINGS_MANAGE','PERM_PRODUCT_VIEW','PERM_STOCK_VIEW')")
     public SseEmitter events() {
         return streams.subscribeStaff();
     }

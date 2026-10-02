@@ -7,6 +7,7 @@ import lombok.Setter;
 
 @Getter
 @Setter
+@jakarta.persistence.EntityListeners(com.nbh.backend.live.EntityChangeListener.class)
 @Entity
 @Table(name = "category")
 public class Category extends BaseEntity {

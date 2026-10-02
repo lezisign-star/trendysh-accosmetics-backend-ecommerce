@@ -48,6 +48,10 @@ public class ProductService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
+    /** Field-injected (optional) so the many hand-built test instances keep working; null just means "no live push". */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.context.ApplicationEventPublisher events;
+
     private final ProductRepository productRepository;
     private final ProductVariantRepository variantRepository;
     private final BrandRepository brandRepository;
@@ -522,6 +526,11 @@ public class ProductService {
             throw new EntityNotFoundException("No product: " + productId);
         }
         productRepository.updatePublishedState(productId, published, published ? Instant.now() : null);
+        // The bulk UPDATE above bypasses entity lifecycle callbacks, so tell live listeners explicitly.
+        if (events != null) {
+            events.publishEvent(new com.nbh.backend.common.event.DataChangedEvent(
+                    com.nbh.backend.common.event.DataChangedEvent.Topic.PRODUCTS));
+        }
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
         return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));

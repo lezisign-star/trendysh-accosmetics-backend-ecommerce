@@ -19,6 +19,7 @@ import java.time.Instant;
  */
 @Getter
 @Setter
+@jakarta.persistence.EntityListeners(com.nbh.backend.live.EntityChangeListener.class)
 @Entity
 @Table(name = "product_variant")
 public class ProductVariant extends BaseEntity {

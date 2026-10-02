@@ -1,5 +1,39 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (evening) — delivery places + prices CRUD, customer suggestions, backend-pushed live updates everywhere (V50)
+
+`mvn -q compile`/`test-compile` clean; `LiveStreamsTest`, `LiveUpdateListenerTest` and the ArchUnit test pass.
+V50 applies on the dev DB. **Verified live** (real admin login, raw SSE reads + the actual pages): creating a
+place pushed `DATA_CHANGED/DELIVERY_PLACES` to the public stream; publish/unpublish pushed `PRODUCTS`; a stock
+receipt and its reversal pushed `STOCK`; with the checkout open, editing a Metro price from the admin API changed
+it on the page with no reload; a customer suggestion appeared in the admin queue live. Test place/suggestion
+cleaned up afterwards.
+
+- **Delivery places (V50, package `delivery`)**: `delivery_place` + `delivery_place_price` (one row per
+  METRO / BODA / MATATU with a low-high range, ETA text, note) + `delivery_place_suggestion`. `BODA` is the
+  *physically booked* boda boda quoted by staff; TumaBoda's own live quote stays separate and untouched.
+  Admin: `/api/v1/admin/delivery/places` CRUD and `/suggestions` (+`/count`, approve/reject), gated on
+  `PERM_SETTINGS_MANAGE` or `PERM_ORDER_MANAGE_ALL`. Public: `GET /public/delivery/places?q=` and
+  `POST /public/delivery/suggestions` (202; 5 per client per hour, in-memory throttle).
+- **Event infrastructure**: `DataChangedEvent(topic)` (DELIVERY_PLACES, DELIVERY_SUGGESTIONS, PRODUCTS, CATALOG,
+  STOCK). `EntityChangeListener` is attached via `@EntityListeners` to Product, ProductVariant, ProductImage,
+  Brand, Category, PromoCampaign and StockBalance, so *every* write path (admin screens, checkout, imports,
+  schedulers) publishes without each service remembering to. Caveat found while building it:
+  `ProductRepository.updatePublishedState` is a bulk UPDATE that bypasses entity callbacks, so
+  `ProductService.setPublished` publishes explicitly. `LiveUpdateListener` coalesces topics and flushes every
+  400 ms (`app.live.data-flush-ms`), so a bulk edit is one push. New **public stream**
+  `GET /api/v1/public/events` (anonymous, `LiveStreams.subscribePublic`, counted in the customer-stream cap,
+  heartbeat included) carries only `{"type":"DATA_CHANGED","topic":...}`. Staff stream gets the same events
+  (`AdminEvent.Type.DATA_CHANGED`); its authority list now also admits settings/product/stock viewers.
+  Orders/payments/deliveries were already on the existing staff + per-order streams.
+- **Admin Customers screen was a leftover mockup** (read browser localStorage, said "this mockup has no sign-up
+  flow"): new `GET /api/v1/admin/customers` (`PERM_CUSTOMER_VIEW`) groups real orders by phone — name, email,
+  order count, confirmed-paid total only, last order, "Account" flag — with search + paging, mock-data gated.
+- **Audit follow-ups**: kits' "component unavailable" warning is accurate (54 of 55 dev kits point at 69
+  soft-deleted test products and 20 unpublished demo products) — data debris, not a bug. ACTIVE holds with no
+  expiry are all on PAID/READY orders (correct: held until dispatch); none sit on dispatched/delivered orders.
+
+
 ## 2026-10-02 (newest) — TumaBoda pickup OTP plumbing (V49)
 
 `mvn -q compile`/`test-compile` clean; V49 applies cleanly on the dev DB (`customer_order.tumaboda_pickup_otp`).
