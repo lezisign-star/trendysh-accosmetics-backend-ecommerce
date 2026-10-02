@@ -1,5 +1,11 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (phase 1) — shop line is 0793506900 (V53)
+
+- `V53` overwrites the saved support number in payment settings; `app.bank.support-whatsapp` defaults to it, and a blank number saved in Settings (or never set) falls back to it (`BankPaymentSettings.DEFAULT_SUPPORT_PHONE`).
+- Test: `aBlankSupportNumberFallsBackToTheShopLine`. Payment tests green.
+- M-PESA till/paybill details are deliberately untouched.
+
 ## 2026-10-02 (audit) — tests for everything shipped today
 
 Added integration/unit tests for returns, settlement, delivery contact phone, needs-attention, delivery places and suggestions, demo-data isolation, payment-settings permission, credentials and photo cleanup (Gemini client against a local stand-in, watermark, prompts, SecretCipher). Full suite on a fresh DB: 592 run, 0 failures.
