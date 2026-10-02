@@ -1,5 +1,27 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-02 (latest) — delivery-contact phone: who the rider actually calls (V47)
+
+`mvn -q compile`/`test-compile` clean; V47 applies cleanly on the dev DB (`customer_order.delivery_contact_phone`,
+nullable). **Verified live**: placed a real checkout order (`SO-20261002-000002`) with `deliveryContactPhone:
+"0799888777"` distinct from the main `guestPhone`; confirmed via `GET /orders/{id}` both phones persisted
+separately and normalized (`254799888777` vs `254712345678`), and the admin order panel showed "Rider calls:
+254799888777". Cancelled the test order afterward to leave the dev DB clean. TumaBoda itself is disabled
+locally (`GET /public/tumaboda/status` → `{"enabled":false}`, no credentials in this environment) so the actual
+booking-request leg (`Recipient.phone`) couldn't be exercised live — verified by reading
+`TumaBodaBookingService.plan`'s updated recipient-phone logic instead.
+
+- **What this is** (TumaBoda parity plan Section A, remainder — the address-merge half was already done by
+  an earlier checkout rework this session): a separate phone for "who's actually at the drop-off point,"
+  distinct from the order's own contact/M-Pesa phone (`CustomerOrder.guestPhone`) — a warehouse/gate guard
+  receiving for a B2B buyer, say.
+- **Backend**: `CustomerOrder.deliveryContactPhone` (V47, nullable — null means "same as guestPhone").
+  `CheckoutRequest` gained an optional `deliveryContactPhone` (new trailing-arg overload, existing callers
+  unaffected); `CheckoutService` normalizes it and stores null when blank or identical to the main phone, so
+  there's exactly one place the "same as above" fallback happens. `TumaBodaBookingService.plan` now sends it
+  as `Recipient.phone` when set, falling back to `guestPhone` otherwise. Surfaced on `AdminOrderDetailDto` for
+  staff visibility.
+
 ## 2026-10-02 (still later) — "Needs attention" surfaced at the order-list level, not just per-order
 
 `mvn -q compile` clean. **Verified live**: the Fulfilment tab's new "Needs attention (18)" chip filtered to

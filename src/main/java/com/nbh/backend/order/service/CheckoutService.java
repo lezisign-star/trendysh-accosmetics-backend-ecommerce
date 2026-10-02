@@ -153,6 +153,13 @@ public class CheckoutService {
         order.setGuestPhone(contactPhone);
         order.setFulfilmentType(request.fulfilmentType());
         order.setDeliveryAddress(request.deliveryAddress());
+        // Blank/same-as-main-phone is stored as null -- TumaBodaBookingService falls back to
+        // guestPhone itself, so there is exactly one place that fallback happens.
+        String deliveryContact = request.deliveryContactPhone() == null || request.deliveryContactPhone().isBlank()
+                ? null
+                : PhoneNumbers.normalize(request.deliveryContactPhone());
+        order.setDeliveryContactPhone(
+                deliveryContact != null && deliveryContact.equals(contactPhone) ? null : deliveryContact);
         // Pickup has no courier leg, so a stray method on a pickup order is dropped, not stored.
         order.setDeliveryMethod(request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER ? request.deliveryMethod() : null);
         order.setStatus(OrderStatus.PENDING_PAYMENT);

@@ -194,9 +194,14 @@ public class TumaBodaBookingService {
             return new Plan(Outcome.NEEDS_STAFF, null);
         }
 
+        // Who the rider actually calls at drop-off, if the customer gave one -- see
+        // CustomerOrder.deliveryContactPhone's javadoc. Falls back to the order's own phone.
+        String recipientPhone = order.getDeliveryContactPhone() == null || order.getDeliveryContactPhone().isBlank()
+                ? order.getGuestPhone()
+                : order.getDeliveryContactPhone();
         Recipient recipient = new Recipient(
                 order.getCustomerName() == null || order.getCustomerName().isBlank() ? "Customer" : order.getCustomerName(),
-                internationalPhone(order.getGuestPhone()),
+                internationalPhone(recipientPhone),
                 order.getDeliveryAddress() == null ? "" : order.getDeliveryAddress(),
                 order.getDropoffLat(), order.getDropoffLng());
         String reference = order.getTumabodaRestartCount() == 0

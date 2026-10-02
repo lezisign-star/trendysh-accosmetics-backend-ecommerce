@@ -28,6 +28,8 @@ public record AdminOrderDetailDto(
         String guestEmail,
         String guestPhone,
         String deliveryAddress,
+        /** Who the rider should actually call at drop-off, if different from {@code guestPhone}. Null means "same as above". */
+        String deliveryContactPhone,
         BigDecimal subtotal,
         BigDecimal vatTotal,
         BigDecimal deliveryFee,
@@ -100,6 +102,7 @@ public record AdminOrderDetailDto(
         return new AdminOrderDetailDto(
                 o.getId(), o.getOrderNo(), o.getStatus(), o.getFulfilmentType().name(),
                 o.getDeliveryMethod(), o.getCustomerName(), o.getGuestEmail(), o.getGuestPhone(), o.getDeliveryAddress(),
+                o.getDeliveryContactPhone(),
                 o.getSubtotal(), o.getVatTotal(), o.getDeliveryFee(), o.getGrandTotal(),
                 o.getCreatedAt(), o.getPlacedAt(),
                 o.getTransporterName(), o.getTransporterPhone(), o.getAgreedDeliveryPrice(),

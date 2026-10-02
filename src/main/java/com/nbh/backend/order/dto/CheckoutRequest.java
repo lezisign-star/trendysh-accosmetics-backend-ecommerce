@@ -30,18 +30,28 @@ public record CheckoutRequest(
         BigDecimal dropoffLat,
         BigDecimal dropoffLng,
         @PositiveOrZero BigDecimal expectedSubtotal,
-        @PositiveOrZero BigDecimal expectedDeliveryFee
+        @PositiveOrZero BigDecimal expectedDeliveryFee,
+        /** Who the rider should call at drop-off, if different from {@code guestPhone}. Optional — null means "same as above". */
+        String deliveryContactPhone
 ) {
     /** The request as it was before the drop-off point existed: delivery arranged by phone. */
     public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
                            String deliveryAddress, String deliveryMethod) {
-        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod, null, null, null, null);
+        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod, null, null, null, null, null);
     }
 
     /** The request as it was before the shown-price check existed. */
     public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
                            String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng) {
         this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
-                dropoffLat, dropoffLng, null, null);
+                dropoffLat, dropoffLng, null, null, null);
+    }
+
+    /** The request as it was before the delivery-contact phone existed. */
+    public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
+                           String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng,
+                           BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee) {
+        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, null);
     }
 }

@@ -62,6 +62,15 @@ public class CustomerOrder extends BaseEntity {
     private String deliveryAddress;
 
     /**
+     * Who the rider should actually call at drop-off (V47) — distinct from {@link #guestPhone},
+     * used for account contact/M-Pesa. Null means "same as the order phone" (checkout autofills it
+     * there, but leaves it editable); {@code TumaBodaBookingService} falls back to {@link #guestPhone}
+     * when this is blank.
+     */
+    @Column(name = "delivery_contact_phone", length = 20)
+    private String deliveryContactPhone;
+
+    /**
      * BODA, MATATU or COURIER for DELIVERY_COURIER orders — the customer's preferred manually-arranged
      * transport, all paid directly to the transporter and confirmed by phone (V33). Null for pickup and
      * for orders that pre-date V14. Historical VEHICLE values were migrated to MATATU by V33.
