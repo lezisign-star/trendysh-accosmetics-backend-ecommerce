@@ -2,6 +2,7 @@ package com.nbh.backend.common.exception;
 
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.catalina.connector.ClientAbortException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -10,7 +11,9 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -201,6 +204,20 @@ public class GlobalExceptionHandler {
         payload.put("error", "Validation failed");
         payload.put("fields", fieldErrors);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(payload);
+    }
+
+    /**
+     * A browser that went away mid-response: tab closed, page left, signal lost. It is how every live-update
+     * stream ends sooner or later (the server finds out on its next write to it), so it is neither an error to
+     * alarm anyone with nor a response to build — there is nobody left to send one to. With no handler of its
+     * own it fell into {@link #handleUnexpected}: a full ERROR stack trace and a 500 in the access log and
+     * metrics for every visitor who simply closed a tab, which would bury the genuine 500s this class exists
+     * to surface.
+     */
+    @ExceptionHandler({AsyncRequestNotUsableException.class, ClientAbortException.class})
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void handleClientGone(Exception e) {
+        log.debug("The client went away before the response finished: {}", e.getMessage());
     }
 
     /**

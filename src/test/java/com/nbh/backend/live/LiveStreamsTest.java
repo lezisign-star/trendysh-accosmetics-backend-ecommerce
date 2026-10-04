@@ -2,6 +2,7 @@ package com.nbh.backend.live;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nbh.backend.common.exception.TooManyRequestsException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -111,6 +112,83 @@ class LiveStreamsTest {
         for (int i = 0; i < LiveStreams.MAX_STREAMS_PER_ORDER; i++) {
             assertThatCode(() -> streams.subscribeOrder("SO-1")).doesNotThrowAnyException();
         }
+    }
+
+    // ---- three separate budgets: staff, storefront visitors, order watchers ----
+
+    private static LiveStreams withBudgets(int visitors, int orders) {
+        return new LiveStreams(new SyncTaskExecutor(), new ObjectMapper(), visitors, orders);
+    }
+
+    @Test
+    void aVisitorOverBudgetIsToldToComeBackLaterRatherThanRefused() {
+        LiveStreams small = withBudgets(3, 500);
+        for (int i = 0; i < 3; i++) {
+            small.subscribePublic();
+        }
+
+        // An HTTP error would make the browser give up for good; a clean end with a retry hint makes it come back.
+        SseEmitter shed = org.junit.jupiter.api.Assertions.assertDoesNotThrow(small::subscribePublic);
+
+        assertThat(shed).isNotNull();
+        assertThat(small.visitorStreams()).as("the shed visitor was not registered").isEqualTo(3);
+    }
+
+    @Test
+    void crowdedVisitorsNeverUseUpTheOrderWatchersBudget() {
+        LiveStreams small = withBudgets(2, 2);
+        small.subscribePublic();
+        small.subscribePublic();
+        small.subscribePublic(); // over budget, shed
+
+        assertThatCode(() -> small.subscribeOrder("SO-1")).doesNotThrowAnyException();
+        assertThatCode(() -> small.subscribeOrder("SO-2")).doesNotThrowAnyException();
+        assertThat(small.orderStreams()).isEqualTo(2);
+        assertThat(small.visitorStreams()).isEqualTo(2);
+    }
+
+    @Test
+    void aFullOrderBudgetStillRefusesAnotherOrderWatcherButNeverTouchesVisitors() {
+        LiveStreams small = withBudgets(2, 2);
+        small.subscribeOrder("SO-1");
+        small.subscribeOrder("SO-2");
+
+        assertThatThrownBy(() -> small.subscribeOrder("SO-3")).isInstanceOf(TooManyRequestsException.class);
+        assertThat(small.orderStreams()).as("the refused watcher did not open a stream").isEqualTo(2);
+        assertThatCode(small::subscribePublic).doesNotThrowAnyException();
+        assertThat(small.visitorStreams()).isEqualTo(1);
+    }
+
+    @Test
+    void theMetricsShowHowFullEachBudgetIsAndHowManyVisitorsWereShed() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LiveStreams small = withBudgets(2, 500);
+        small.registerMetrics(registry);
+
+        small.subscribePublic();
+        small.subscribePublic();
+        small.subscribePublic(); // shed
+        small.subscribePublic(); // shed
+        small.subscribeOrder("SO-1");
+        small.subscribeStaff();
+
+        assertThat(registry.get("live.streams.open").tag("kind", "visitor").gauge().value()).isEqualTo(2);
+        assertThat(registry.get("live.streams.open").tag("kind", "order").gauge().value()).isEqualTo(1);
+        assertThat(registry.get("live.streams.open").tag("kind", "staff").gauge().value()).isEqualTo(1);
+        assertThat(registry.get("live.visitor.shed").counter().count()).isEqualTo(2);
+    }
+
+    @Test
+    void aVisitorWhoCanNoLongerBeWrittenToFreesItsSlot() {
+        LiveStreams small = withBudgets(1, 500);
+        SseEmitter emitter = small.subscribePublic();
+        emitter.complete();
+
+        small.publishToPublic("PRODUCTS");
+
+        assertThat(small.visitorStreams()).isEqualTo(0);
+        small.subscribePublic();
+        assertThat(small.visitorStreams()).as("room again, so a real stream is opened, not shed").isEqualTo(1);
     }
 
     @Test

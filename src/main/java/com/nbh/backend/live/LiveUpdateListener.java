@@ -102,22 +102,39 @@ public class LiveUpdateListener {
         streams.publishToOrder(event.orderNo());
     }
 
-    /** Topics changed since the last flush: a bulk edit marks the same topic thousands of times but is pushed once. */
+    /** Topics changed since the last staff flush: a bulk edit marks the same topic thousands of times but is pushed once. */
     private final java.util.Set<DataChangedEvent.Topic> dirty = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * The same, for storefront visitors, flushed far less often. Staff are a handful of people who want to see
+     * their own edit land at once; visitors are potentially hundreds, and every push makes each of their
+     * browsers ask for fresh data, so a burst of writes (an order, a stock receipt, a bulk edit) is held for a
+     * few seconds and sent as one hint per topic.
+     */
+    private final java.util.Set<DataChangedEvent.Topic> dirtyForVisitors = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onDataChanged(DataChangedEvent event) {
         dirty.add(event.topic());
+        if (event.topic().isPublic()) {
+            dirtyForVisitors.add(event.topic());
+        }
     }
 
+    /** Staff dashboards: quick, so an edit shows up straight away. */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${app.live.data-flush-ms:400}")
     public void flushDataChanges() {
         for (DataChangedEvent.Topic topic : java.util.List.copyOf(dirty)) {
             dirty.remove(topic);
             streams.publishToStaff(AdminEvent.dataChanged(topic.name()));
-            if (topic.isPublic()) {
-                streams.publishToPublic(topic.name());
-            }
+        }
+    }
+
+    /** Storefront visitors: slow on purpose — see {@link #dirtyForVisitors}. */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${app.live.public-flush-ms:3000}")
+    public void flushPublicDataChanges() {
+        for (DataChangedEvent.Topic topic : java.util.List.copyOf(dirtyForVisitors)) {
+            dirtyForVisitors.remove(topic);
+            streams.publishToPublic(topic.name());
         }
     }
 }

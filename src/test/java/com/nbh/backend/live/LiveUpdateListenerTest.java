@@ -1,6 +1,7 @@
 package com.nbh.backend.live;
 
 import com.nbh.backend.common.event.BankCreditRecordedEvent;
+import com.nbh.backend.common.event.DataChangedEvent;
 import com.nbh.backend.common.event.OrderCancelledEvent;
 import com.nbh.backend.common.event.OrderDeliveredEvent;
 import com.nbh.backend.common.event.OrderFulfilledEvent;
@@ -22,6 +23,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
@@ -108,5 +110,65 @@ class LiveUpdateListenerTest {
 
         verify(streams).publishToStaff(AdminEvent.of(AdminEvent.Type.DELIVERY_UPDATED, "SO-1"));
         verify(streams).publishToOrder("SO-1");
+    }
+
+    // ---- shared-data changes: staff are told quickly, storefront visitors in slower, coalesced batches ----
+
+    @Test
+    void aBurstOfWritesToOneTopicReachesVisitorsAsASingleHint() {
+        for (int i = 0; i < 500; i++) {
+            listener.onDataChanged(new DataChangedEvent(DataChangedEvent.Topic.STOCK));
+        }
+
+        listener.flushPublicDataChanges();
+        listener.flushPublicDataChanges(); // nothing new since — must not repeat
+
+        verify(streams, times(1)).publishToPublic("STOCK");
+    }
+
+    @Test
+    void eachChangedTopicGetsItsOwnHintAndAQuietTopicGetsNone() {
+        listener.onDataChanged(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
+        listener.onDataChanged(new DataChangedEvent(DataChangedEvent.Topic.CATALOG));
+
+        listener.flushPublicDataChanges();
+
+        verify(streams).publishToPublic("PRODUCTS");
+        verify(streams).publishToPublic("CATALOG");
+        verify(streams, never()).publishToPublic("STOCK");
+    }
+
+    @Test
+    void staffDashboardsAreFlushedOnTheirOwnFastPathAndVisitorsAreNotToldByIt() {
+        listener.onDataChanged(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
+
+        listener.flushDataChanges();
+
+        verify(streams).publishToStaff(AdminEvent.dataChanged("PRODUCTS"));
+        verify(streams, never()).publishToPublic(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void flushingForVisitorsDoesNotConsumeWhatStaffHaveYetToBeTold() {
+        listener.onDataChanged(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
+
+        listener.flushPublicDataChanges();
+        listener.flushDataChanges();
+
+        verify(streams).publishToPublic("PRODUCTS");
+        verify(streams).publishToStaff(AdminEvent.dataChanged("PRODUCTS"));
+    }
+
+    @Test
+    void staffOnlyTopicsNeverReachStorefrontVisitors() {
+        listener.onDataChanged(new DataChangedEvent(DataChangedEvent.Topic.DELIVERY_SUGGESTIONS));
+        listener.onDataChanged(new DataChangedEvent(DataChangedEvent.Topic.IMAGE_CLEANUP));
+
+        listener.flushPublicDataChanges();
+        listener.flushDataChanges();
+
+        verify(streams, never()).publishToPublic(org.mockito.ArgumentMatchers.any());
+        verify(streams).publishToStaff(AdminEvent.dataChanged("DELIVERY_SUGGESTIONS"));
+        verify(streams).publishToStaff(AdminEvent.dataChanged("IMAGE_CLEANUP"));
     }
 }

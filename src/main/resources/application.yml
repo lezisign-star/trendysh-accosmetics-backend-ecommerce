@@ -120,6 +120,22 @@ app:
     # Blank (the default) means the callback endpoint rejects every request —
     # set this BEFORE the callback URL is ever registered with Safaricom.
     callback-secret: ${MPESA_CALLBACK_SECRET:}
+  live:
+    # Storefront live updates (live.LiveStreams / LiveUpdateListener). All optional; these are the defaults.
+    # Open connections allowed for anonymous visitors. Over this a visitor is told to retry in 1-3 minutes
+    # (the page just carries on without live updates), and order-tracking streams are never affected.
+    max-visitor-streams: ${LIVE_MAX_VISITOR_STREAMS:1500}
+    # Open connections allowed for people watching an order (a separate budget from visitors).
+    max-order-streams: ${LIVE_MAX_ORDER_STREAMS:500}
+    # How often storefront visitors are told "something changed": a burst of writes is held and sent as one.
+    public-flush-ms: ${LIVE_PUBLIC_FLUSH_MS:3000}
+  catalog:
+    # How long a built catalogue page is reused (any product/category/stock change also drops it at once).
+    # 0 switches the cache off.
+    page-cache-ttl-ms: ${CATALOG_PAGE_CACHE_TTL_MS:10000}
+    # How long a request waits for another request's in-progress build of the same page before it is served the
+    # last page held (or builds its own). Keeps a struggling database from queueing the storefront behind one build.
+    page-cache-build-wait-ms: ${CATALOG_PAGE_CACHE_BUILD_WAIT_MS:3000}
   image-cleanup:
     # Gemini image editing for product photos (see imagecleanup package). Needs a billing-enabled key.
     gemini-api-key: ${GEMINI_API_KEY:}
@@ -137,6 +153,12 @@ app:
 
 server:
   port: ${PORT:8081}
+  # JSON compresses roughly 8-10x, and the storefront's catalogue is the largest thing it downloads. Only JSON
+  # is listed, so the live-update streams (text/event-stream) are never buffered by compression.
+  compression:
+    enabled: true
+    mime-types: application/json,application/problem+json
+    min-response-size: 1024
 
 # Tier 2 item 13: previously SecurityConfig permitted /actuator/health with no
 # actuator dependency at all — a 404 masquerading as a working health check.

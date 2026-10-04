@@ -44,6 +44,14 @@ app:
     # is held off for an hour, same as the other background sweepers above.
     sync: true
     heartbeat-ms: 3600000
+    # Visitors are told about changes by a slow scheduled flush; held off for an hour like the heartbeat so
+    # a test decides exactly when visitors are told (it calls the flush itself).
+    public-flush-ms: 3600000
+  catalog:
+    # The catalogue page cache is off in the general suite: many tests change data with a direct database
+    # write (which, unlike an admin edit, announces nothing) and then read the storefront straight away.
+    # The cache's own tests switch it on explicitly.
+    page-cache-ttl-ms: 0
 
 logging:
   level:

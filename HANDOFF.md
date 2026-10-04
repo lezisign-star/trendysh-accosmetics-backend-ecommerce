@@ -1,5 +1,82 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-03 — live updates can't stampede any more: cheap repeat downloads, fair connection budgets
+
+Pre-push Opus audit done; its findings are fixed (see "Audit hardening" below). Full suite on a fresh DB after the
+fixes: **641 tests, 0 failures** (90 report classes; evidence kept from disk, not just the Maven summary). Frontend
+half is in the frontend HANDOFF (same date); the two deploy independently in either order.
+
+**The problem:** every product/category/stock write pushed a hint to every open storefront, and each browser answered
+by re-downloading the whole catalogue (uncompressed, `Cache-Control: no-store`, ~7 DB queries each). Visitors also
+shared one 1,000-connection cap with people watching an order.
+
+- **Catalogue page cache** (`catalog.service.CatalogPageCache`, used by `CatalogController.browseVariants`): plain
+  browsing pages are built once per burst (a crowd shares one in-flight build) and kept up to 10 s; any commit of a
+  PRODUCTS/CATALOG/STOCK `DataChangedEvent` drops them at once. The body is stored as the exact JSON bytes with a
+  **weak** ETag, so a browser holding the same bytes gets a bodiless `304`. Needed `Cache-Control: no-cache` on that
+  response: Spring Security's default `no-store` stopped browsers keeping anything to revalidate.
+  `app.catalog.page-cache-ttl-ms` (env `CATALOG_PAGE_CACHE_TTL_MS`, default 10000, 0 = off; **off in the test
+  profile** because many tests write the DB directly, which announces nothing).
+- **Audit hardening** (from the pre-push Opus audit; each confirmed by reading the code before fixing):
+  - *Only bounded requests are cached* (`CatalogController.isCacheable`): no `q`, no `sort`, `size` <= 500 (what the
+    storefront's loader asks for), page < 1000, category <= 80 chars. Anything else is answered exactly as before. The
+    first version keyed on any `sort`/`size`, so an anonymous visitor could spray distinct URLs (and `size` defaults to
+    a max of 2000 here — `max-page-size` is not set) into the cache.
+  - *No leaks on failure*: the first version created a per-key lock before building and only removed it after a
+    successful build when 64 pages were already held, so failing requests (`?sort=<random>`, an overflowing page
+    number) leaked a lock each, forever. Now an in-flight future per key, removed in `finally`.
+  - *No unbounded waiting*: a request for a page being built waits for that one build for at most
+    `app.catalog.page-cache-build-wait-ms` (default 3000), then is served the last page held for it (kept 60 s past
+    expiry for exactly this), or builds its own if there is none (the pre-cache behaviour). If the build FAILS, every
+    waiter gets the same failure at once instead of retrying one after another (N x 30 s of Hikari timeouts).
+  - *Bounded bytes as well as entries*: <= 64 pages and <= 32 MB in all, stalest dropped first; a page over 8 MB is not
+    held; entries expired more than 60 s ago are swept on the next store.
+  - A JSON-writing failure is now an `UncheckedIOException` (500), not an `IllegalStateException` (which the handler
+    maps to a misleading 422).
+  - Left as is (LOW, accepted): gzip is recomputed per response (CPU only; the 3 s flush plus client jitter spread it);
+    total stream capacity is now 1,500 + 500 + 100 vs 1,000 + 100 before (tunable by env, memory per idle stream is
+    small but was not measured on Railway).
+- **gzip** (`server.compression`, JSON only, so the SSE streams are never buffered). A weak ETag is deliberate:
+  Tomcat skips compression for a strong one.
+- **Slower public flush**: staff dashboards still flush at 400 ms; storefront visitors now flush every 3 s
+  (`app.live.public-flush-ms`), so an order or a bulk edit is one hint per topic.
+- **Separate budgets** (`LiveStreams`): visitors 1,500 (`app.live.max-visitor-streams`), order watchers 500
+  (`app.live.max-order-streams`), staff 100. A visitor over budget is no longer given a 429 (an `EventSource` gives up
+  for good on an HTTP error): the stream says `: busy`, carries `retry:` 60-180 s and ends, and the browser comes back
+  by itself. Every visitor stream also carries a random `retry:` of 5-25 s so a restart doesn't bring everyone back in
+  one second. Gauges `live.streams.open{kind}` and counter `live.visitor.shed` show how full the budgets are
+  (actuator metrics are staff-only).
+- **`GlobalExceptionHandler.handleClientGone`**: a browser that closes a tab ends a live stream with an
+  `AsyncRequestNotUsableException` the next time the server writes to it. That used to fall into the catch-all: a full
+  ERROR stack trace per departing visitor. Now one DEBUG line. Tomcat's own access log still labels such a dead
+  socket `500` (container bookkeeping; the bytes are the SSE frames the client already got), and **Micrometer's
+  `http.server.requests` status for these was not checked**.
+
+**Measured** (150 simultaneous visitors re-fetching a ~100-card catalogue, same data, old vs new backend): wire
+14.7 MB -> 2.0 MB cold (13 KB each) -> ~0 on revalidation (`304`); DB work about one transaction per visitor -> 2 for
+the whole crowd; median 1.4-2.1 s -> 0.4-1.0 s. With 300 visitors connected, one real order produced exactly one
+`STOCK` hint per visitor. 1,600 connection attempts against the 1,500 budget: 100 shed with 200 + retry hint, none
+refused, and an order-tracking stream still connected. In a real browser the server logged the catalogue request as
+`304`.
+
+**Tests:** `CatalogPageCacheTest` (17), `CatalogPageCacheIntegrationTest` (9, including invalidation through the
+entity-listener path — a stock edit — not only the explicit publish event, and that sorted/oversized/far-off/long-
+category requests are never cached), `PublicEventStreamIntegrationTest` (1), `ClientGoneHandlingTest` (4), plus new
+cases in `LiveStreamsTest` and `LiveUpdateListenerTest`. The public stream and `DataChangedEvent` had no test coverage
+at all before this.
+
+**Test-infra warning:** the two integration tests above deliberately run in the shared Spring context and change the
+cache TTL / visitor budget by reflection, restoring it after. Every *distinct* context keeps a 10-connection pool open
+for the rest of the run and Postgres allows 97 usable connections; a first version that used property overrides and a
+spy bean added two contexts and the suite failed with "too many clients" (in an unrelated class). The suite now peaks
+at about 81. Don't add new `@SpringBootTest(properties=...)` / `@MockitoSpyBean` contexts without checking.
+
+**Not verified:** behaviour behind Railway's edge (gzip pass-through, SSE through the proxy): after deploy, `curl -H
+'Accept-Encoding: gzip' -I .../api/v1/catalog/variants?size=500` should show `content-encoding: gzip`, an `etag` and
+`cache-control: no-cache`. A PRODUCTS/CATALOG push (needs an admin login) was not driven in a browser; the mapping is
+covered by unit tests. The real ceiling is unchanged: the storefront still loads the whole catalogue client-side
+(past a few thousand products it needs server-side filtering).
+
 ## 2026-10-02 (phase 4) — fulfilment queue, urgency, customer confirms delivery, staff read reviews
 
 - `GET /orders?queue=true`: only orders still waiting on staff (PENDING_PAYMENT, PAID, PICKING, READY), oldest first; dispatched, delivered, cancelled and expired orders are handled and drop out. An explicit `status` can narrow the queue but never widens it. Every order row now carries `urgent` / `urgentReason` (`OrderUrgency`: placed before today in Nairobi time = "From yesterday", placed 20:00-06:00 = "Placed overnight").
