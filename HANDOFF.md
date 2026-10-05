@@ -1,5 +1,80 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-05 (very late night) — stock editing API for a small shop, pickup place on orders, shop addresses in emails
+
+NOT committed or pushed (owner: the other session pushes after confirming everything lines up). Targeted run 21/21 on a fresh DB
+(`SimpleStockEditingIntegrationTest` 4 new, `CheckoutDeliveryMethodIntegrationTest` 5 incl. 1 new, `ProductEditorIntegrationTest` 7,
+`DemoDataIsolationIntegrationTest` 2, `EmailTemplatesUnitTest` 2, `NeverReceivedVariantVisibilityTest` 1). **The FULL suite has not
+been re-run since these changes** (the last full run, 663/663, was before them). The local dev backend on 8081 predates them:
+restart it before using the new fields.
+
+- **`GET /stock/inventory`:** rows carry `productId` and `kit`; variants of DELETED products are no longer listed (nor counted by
+  `countBelowReorderLevel`, so the overview tile matches the list); new params `outOfStockOnly` and `productId`.
+  `StockBalanceRepository.browseInventory` now takes (belowReorderOnly, outOfStockOnly, productId, q, pageable).
+- **`PUT /products/{id}/variants/{vid}/stock`:** new optional `allowUnknownCost`. When true, a gain with no cost anywhere is valued
+  at 0 and the document note says "(cost not known, valued at 0)"; the default still refuses it (the product editor's stance,
+  unchanged). A kit variant is refused with 422 (its parts hold the stock).
+- **`OrderDto.pickupPlace`:** the shop a PICKUP order waits at (the checkout label), null for deliveries so a home address stays out.
+- **`EmailTemplates` footer** lists the three shops instead of Wood Avenue Plaza.
+
+## 2026-10-05 (late night) — demo-data audit: the staff Reviews list showed demo reviews (fixed)
+
+NOT committed or pushed. Full suite 663/663 on a fresh DB (661 from the evening entry + 2). The owner saw 13 variants in Stock
+levels with demo off and asked for a very thorough check. Those 13 are real products ("Air Brush" and "Gel Polish Table" are not in
+`CategoryTemplates` or anywhere else in the code; production's public shop lists 3 products, none with Picsum images).
+
+Method: a scratch copy of the dev DB (109 hidden demo products, 28 demo orders, 96 demo reviews, 228 demo ledger rows, 5 kits,
+5 professions), a second backend on port 8091, DEVELOPER sign-in through the forgot-password flow (throwaway password, code read from
+the log), then every read endpoint probed with demo OFF and ON, scanning each response for ids of the side that should be hidden
+(`nbh-demo-leak-probe.mjs` and `nbh-demo-leak-probe-ids.sql` in `C:\Users\ADMIN\.claude\plans`; rerun it after adding any admin list).
+Totals cross-checked against SQL: revenue, order count, stock valuation, variants tracked and forecast rows all equal the real-only figures.
+
+- **LEAK, fixed:** `GET /admin/reviews` (`ProductReviewRepository.searchForStaff`) had no demo gate. With demo off it listed the 96 demo
+  reviews (all APPROVED, so under "Showing" and "All"; the default "To read" tab was clean, which is why it went unnoticed); with demo
+  on it mixed real reviews in. It now uses the same "any demo product is published" predicate as the order and product lists, in the page
+  query and in its count query.
+- **By-id exposure, fixed:** `GET /catalog/products/{id}/reviews` returned a hidden (demo, draft or deleted) product's approved reviews
+  to anyone holding the id. `ProductReviewService.listApproved` now answers 404 unless the product is published and not deleted, like its
+  product page and catalogue card do.
+- Tests: `MockDataToggleIntegrationTest` +2 (`demoReviewsOnlyAppearInTheStaffReviewListWhileEnabled`,
+  `aHiddenDemoProductsReviewsAreNotPubliclyReadableByItsId`); both fail against the old code (checked by putting it back), pass now;
+  with `OrderQueueIntegrationTest` 13/13.
+- **Clean with demo off (0 hits):** storefront browse, search, deals, categories, kits; admin products (all, published, drafts, deleted),
+  orders (all, queue, delivered), customers, analytics (summary, daily, top sellers), stock levels, valuation, movements, holds, forecast,
+  kits, professions, image cleanup. A hidden demo variant's detail page is 404.
+- **By design, real rows while demo is ON:** purchase orders and stock counts (no demo version of either exists).
+- **Noticed, not changed:** Stock levels, Valuation and the "below reorder level" figure include variants of SOFT-DELETED products
+  (`browseInventory`, `valuationReport`, `countBelowReorderLevel` filter `v.deleted` but not `p.deleted`: 398 of 541 rows in the dev
+  copy), while the Products screen hides them and the Forecast excludes them, so a product deleted as a test stays in "Variants tracked"
+  for good. And the bootstrap config creates `admin@nairobibeautyhub.co.ke` (SUPER_ADMIN "Super Admin") in every environment, production
+  included: if that inbox is not one the team owns, disable the account.
+
+## 2026-10-05 (evening) — a kit's stock now comes from its components; 400 for a missing parameter
+
+NOT committed or pushed. Full suite 661/661 on a fresh DB (was 655; +6). Opus audit still to do.
+
+- **BUG: sold-out kits were sold.** `CatalogService.toCard` reported every kit `inStock = true` / `availableQty = 0`, and
+  `CartService.checkCourtesyAvailability` skipped kits, so a kit whose components had run out could be added to a cart and
+  was only refused at the last step of checkout ("just went out of stock"). New `kits/service/KitAvailabilityService`
+  (`wholeKitsAvailable`) = the minimum over the kit's still-purchasable components of floor(available / qtyPerKit), exactly
+  the component set checkout reserves (`KitService.componentsForVariant`). Used by the catalogue cards (browse and variant
+  detail; `availableQty` is now the whole-kit count, so the product page says "N in stock"), `KitService.listPublicKits`
+  (`inStock`), and the cart's add check ("X is out of stock" / "Only N of X left"). `KitRepository.findByVariantIdIn` added.
+  Checkout is still the authority.
+- **Cart lines report `stockLeft`** (`CartItemDto`): how many of the line can be sold now (kits: whole kits). The storefront
+  uses it to flag sold-out / short lines and offer Remove or "Set to N" before checkout refuses the order.
+- **`GlobalExceptionHandler`:** `MissingServletRequestParameterException` -> 400 (`GET /stock/balance` without `variantId`
+  was a 500 "unexpected error"; found by the role x endpoint matrix).
+- Customer-facing wording: "basket" -> "cart" in the cart/checkout error messages.
+- Tests: `KitIntegrationTest` (the starved-component test is now a two-shopper race, since a sold-out kit can no longer be
+  added; new `aKitWhoseComponentsCannotMakeAWholeKit...` follows a kit from sold out to restocked through search, public kits,
+  cart add and the cart line's `stockLeft`), `CartServiceUnitTest` (+2 kit stock), `CatalogServiceInStockUnitTest` (+1),
+  `StockInsightsIntegrationTest` (+1 for the 400).
+- **Noticed, not changed:** `GET /admin/uploads/cloudinary-signature` answers 500 when Cloudinary is not configured (the
+  message is clear; 503 would be more honest). `PAYMENT_VIEW` is held by Manager and Viewer but no endpoint checks it
+  (payments endpoints need PAYMENT_MANAGE or ORDER_MANAGE_ALL). Production: TumaBoda status `enabled:false`, address
+  autocomplete and common areas `[]`, no delivery places.
+
 ## 2026-10-05 — demo products can't be bought; V44-V53 now have legacy-data upgrade tests
 
 Pre-push Opus audit done and its findings fixed (below). Full suite on a fresh DB: **656 tests, 0 failures** (91 report
