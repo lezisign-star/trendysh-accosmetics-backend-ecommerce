@@ -128,4 +128,31 @@ class CheckoutDeliveryMethodIntegrationTest {
 
         assertThat(checkout(sessionId, "VEHICLE").getResponse().getStatus()).isEqualTo(400);
     }
+
+    /** There are three shops to pick up from, so the order must say which one it waits at; a delivery
+     *  order's address stays out of the customer view. */
+    @Test
+    void aPickupOrderNamesTheShopItWaitsAtButADeliveryOrderKeepsItsAddressPrivate() throws Exception {
+        String pickupSession = freshCartSessionWith(
+                newVariantWithStock("Pickup Place Test " + UUID.randomUUID().toString().substring(0, 8)));
+        String pickupBody = """
+                {"customerName":"Test Customer","guestEmail":"%s","guestPhone":"%s",
+                 "fulfilmentType":"PICKUP","deliveryAddress":"Simara Mall — Shop GS 07"}
+                """.formatted(TestContacts.email(), TestContacts.phone());
+        MvcResult pickup = mvc.perform(post("/api/v1/checkout")
+                        .header("X-Cart-Session", pickupSession)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(pickupBody))
+                .andReturn();
+        assertThat(pickup.getResponse().getStatus()).as(pickup.getResponse().getContentAsString()).isEqualTo(200);
+        JsonNode pickupOrder = json.readTree(pickup.getResponse().getContentAsString()).get("order");
+        assertThat(pickupOrder.get("pickupPlace").asText()).isEqualTo("Simara Mall — Shop GS 07");
+
+        String deliverySession = freshCartSessionWith(
+                newVariantWithStock("Delivery Place Test " + UUID.randomUUID().toString().substring(0, 8)));
+        MvcResult delivery = checkout(deliverySession, "BODA");
+        assertThat(delivery.getResponse().getStatus()).as(delivery.getResponse().getContentAsString()).isEqualTo(200);
+        JsonNode deliveryOrder = json.readTree(delivery.getResponse().getContentAsString()).get("order");
+        assertThat(deliveryOrder.get("pickupPlace").isNull()).isTrue();
+    }
 }

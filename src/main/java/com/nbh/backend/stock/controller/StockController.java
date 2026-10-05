@@ -194,9 +194,11 @@ public class StockController {
     @PreAuthorize("hasAuthority('PERM_STOCK_VIEW')")
     @GetMapping("/inventory")
     public Page<InventoryLineDto> inventory(@RequestParam(defaultValue = "false") boolean belowReorderOnly,
+                                             @RequestParam(defaultValue = "false") boolean outOfStockOnly,
+                                             @RequestParam(required = false) UUID productId,
                                              @RequestParam(required = false) String q,
                                              @PageableDefault(size = 20) Pageable pageable) {
-        return availabilityService.browse(q, belowReorderOnly, pageable);
+        return availabilityService.browse(q, belowReorderOnly, outOfStockOnly, productId, pageable);
     }
 
     /**

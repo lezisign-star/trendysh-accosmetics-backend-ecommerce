@@ -63,15 +63,26 @@ public class VariantStockService {
         this.documentNoGenerator = documentNoGenerator;
     }
 
+    /** {@link #setOnHand(UUID, UUID, BigDecimal, BigDecimal, String, boolean, StaffUser)} that refuses a gain whose cost is unknown. */
+    @Transactional
+    public Result setOnHand(UUID productId, UUID variantId, BigDecimal targetOnHand, BigDecimal unitCost,
+                             String reason, StaffUser staff) {
+        return setOnHand(productId, variantId, targetOnHand, unitCost, reason, false, staff);
+    }
+
     /**
      * @param unitCost cost per unit for a gain; falls back to the current average, then the
      *                 variant's standard cost — required only when neither exists.
      * @param reason optional note for the resulting ADJUSTMENT document (e.g. "physical count").
+     * @param allowUnknownCost what a gain does when no cost can be found anywhere: {@code false} refuses it (the
+     *                 product editor's stance, see the class javadoc), {@code true} values it at zero and says
+     *                 so in the document's note. The shop-floor stock list and the product card's quick edit send
+     *                 {@code true}: a small shop that never entered costs must still be able to type a number.
      * @return the before/after on-hand figures, with a null document number when nothing needed to change.
      */
     @Transactional
     public Result setOnHand(UUID productId, UUID variantId, BigDecimal targetOnHand, BigDecimal unitCost,
-                             String reason, StaffUser staff) {
+                             String reason, boolean allowUnknownCost, StaffUser staff) {
         if (targetOnHand == null || targetOnHand.signum() < 0) {
             throw new IllegalArgumentException("Stock quantity cannot be negative");
         }
@@ -79,6 +90,12 @@ public class VariantStockService {
                 .orElseThrow(() -> new EntityNotFoundException("No variant: " + variantId));
         if (!variant.getProduct().getId().equals(productId)) {
             throw new EntityNotFoundException("No variant " + variantId + " on product " + productId);
+        }
+        if (variant.isKit()) {
+            // A kit sells however many whole kits its parts can still make up; stock posted against the kit
+            // itself would be a phantom the checkout never reads.
+            throw new UnprocessableException(variant.getSku() + " is a kit: it holds no stock of its own, "
+                    + "so change the stock of the products it is made from instead");
         }
 
         // Lock first, read from the locked row — see the class javadoc's point 2.
@@ -93,7 +110,7 @@ public class VariantStockService {
         document.setDocumentType(StockDocumentType.ADJUSTMENT);
         document.setDocumentNo(documentNoGenerator.next(StockDocumentType.ADJUSTMENT));
         document.setPostedByUserId(staff.getId());
-        document.setNotes(reason != null && !reason.isBlank() ? reason : "Stock count corrected from the product editor");
+        String note = reason != null && !reason.isBlank() ? reason : "Stock count corrected from the product editor";
 
         StockDocumentLine line = new StockDocumentLine();
         line.setDocument(document);
@@ -108,9 +125,13 @@ public class VariantStockService {
                 resolvedCost = currentAvg != null && currentAvg.signum() > 0 ? currentAvg : variant.getStandardCost();
             }
             if (resolvedCost == null) {
-                throw new UnprocessableException(
-                        variant.getSku() + ": a unit cost is required — this variant has no current average "
-                                + "cost or standard cost to fall back on");
+                if (!allowUnknownCost) {
+                    throw new UnprocessableException(
+                            variant.getSku() + ": a unit cost is required — this variant has no current average "
+                                    + "cost or standard cost to fall back on");
+                }
+                resolvedCost = BigDecimal.ZERO;
+                note = note + " (cost not known, valued at 0)";
             }
             line.setSourceAccount(StockAccount.ADJUSTMENT);
             line.setTargetAccount(StockAccount.SHOP);
@@ -119,6 +140,7 @@ public class VariantStockService {
             line.setSourceAccount(StockAccount.SHOP);
             line.setTargetAccount(StockAccount.ADJUSTMENT);
         }
+        document.setNotes(note);
         document.getLines().add(line);
 
         StockDocument posted = postingService.post(document);

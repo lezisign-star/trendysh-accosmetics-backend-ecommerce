@@ -152,11 +152,14 @@ public class ProductController {
     public VariantStockService.Result setStock(@PathVariable UUID id, @PathVariable UUID variantId,
                                                 @Valid @RequestBody SetStockRequest request,
                                                 @AuthenticationPrincipal StaffUser staff) {
-        return variantStockService.setOnHand(id, variantId, request.quantity(), request.unitCost(), request.reason(), staff);
+        return variantStockService.setOnHand(id, variantId, request.quantity(), request.unitCost(), request.reason(),
+                Boolean.TRUE.equals(request.allowUnknownCost()), staff);
     }
 
+    /** {@code allowUnknownCost}: see {@link VariantStockService#setOnHand(UUID, UUID, BigDecimal, BigDecimal, String, boolean, StaffUser)}. */
     public record SetStockRequest(
-            @jakarta.validation.constraints.NotNull BigDecimal quantity, BigDecimal unitCost, String reason) {}
+            @jakarta.validation.constraints.NotNull BigDecimal quantity, BigDecimal unitCost, String reason,
+            Boolean allowUnknownCost) {}
 
     /** Sets a variant's flash-deal price + deadline. See {@link VariantDealService}'s javadoc for the validation rules. */
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")

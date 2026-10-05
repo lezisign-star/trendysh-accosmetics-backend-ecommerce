@@ -19,6 +19,9 @@ class EmailTemplatesUnitTest {
         assertThat(html).contains("Expires in 10 minutes");
         // Every literal "%" in the markup (width="100%") must have survived .formatted() unescaped.
         assertThat(html).contains("width=\"100%\"");
+        // The footer names the shops (the owner's list, 2026-10-05), not the old Kilimani address.
+        assertThat(html).contains("Superior Arcade, Shop B33 and B10", "Simara Mall, Shop GS 07", "Junction, Stalls D5");
+        assertThat(html).doesNotContain("Kilimani");
     }
 
     @Test

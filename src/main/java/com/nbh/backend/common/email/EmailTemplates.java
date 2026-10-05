@@ -46,7 +46,7 @@ public final class EmailTemplates {
                 </td></tr>
                 <tr><td align="center" style="padding-top:24px;font-size:12px;color:%s;line-height:1.6;">
                 Nairobi's wholesale supplier of professional beauty products and salon equipment<br />
-                Wood Avenue Plaza, Kilimani, Nairobi
+                Superior Arcade, Shop B33 and B10 &middot; Simara Mall, Shop GS 07 &middot; Junction, Stalls D5
                 </td></tr>
                 </table>
                 </td></tr>

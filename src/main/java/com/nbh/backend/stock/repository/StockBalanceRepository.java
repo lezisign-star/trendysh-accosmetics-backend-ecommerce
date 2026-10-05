@@ -83,27 +83,41 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
      * COALESCEd to zero. See {@link #countBelowReorderLevel()} for the matching fix to the
      * analytics tile that reads the same underlying gap.
      */
+    /**
+     * 2026-10-05: variants of a DELETED product are no longer listed. Deleting is a soft delete that leaves the
+     * variants (and their stock rows) in place for the order and movement history, so a product deleted as a
+     * test used to stay in "Variants tracked" for good (398 of 541 rows on a copy of the dev data), while the
+     * Products screen and the Forecast already hid it. Draft (unpublished) products stay: they are real and
+     * staff stock them before they go live. {@code outOfStockOnly} keeps rows with nothing on hand (the same
+     * test as the list's "Out of stock" pill), {@code productId} narrows to one product's variants (the
+     * product card's quick edit) and a null one means every product.
+     */
     @Query("""
             SELECT NEW com.nbh.backend.stock.dto.InventoryLineDto(
-                v.id, v.sku, v.variantName, p.name,
+                v.id, p.id, v.sku, v.variantName, p.name,
                 COALESCE(b.onHandQty, 0), COALESCE(b.reservedQty, 0),
                 COALESCE(b.onHandQty, 0) - COALESCE(b.reservedQty, 0),
                 v.reorderLevel,
                 CASE WHEN v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
-                     THEN true ELSE false END)
+                     THEN true ELSE false END,
+                v.isKit)
             FROM ProductVariant v
             JOIN v.product p
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
-            WHERE v.deleted = false
+            WHERE v.deleted = false AND p.deleted = false
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:belowReorderOnly = false
                    OR (v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel))
+              AND (:outOfStockOnly = false OR COALESCE(b.onHandQty, 0) <= 0)
+              AND (:productId IS NULL OR p.id = :productId)
               AND (:q IS NULL
                    OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
             ORDER BY p.name ASC, v.sku ASC
             """)
     Page<InventoryLineDto> browseInventory(@Param("belowReorderOnly") boolean belowReorderOnly,
+                                            @Param("outOfStockOnly") boolean outOfStockOnly,
+                                            @Param("productId") UUID productId,
                                             @Param("q") String q,
                                             Pageable pageable);
 
@@ -175,7 +189,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
             SELECT COUNT(v) FROM ProductVariant v
             JOIN v.product p
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
-            WHERE v.deleted = false
+            WHERE v.deleted = false AND p.deleted = false
               AND v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)

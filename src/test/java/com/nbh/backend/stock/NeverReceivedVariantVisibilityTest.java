@@ -51,7 +51,7 @@ class NeverReceivedVariantVisibilityTest {
         // Deliberately no GOODS_RECEIPT posted — this variant has zero stock_balance rows.
         UUID variantId = variant.getId();
 
-        var page = balanceRepository.browseInventory(true, null, PageRequest.of(0, 100));
+        var page = balanceRepository.browseInventory(true, false, null, null, PageRequest.of(0, 100));
         InventoryLineDto row = page.getContent().stream()
                 .filter(l -> l.variantId().equals(variantId))
                 .findFirst()

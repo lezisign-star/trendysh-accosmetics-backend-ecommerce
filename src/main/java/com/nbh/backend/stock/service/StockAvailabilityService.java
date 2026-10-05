@@ -70,7 +70,14 @@ public class StockAvailabilityService {
 
     @Transactional(readOnly = true)
     public Page<InventoryLineDto> browse(String q, boolean belowReorderOnly, Pageable pageable) {
-        return balanceRepository.browseInventory(belowReorderOnly, q, pageable);
+        return browse(q, belowReorderOnly, false, null, pageable);
+    }
+
+    /** The stock list with its optional narrowing: only what is out of stock, only one product's variants. */
+    @Transactional(readOnly = true)
+    public Page<InventoryLineDto> browse(String q, boolean belowReorderOnly, boolean outOfStockOnly,
+                                         UUID productId, Pageable pageable) {
+        return balanceRepository.browseInventory(belowReorderOnly, outOfStockOnly, productId, q, pageable);
     }
 
     @Transactional(readOnly = true)
