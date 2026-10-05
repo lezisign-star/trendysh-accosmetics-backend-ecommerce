@@ -128,8 +128,16 @@ public class ProductReviewService {
         return reviewRepository.searchForStaff(status, pageable).map(com.nbh.backend.catalog.dto.AdminReviewDto::from);
     }
 
+    /**
+     * A product's approved reviews, for its storefront page. Only for a product a shopper can actually see:
+     * an unpublished or deleted one (including demo products while demo data is off) answers 404 like its
+     * product page does, instead of handing its reviews to anyone who knows the id.
+     */
     @Transactional(readOnly = true)
     public Page<ProductReviewDto> listApproved(UUID productId, Pageable pageable) {
+        productRepository.findById(productId)
+                .filter(p -> p.isPublished() && !p.isDeleted())
+                .orElseThrow(() -> new NotFoundException("No product: " + productId));
         return reviewRepository
                 .findByProductIdAndStatusOrderByCreatedAtDesc(productId, ProductReview.ReviewStatus.APPROVED, pageable)
                 .map(ProductReviewDto::from);

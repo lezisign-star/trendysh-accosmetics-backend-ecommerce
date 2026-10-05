@@ -21,7 +21,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -172,5 +174,46 @@ class MockDataToggleIntegrationTest {
         call(true, "/api/v1/admin/mock-data/disable", developerToken);
         JsonNode disabledList = call(false, "/api/v1/orders?size=200", developerToken);
         assertThat(disabledList.toString()).as("mock orders hidden once disabled").doesNotContain("MOCK-");
+    }
+
+    /** Found in the 2026-10-05 audit of where demo rows still surfaced: the staff Reviews list had no gate at
+     *  all. The ~100 demo reviews are all APPROVED, so they showed under "Showing" and "All" with demo data
+     *  switched off, and real reviews showed alongside them with it on. */
+    @Test
+    void demoReviewsOnlyAppearInTheStaffReviewListWhileEnabled() throws Exception {
+        call(true, "/api/v1/admin/mock-data/enable", developerToken);
+        JsonNode whileOn = call(false, "/api/v1/admin/reviews?size=200", developerToken);
+        assertThat(whileOn.get("content").size()).as("demo reviews visible while enabled").isGreaterThan(0);
+        assertThat(reviewedProductsThatAreDemo(whileOn)).as("only demo reviews while enabled").containsExactly(true);
+
+        call(true, "/api/v1/admin/mock-data/disable", developerToken);
+        JsonNode whileOff = call(false, "/api/v1/admin/reviews?size=200", developerToken);
+        assertThat(reviewedProductsThatAreDemo(whileOff)).as("no demo reviews once disabled").doesNotContain(true);
+        JsonNode approvedOff = call(false, "/api/v1/admin/reviews?status=APPROVED&size=200", developerToken);
+        assertThat(reviewedProductsThatAreDemo(approvedOff)).as("the Showing tab too").doesNotContain(true);
+    }
+
+    /** The shopper-facing reviews list is keyed by product id; a hidden demo product's reviews must not be
+     *  readable that way, exactly as its product page and its catalogue card are not. */
+    @Test
+    void aHiddenDemoProductsReviewsAreNotPubliclyReadableByItsId() throws Exception {
+        call(true, "/api/v1/admin/mock-data/enable", developerToken);
+        JsonNode reviews = call(false, "/api/v1/admin/reviews?status=APPROVED&size=200", developerToken).get("content");
+        assertThat(reviews.size()).isGreaterThan(0);
+        String productId = reviews.get(0).get("productId").asText();
+        mvc.perform(get("/api/v1/catalog/products/" + productId + "/reviews")).andExpect(status().isOk());
+
+        call(true, "/api/v1/admin/mock-data/disable", developerToken);
+        mvc.perform(get("/api/v1/catalog/products/" + productId + "/reviews")).andExpect(status().isNotFound());
+    }
+
+    /** For each review on the page: is the product it is about a demo product? */
+    private Set<Boolean> reviewedProductsThatAreDemo(JsonNode page) {
+        Set<Boolean> flags = new HashSet<>();
+        for (JsonNode review : page.get("content")) {
+            UUID productId = UUID.fromString(review.get("productId").asText());
+            flags.add(products.findById(productId).orElseThrow().isMockData());
+        }
+        return flags;
     }
 }
