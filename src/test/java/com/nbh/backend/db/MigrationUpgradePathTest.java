@@ -45,6 +45,14 @@ class MigrationUpgradePathTest {
     private final UUID bodaOrder = UUID.randomUUID();
     private final UUID pickupOrder = UUID.randomUUID();
     private final UUID legacyStaff = UUID.randomUUID();
+    private final UUID legacyProduct = UUID.randomUUID();
+    private final UUID legacyVariant = UUID.randomUUID();
+    private final UUID legacyUploadedImage = UUID.randomUUID();
+    private final UUID legacyCameraImage = UUID.randomUUID();
+    private final UUID legacyCart = UUID.randomUUID();
+    private final UUID legacyCartItem = UUID.randomUUID();
+    private final UUID legacyOrderItem = UUID.randomUUID();
+    private final UUID legacySettings = UUID.randomUUID();
 
     private Connection connect() throws SQLException {
         Connection connection = DriverManager.getConnection(URL, USER, PASSWORD);
@@ -84,9 +92,35 @@ class MigrationUpgradePathTest {
             // A staff login that existed long before stock alerts (V43) — it must not silently drop off the list.
             s.execute("INSERT INTO staff_user (id, email, password, first_name, last_name) VALUES ('" + legacyStaff
                     + "', 'legacy-staff@example.com', 'x', 'Legacy', 'Staffer')");
+            seedCatalogueBasketAndPaymentRowsThatPredateV44(s);
         }
 
         flyway("latest").migrate();
+    }
+
+    /**
+     * What a live shop already holds when V44-V53 arrive: a sellable product with photos, a basket with a line in
+     * it, an order line, and the payment-details row the owner filled in (with the OLD support number V53
+     * replaces). V44 adds columns to the variant, cart-line and order-line tables, V45 to the order line, V46 and
+     * V53 touch the settings row, V51 tightens a rule on photos that already exist.
+     */
+    private void seedCatalogueBasketAndPaymentRowsThatPredateV44(Statement s) throws SQLException {
+        s.execute("INSERT INTO product (id, slug, name) VALUES ('" + legacyProduct + "', 'legacy-gel-polish', 'Legacy Gel Polish')");
+        s.execute("INSERT INTO product_variant (id, product_id, sku, variant_name, selling_price, is_active)"
+                + " VALUES ('" + legacyVariant + "', '" + legacyProduct + "', 'LEGACY-001', '15ml', 500, true)");
+        // Photos uploaded under the two sources that existed before AI_CLEANED (V51 widens that rule).
+        s.execute("INSERT INTO product_image (id, product_id, url, source, is_primary) VALUES ('" + legacyUploadedImage
+                + "', '" + legacyProduct + "', 'https://res.cloudinary.com/demo/image/upload/legacy-upload.jpg', 'UPLOAD', true)");
+        s.execute("INSERT INTO product_image (id, product_id, url, source, is_primary) VALUES ('" + legacyCameraImage
+                + "', '" + legacyProduct + "', 'https://res.cloudinary.com/demo/image/upload/legacy-camera.jpg', 'CAMERA_CAPTURE', false)");
+        s.execute("INSERT INTO cart (id, session_id) VALUES ('" + legacyCart + "', 'legacy-session')");
+        s.execute("INSERT INTO cart_item (id, cart_id, variant_id, qty, unit_price_snapshot, product_name_snapshot, variant_name_snapshot)"
+                + " VALUES ('" + legacyCartItem + "', '" + legacyCart + "', '" + legacyVariant + "', 2, 500, 'Legacy Gel Polish', '15ml')");
+        s.execute("INSERT INTO customer_order_item (id, order_id, variant_id, qty, unit_price, vat_rate, line_total, unit_cost_at_sale)"
+                + " VALUES ('" + legacyOrderItem + "', '" + vehicleOrder + "', '" + legacyVariant + "', 2, 500, 0, 1000, 300)");
+        // The owner's payment details, with the support number V53 replaces.
+        s.execute("INSERT INTO payment_settings (id, bank_name, paybill_number, account_name, support_whatsapp)"
+                + " VALUES ('" + legacySettings + "', 'Co-operative Bank', '400200', 'Trendysh Accosmetic', '0724808526')");
     }
 
     @AfterAll
@@ -181,6 +215,11 @@ class MigrationUpgradePathTest {
             assertThat(count(s, "SELECT count(*) FROM customer_order WHERE is_mock_data")).isZero();
             assertThat(count(s, "SELECT count(*) FROM category")).as("launch categories survived").isGreaterThan(0);
             assertThat(count(s, "SELECT count(*) FROM category WHERE is_mock_data")).isZero();
+            // Demo products can no longer be bought, so a migration that flagged an existing product as demo would
+            // quietly close that part of the real shop.
+            assertThat(count(s, "SELECT count(*) FROM product WHERE id = '" + legacyProduct + "' AND NOT is_mock_data"))
+                    .as("the legacy product survived and is a real product").isEqualTo(1);
+            assertThat(count(s, "SELECT count(*) FROM product WHERE is_mock_data")).isZero();
             for (String table : new String[]{"product", "category", "profession", "customer_order"}) {
                 assertThat(count(s, "SELECT count(*) FROM information_schema.columns WHERE table_schema = '" + SCHEMA
                         + "' AND table_name = '" + table + "' AND column_name = 'is_mock_data' AND is_nullable = 'NO'"))
@@ -201,6 +240,163 @@ class MigrationUpgradePathTest {
                     .isEqualTo(1);
             assertThatThrownBy(() -> s.execute("UPDATE stock_alert_settings SET lead_time_days = 500"))
                     .hasMessageContaining("lead_time_days");
+        }
+    }
+
+    private String text(Statement s, String sql) throws SQLException {
+        try (ResultSet rs = s.executeQuery(sql)) {
+            assertThat(rs.next()).as(sql).isTrue();
+            return rs.getString(1);
+        }
+    }
+
+    private int notNullColumns(Statement s, String table, String... columns) throws SQLException {
+        return count(s, "SELECT count(*) FROM information_schema.columns WHERE table_schema = '" + SCHEMA + "' AND table_name = '"
+                + table + "' AND is_nullable = 'NO' AND column_name IN ('" + String.join("','", columns) + "')");
+    }
+
+    // ---- V44-V53: what happened to the rows a live shop already held ----
+
+    @Test
+    void v44_existingVariantsHaveNoWholesaleTierAndExistingBasketAndOrderLinesAreNotWholesale() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM product_variant WHERE id = '" + legacyVariant + "' AND wholesale_min_qty IS NULL"
+                    + " AND wholesale_price IS NULL AND selling_price = 500 AND is_active")).as("the variant came through unchanged").isEqualTo(1);
+            assertThat(count(s, "SELECT count(*) FROM cart_item WHERE id = '" + legacyCartItem + "' AND NOT wholesale_applied AND qty = 2"))
+                    .isEqualTo(1);
+            assertThat(count(s, "SELECT count(*) FROM customer_order_item WHERE id = '" + legacyOrderItem + "' AND NOT wholesale_applied"))
+                    .isEqualTo(1);
+            assertThat(notNullColumns(s, "cart_item", "wholesale_applied")).isEqualTo(1);
+            assertThat(notNullColumns(s, "customer_order_item", "wholesale_applied")).isEqualTo(1);
+            // The "both or neither" rule lives in the service, so the database accepts a tier on an existing variant.
+            s.execute("UPDATE product_variant SET wholesale_min_qty = 6, wholesale_price = 400 WHERE id = '" + legacyVariant + "'");
+            s.execute("UPDATE product_variant SET wholesale_min_qty = NULL, wholesale_price = NULL WHERE id = '" + legacyVariant + "'");
+        }
+    }
+
+    @Test
+    void v45_existingOrderLinesStartWithNothingReturned() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM customer_order_item WHERE id = '" + legacyOrderItem + "' AND returned_qty = 0"))
+                    .isEqualTo(1);
+            assertThat(notNullColumns(s, "customer_order_item", "returned_qty")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void v46_coopBankIsOffForTheExistingPaymentSettingsRow() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM payment_settings WHERE id = '" + legacySettings + "' AND NOT coop_bank_enabled"))
+                    .isEqualTo(1);
+            assertThat(notNullColumns(s, "payment_settings", "coop_bank_enabled")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void v47_v48_v49_existingOrdersHaveNoDeliveryContactSettlementOrPickupCode() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM customer_order WHERE delivery_contact_phone IS NOT NULL"
+                    + " OR tumaboda_settlement_id IS NOT NULL OR tumaboda_pickup_otp IS NOT NULL"))
+                    .as("legacy orders keep a NULL for all three new optional fields").isZero();
+
+            // The settlement ledger is usable on top of existing orders: a settlement can sweep one up, and the link is a real foreign key.
+            UUID settlement = UUID.randomUUID();
+            s.execute("INSERT INTO tumaboda_settlement (id, settled_at, amount, reference) VALUES ('" + settlement
+                    + "', DATE '2026-10-01', 450.00, 'BANK-REF-1')");
+            try {
+                s.execute("UPDATE customer_order SET tumaboda_settlement_id = '" + settlement + "' WHERE id = '" + bodaOrder + "'");
+                assertThatThrownBy(() -> s.execute("UPDATE customer_order SET tumaboda_settlement_id = '" + UUID.randomUUID()
+                        + "' WHERE id = '" + bodaOrder + "'")).hasMessageContaining("tumaboda_settlement_id");
+            } finally {
+                s.execute("UPDATE customer_order SET tumaboda_settlement_id = NULL WHERE id = '" + bodaOrder + "'");
+                s.execute("DELETE FROM tumaboda_settlement WHERE id = '" + settlement + "'");
+            }
+            s.execute("UPDATE customer_order SET delivery_contact_phone = '254799888777', tumaboda_pickup_otp = '4821' WHERE id = '" + bodaOrder + "'");
+            s.execute("UPDATE customer_order SET delivery_contact_phone = NULL, tumaboda_pickup_otp = NULL WHERE id = '" + bodaOrder + "'");
+        }
+    }
+
+    @Test
+    void v50_deliveryPlacesEnforceTheirRules() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            UUID place = UUID.randomUUID();
+            UUID suggestion = UUID.randomUUID();
+            s.execute("INSERT INTO delivery_place (id, name) VALUES ('" + place + "', 'Kilimani')");
+            try {
+                assertThatThrownBy(() -> s.execute("INSERT INTO delivery_place (id, name) VALUES ('" + UUID.randomUUID() + "', 'KILIMANI')"))
+                        .as("place names are unique ignoring case").hasMessageContaining("uq_delivery_place_name");
+
+                s.execute("INSERT INTO delivery_place_price (place_id, method, price_min, price_max) VALUES ('" + place + "', 'METRO', 100, 200)");
+                assertThatThrownBy(() -> s.execute("INSERT INTO delivery_place_price (place_id, method, price_min, price_max)"
+                        + " VALUES ('" + place + "', 'METRO', 100, 200)")).hasMessageContaining("uq_place_method");
+                assertThatThrownBy(() -> s.execute("INSERT INTO delivery_place_price (place_id, method, price_min, price_max)"
+                        + " VALUES ('" + place + "', 'BODA', 300, 200)")).hasMessageContaining("ck_price_range");
+
+                s.execute("INSERT INTO delivery_place_suggestion (id, name, place_id) VALUES ('" + suggestion + "', 'Kileleshwa', '" + place + "')");
+                assertThat(text(s, "SELECT status FROM delivery_place_suggestion WHERE id = '" + suggestion + "'")).isEqualTo("PENDING");
+            } finally {
+                s.execute("DELETE FROM delivery_place WHERE id = '" + place + "'");
+            }
+            assertThat(count(s, "SELECT count(*) FROM delivery_place_price WHERE place_id = '" + place + "'"))
+                    .as("prices go with their place").isZero();
+            assertThat(count(s, "SELECT count(*) FROM delivery_place_suggestion WHERE id = '" + suggestion + "' AND place_id IS NULL"))
+                    .as("a suggestion outlives the place it was linked to").isEqualTo(1);
+            s.execute("DELETE FROM delivery_place_suggestion WHERE id = '" + suggestion + "'");
+        }
+    }
+
+    @Test
+    void v51_existingPhotosSurviveTheWiderSourceRuleAndAiCleanedIsNowAllowed() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM product_image WHERE id IN ('" + legacyUploadedImage + "', '" + legacyCameraImage
+                    + "') AND source IN ('UPLOAD', 'CAMERA_CAPTURE')")).as("both legacy photos kept their source").isEqualTo(2);
+
+            s.execute("UPDATE product_image SET source = 'AI_CLEANED' WHERE id = '" + legacyCameraImage + "'");
+            s.execute("UPDATE product_image SET source = 'CAMERA_CAPTURE' WHERE id = '" + legacyCameraImage + "'");
+            assertThatThrownBy(() -> s.execute("UPDATE product_image SET source = 'BOGUS' WHERE id = '" + legacyCameraImage + "'"))
+                    .as("the rule is widened, not removed").hasMessageContaining("product_image_source_check");
+
+            UUID batch = UUID.randomUUID();
+            UUID item = UUID.randomUUID();
+            s.execute("INSERT INTO image_cleanup_batch (id, status, images_per_product) VALUES ('" + batch + "', 'IN_PROGRESS', 3)");
+            try {
+                s.execute("INSERT INTO image_cleanup_item (id, batch_id, product_id, product_image_id, reference_image_id)"
+                        + " VALUES ('" + item + "', '" + batch + "', '" + legacyProduct + "', '" + legacyUploadedImage + "', '" + legacyUploadedImage + "')");
+                assertThatThrownBy(() -> s.execute("INSERT INTO image_cleanup_item (id, batch_id, product_id, product_image_id, reference_image_id)"
+                        + " VALUES ('" + UUID.randomUUID() + "', '" + batch + "', '" + UUID.randomUUID() + "', '" + legacyUploadedImage
+                        + "', '" + legacyUploadedImage + "')")).as("an item must point at a real product").hasMessageContaining("product_id");
+                assertThatThrownBy(() -> s.execute("INSERT INTO image_cleanup_item (id, batch_id, product_id, product_image_id, reference_image_id)"
+                        + " VALUES ('" + UUID.randomUUID() + "', '" + UUID.randomUUID() + "', '" + legacyProduct + "', '" + legacyUploadedImage
+                        + "', '" + legacyUploadedImage + "')")).as("and belong to a real batch").hasMessageContaining("batch_id");
+            } finally {
+                s.execute("DELETE FROM image_cleanup_item WHERE batch_id = '" + batch + "'");
+                s.execute("DELETE FROM image_cleanup_batch WHERE id = '" + batch + "'");
+            }
+        }
+    }
+
+    @Test
+    void v52_integrationSettingsStartEmptyAndEachKeyIsStoredOnce() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM integration_setting")).as("no credentials appear from nowhere").isZero();
+            s.execute("INSERT INTO integration_setting (setting_key, value_encrypted) VALUES ('GEMINI_API_KEY', 'ciphertext')");
+            try {
+                assertThatThrownBy(() -> s.execute("INSERT INTO integration_setting (setting_key, value_encrypted) VALUES ('GEMINI_API_KEY', 'other')"))
+                        .hasMessageContaining("integration_setting_pkey");
+            } finally {
+                s.execute("DELETE FROM integration_setting WHERE setting_key = 'GEMINI_API_KEY'");
+            }
+        }
+    }
+
+    @Test
+    void v53_theSupportLineOnTheExistingSettingsRowWasReplacedAndNothingElseOnItTouched() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM payment_settings")).as("still exactly the one row").isEqualTo(1);
+            assertThat(text(s, "SELECT support_whatsapp FROM payment_settings WHERE id = '" + legacySettings + "'")).isEqualTo("0793506900");
+            assertThat(text(s, "SELECT bank_name FROM payment_settings WHERE id = '" + legacySettings + "'"))
+                    .as("the owner's bank details are not part of this change").isEqualTo("Co-operative Bank");
+            assertThat(text(s, "SELECT paybill_number FROM payment_settings WHERE id = '" + legacySettings + "'")).isEqualTo("400200");
         }
     }
 

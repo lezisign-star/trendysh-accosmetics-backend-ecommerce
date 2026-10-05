@@ -127,6 +127,17 @@ public class CheckoutService {
         if (cartItems.isEmpty()) {
             throw new IllegalStateException("Cannot check out an empty cart");
         }
+        // Demo-catalogue products are never for sale (see CartService.isPurchasable). The controller already
+        // refuses them while pricing the basket; this is the same rule where the order is actually created, so
+        // no caller of this method can ever turn a demo product into a real order and a real payment.
+        for (CartItem cartItem : cartItems) {
+            ProductVariant variant = cartItem.getVariant();
+            if (variant != null && variant.getProduct() != null && variant.getProduct().isMockData()) {
+                throw new UnprocessableException(
+                        com.nbh.backend.cart.service.CartService.demoProductMessage(variant.getProduct().getName())
+                                + " Please remove it from your basket and try again.");
+            }
+        }
         // Every checkout holds stock for the whole payment window, and the public endpoint has no
         // login, so without a limit one person could tie up the shelf with orders they never pay
         // for. Counting by phone OR email means changing just one of them doesn't get round it;
@@ -201,6 +212,17 @@ public class CheckoutService {
                     targets.add(new ReservationTarget(cartItem, component.variant(),
                             component.qtyPerKit().multiply(cartItem.getQty()), true));
                 }
+            }
+        }
+        // The same demo rule, one level down: a kit line expands into its components, and the line's own product
+        // being real says nothing about them (a REAL kit can be assembled from demo variants while demo mode is on,
+        // since the kit picker then only offers demo ones). Checked before anything is reserved or charged.
+        for (ReservationTarget target : targets) {
+            if (target.variant().getProduct() != null && target.variant().getProduct().isMockData()) {
+                throw new UnprocessableException(
+                        com.nbh.backend.cart.service.CartService.demoProductMessage(
+                                target.cartItem().getVariant().getProduct().getName())
+                                + " Please remove it from your basket and try again.");
             }
         }
         targets.sort(java.util.Comparator.comparing(t -> t.variant().getId()));

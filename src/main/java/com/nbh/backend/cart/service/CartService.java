@@ -102,6 +102,10 @@ public class CartService {
         }
         Refreshed refreshed = refreshPrices(cart);
         for (CartItem item : refreshed.items()) {
+            if (item.getVariant().getProduct().isMockData()) {
+                throw new UnprocessableException(demoProductMessage(item.getProductNameSnapshot())
+                        + " Please remove it from your basket and try again.");
+            }
             if (!isPurchasable(item.getVariant())) {
                 throw new UnprocessableException(item.getProductNameSnapshot()
                         + " is no longer available. Please remove it from your basket and try again.");
@@ -222,13 +226,27 @@ public class CartService {
      * addable to a cart that already had a reference to it (e.g. reopened from local storage).
      */
     private void requireSellable(ProductVariant variant) {
+        if (variant.getProduct().isMockData()) {
+            throw new UnprocessableException(demoProductMessage(variant.getProduct().getName()));
+        }
         if (!isPurchasable(variant)) {
             throw new IllegalArgumentException("This item is no longer available");
         }
     }
 
+    /**
+     * Sellable, published, and REAL. Demo-catalogue products (see MockDataSeederService) are never for sale,
+     * whether demo mode is on or off: they exist to show the shop populated, and an order for one would take a
+     * real payment for something that does not exist. Real products stay purchasable whatever the demo state is.
+     */
     private static boolean isPurchasable(ProductVariant variant) {
-        return variant.isSellable() && variant.getProduct().isPublished() && !variant.getProduct().isDeleted();
+        return variant.isSellable() && variant.getProduct().isPublished() && !variant.getProduct().isDeleted()
+                && !variant.getProduct().isMockData();
+    }
+
+    /** What a shopper is told when a demo-catalogue product is in their basket or they try to add one. */
+    public static String demoProductMessage(String productName) {
+        return productName + " is a demo product and can't be ordered.";
     }
 
     /**

@@ -1,5 +1,55 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-05 — demo products can't be bought; V44-V53 now have legacy-data upgrade tests
+
+Pre-push Opus audit done and its findings fixed (below). Full suite on a fresh DB: **656 tests, 0 failures** (91 report
+classes; the total was re-counted from the surefire reports on disk, not just Maven's summary).
+
+- **Demo-catalogue products are never for sale** (owner: "they should not, but they should be able to buy the real
+  products"). Before this, nothing on the buying path looked at `is_mock_data`, so with demo mode on a real shopper
+  could have paid real M-PESA money for a product that doesn't exist. Now `CartService.isPurchasable` (the one
+  sellability rule used when adding a line, changing a quantity, pricing the basket at checkout, and for each line's
+  `available` flag) also requires `!isMockData`; adding one answers **422 "<name> is a demo product and can't be
+  ordered."**, a demo line already in a basket shows `available:false` and blocks checkout with the same message, and
+  `CheckoutService.checkout` repeats the check itself where the order is actually created (the controller's pricing
+  step is not the only possible caller). It also checks the COMPONENTS a kit line expands into (found by the pre-push
+  audit: a REAL kit can be assembled from demo variants while demo mode is on, because the kit picker then only offers
+  demo ones, and the line-level check alone would have let it through; `KitService.saveKit` itself still allows
+  creating such a kit, checkout is what refuses it). Real products are untouched by demo state: they stay purchasable
+  whether demo mode is on or off.
+  - **Consequence to know about:** demo mode is derived ("any demo product published") and is strictly exclusive, so
+    while it is ON the storefront browse and the admin Orders list show ONLY demo data. A real shopper can still reach
+    a real product by link or from a basket and buy it (verified), but that real order stays out of the Orders list
+    until demo data is turned off. The Settings -> Demo data card now says so. (The hiding itself is the earlier strict
+    gate; it was not re-tested in this change.)
+  - Tests: `DemoProductsNotForSaleIntegrationTest` (5: refused on add with the message; a line that became demo is
+    unavailable and blocks checkout; one demo line stops the whole checkout and creates no order; a real product checks
+    out while demo mode is on and the order is real; and when it's off), plus a unit test in `CheckoutServiceUnitTest`
+    for the in-service guard. Also run live against a scratch copy of the dev data: demo add 422, real add + checkout
+    200 (order `is_mock_data=false`), browse showed only the demo card, the real product page still 200 by direct link.
+- **`MigrationUpgradePathTest` now covers V44-V53** (it previously stopped at V43). It still seeds legacy-shaped rows at
+  V28, now also a product with a variant and two photos (UPLOAD / CAMERA_CAPTURE), a basket with a line, an order line,
+  and a `payment_settings` row carrying the OLD support number, then migrates to latest and asserts what happened to
+  each: V44 wholesale columns empty/false on existing variants and lines; V45 `returned_qty` 0; V46 co-op off; V47-V49
+  new order fields NULL and the settlement link a real FK; V50 place names unique ignoring case, price-range and
+  one-row-per-method rules, prices cascade, a suggestion survives its place; V51 legacy photos keep their source, the
+  widened source rule accepts `AI_CLEANED` but not junk, cleanup tables enforce their FKs; V52 table starts empty, key
+  unique; V53 the existing row's support number is replaced and its bank details are not. Note the settings row does
+  not exist at V28 in a fresh schema (the app creates it on first read), so the test inserts one, as production has.
+  Also asserts no migration flags an existing product as demo (that would now make it unbuyable) and that cleanup items
+  need both a real product and a real batch.
+- **Pre-push Opus audit** (read-only): safe to push; its findings were fixed or checked: the kit-component gap above;
+  the migration-test gaps above; one claim was wrong (the Settings note DOES have dark-mode colours; `styles.css` maps
+  `bg-amber-50`/`text-amber-900`).
+- **Owner checks (not done by the assistant, no production database access here):**
+  1. Confirm demo mode is OFF in production before/after this deploys: with it ON every product shoppers can see refuses
+     with a 422. (The live storefront was showing the real catalogue when this was pushed, which is the OFF state.)
+  2. If demo mode was ever on in production, look for real orders that already contain demo lines (payment confirmation
+     does not re-check them): `SELECT o.order_no, o.status, o.created_at FROM customer_order o JOIN customer_order_item i
+     ON i.order_id = o.id JOIN product_variant v ON v.id = i.variant_id JOIN product p ON p.id = v.product_id WHERE
+     p.is_mock_data AND NOT o.is_mock_data;`
+  3. Optional follow-up: a "demo mode on: N real orders hidden" banner for staff.
+
 ## 2026-10-03 — live updates can't stampede any more: cheap repeat downloads, fair connection budgets
 
 Pre-push Opus audit done; its findings are fixed (see "Audit hardening" below). Full suite on a fresh DB after the

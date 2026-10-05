@@ -117,6 +117,43 @@ class CheckoutServiceUnitTest {
         assertThat(checkoutService.checkout(SESSION_ID, request()).order().getOrderNo()).isEqualTo("SO-TEST-000001");
     }
 
+    @Test
+    void aBasketHoldingADemoProductIsRefusedBeforeAnyOrderOrStockHoldExists() {
+        // The controller refuses demo products while pricing the basket; this is the same rule where the order is
+        // created, so no caller of checkout() can turn a demo product into a real order and a real payment.
+        CartItem real = cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
+        CartItem demo = cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
+        demo.getVariant().getProduct().setName("Chrome Gel Polish");
+        demo.getVariant().getProduct().setMockData(true);
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(real, demo));
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
+                .isInstanceOf(com.nbh.backend.common.exception.UnprocessableException.class)
+                .hasMessageContaining("Chrome Gel Polish is a demo product and can't be ordered");
+        verify(orderRepository, never()).save(any());
+        verify(reservationService, never()).reserve(any(), any(), any(), any(), any(), any());
+        verify(paymentRecordRepository, never()).save(any());
+    }
+
+    @Test
+    void aRealKitMadeOfDemoComponentsIsRefusedBeforeAnythingIsReserved() {
+        // The kit line's own product is real, so the line-level guard passes; the demo rule must also hold for the
+        // components the kit expands into (a real kit can be assembled from demo variants while demo mode is on).
+        CartItem kitLine = cartItem(new BigDecimal("900.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
+        kitLine.getVariant().getProduct().setName("Nail Tech Starter Kit");
+        ProductVariant demoComponent = cartItem(new BigDecimal("300.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false).getVariant();
+        demoComponent.getProduct().setMockData(true);
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
+        when(kitService.componentsForVariant(kitLine.getVariant().getId()))
+                .thenReturn(List.of(new com.nbh.backend.kits.service.KitService.KitComponentLine(demoComponent, BigDecimal.ONE)));
+
+        assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
+                .isInstanceOf(com.nbh.backend.common.exception.UnprocessableException.class)
+                .hasMessageContaining("Nail Tech Starter Kit is a demo product and can't be ordered");
+        verify(reservationService, never()).reserve(any(), any(), any(), any(), any(), any());
+        verify(paymentRecordRepository, never()).save(any());
+    }
+
     // Checkout only ever reads mode()/paymentWindow() from this, never the bank-detail accessors,
     // so the settings repository doesn't need a real row backing it for these tests.
     private static BankPaymentSettings bankSettings(BankPaymentSettings.CollectionMode mode) {
