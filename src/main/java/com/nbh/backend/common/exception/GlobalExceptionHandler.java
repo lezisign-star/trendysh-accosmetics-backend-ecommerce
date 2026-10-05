@@ -186,6 +186,14 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.BAD_REQUEST, "Invalid value for parameter '" + e.getName() + "'");
     }
 
+    /** Same shadowing risk — a required @RequestParam left out (e.g. GET /stock/balance with no variantId) is the caller's mistake: 400, not a 500. */
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    public ResponseEntity<Object> handleMissingParameter(
+            org.springframework.web.bind.MissingServletRequestParameterException e) {
+        log.warn("400: missing parameter '{}'", e.getParameterName());
+        return body(HttpStatus.BAD_REQUEST, "Missing required parameter '" + e.getParameterName() + "'");
+    }
+
     /** Same shadowing risk — e.g. a GET against a POST-only endpoint. Spring's own default is 405; keep it that way. */
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<Object> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {

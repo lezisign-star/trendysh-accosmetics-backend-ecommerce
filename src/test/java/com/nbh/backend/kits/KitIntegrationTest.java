@@ -282,11 +282,11 @@ class KitIntegrationTest {
     }
 
     @Test
-    void aStarvedComponentFailsCheckoutNamingTheKitNotTheInternalSku() throws Exception {
+    void aComponentTakenByAnotherOrderFailsCheckoutNamingTheKitNotTheInternalSku() throws Exception {
         String categoryId = newCategory();
         String variantA = newComponentVariant(new BigDecimal("500"));
-        // Only 1 unit on hand, but the kit needs 2 of it per kit ordered.
-        JsonNode po = receiveStock(Map.of(variantA, new BigDecimal("1")));
+        // Two on hand and the kit needs 2 per kit: exactly one whole kit can be made.
+        JsonNode po = receiveStock(Map.of(variantA, new BigDecimal("2")));
         String componentSku = null;
         for (JsonNode line : po.get("lines")) {
             if (line.get("variantId").asText().equals(variantA)) {
@@ -300,15 +300,72 @@ class KitIntegrationTest {
         String kitVariantId = kit.get("variantId").asText();
         String kitName = kit.get("name").asText();
 
-        String sessionId = "kit-starve-session-" + UUID.randomUUID();
-        // Adding to cart is unaffected — the courtesy check is bypassed entirely for kits.
-        cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
+        // Two shoppers each put that one kit in their cart: both adds pass, it is still available...
+        String first = "kit-starve-first-" + UUID.randomUUID();
+        String second = "kit-starve-second-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", first);
+        cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", second);
 
-        MvcResult checkoutResult = cartRaw(post("/api/v1/checkout"), checkoutRequestBody("kit-starve-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
+        // ...the second one checks out and takes it...
+        MvcResult takenResult = cartRaw(post("/api/v1/checkout"), checkoutRequestBody("kit-taken-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), second);
+        assertThat(takenResult.getResponse().getStatus()).isEqualTo(200);
+
+        // ...so the first one finds the components gone, and is told about the kit, not a SKU.
+        MvcResult checkoutResult = cartRaw(post("/api/v1/checkout"), checkoutRequestBody("kit-starve-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), first);
         assertThat(checkoutResult.getResponse().getStatus()).isEqualTo(409);
         String responseBody = checkoutResult.getResponse().getContentAsString();
         assertThat(responseBody).contains(kitName);
         assertThat(responseBody).doesNotContain(componentSku);
+    }
+
+    @Test
+    void aKitWhoseComponentsCannotMakeAWholeKitIsOutOfStockEverywhereTheShopperLooks() throws Exception {
+        String categoryId = newCategory();
+        String variantA = newComponentVariant(new BigDecimal("500"));
+        // One on hand, but each kit needs 2: not even one whole kit can be made.
+        receiveStock(Map.of(variantA, new BigDecimal("1")));
+        JsonNode kit = createKit(categoryId, newProfession(), "For a working Lash Tech",
+                List.of(variantA), List.of("2"), "800");
+        String kitVariantId = kit.get("variantId").asText();
+        String kitName = kit.get("name").asText();
+
+        // The browse grid and the product page say so...
+        JsonNode card = kitCardInSearch(kitName);
+        assertThat(card.get("inStock").asBoolean()).isFalse();
+        assertThat(card.get("availableQty").decimalValue()).isEqualByComparingTo("0");
+        // ...so does the "Shop by profession" list...
+        assertThat(findKitByVariantId(fetchPublicKits(), kitVariantId).get("inStock").asBoolean()).isFalse();
+        // ...and it cannot be put in a cart, instead of failing at the last step of checkout.
+        String sessionId = "kit-soldout-session-" + UUID.randomUUID();
+        MvcResult add = cartRaw(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
+        assertThat(add.getResponse().getStatus()).isEqualTo(400);
+        assertThat(add.getResponse().getContentAsString()).contains("out of stock");
+
+        // Stock arrives (3 more: 4 on hand = 2 whole kits) and it is buyable again, with the right count.
+        receiveStock(Map.of(variantA, new BigDecimal("3")));
+        JsonNode restocked = kitCardInSearch(kitName);
+        assertThat(restocked.get("inStock").asBoolean()).isTrue();
+        assertThat(restocked.get("availableQty").decimalValue()).isEqualByComparingTo("2");
+        assertThat(findKitByVariantId(fetchPublicKits(), kitVariantId).get("inStock").asBoolean()).isTrue();
+        JsonNode cart = cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":2}", sessionId);
+        assertThat(cart.get("items")).hasSize(1);
+        // The cart line itself reports what is left, so the cart can offer "remove" before checkout refuses it.
+        assertThat(cart.get("items").get(0).get("stockLeft").decimalValue()).isEqualByComparingTo("2");
+        // A third kit would need 6 components and only 4 are on the shelf.
+        MvcResult tooMany = cartRaw(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
+        assertThat(tooMany.getResponse().getStatus()).isEqualTo(400);
+        assertThat(tooMany.getResponse().getContentAsString()).contains("Only 2 of");
+    }
+
+    private JsonNode kitCardInSearch(String kitName) throws Exception {
+        MvcResult result = mvc.perform(get("/api/v1/catalog/variants").param("q", kitName)).andReturn();
+        assertThat(result.getResponse().getStatus()).isEqualTo(200);
+        for (JsonNode v : json.readTree(result.getResponse().getContentAsString()).get("content")) {
+            if (kitName.equals(v.get("productName").asText())) {
+                return v;
+            }
+        }
+        throw new AssertionError("kit should appear in the storefront search: " + kitName);
     }
 
     @Test

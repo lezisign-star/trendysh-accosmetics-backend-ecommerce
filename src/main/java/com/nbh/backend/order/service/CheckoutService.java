@@ -121,7 +121,7 @@ public class CheckoutService {
         Cart cart = cartRepository.findWithLockBySessionId(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("No cart for this session"));
         if (cart.getStatus() != Cart.CartStatus.ACTIVE) {
-            throw new ConflictException("This basket has already been checked out");
+            throw new ConflictException("This cart has already been checked out");
         }
         List<CartItem> cartItems = cartItemRepository.findByCartId(cart.getId());
         if (cartItems.isEmpty()) {
@@ -135,7 +135,7 @@ public class CheckoutService {
             if (variant != null && variant.getProduct() != null && variant.getProduct().isMockData()) {
                 throw new UnprocessableException(
                         com.nbh.backend.cart.service.CartService.demoProductMessage(variant.getProduct().getName())
-                                + " Please remove it from your basket and try again.");
+                                + " Please remove it from your cart and try again.");
             }
         }
         // Every checkout holds stock for the whole payment window, and the public endpoint has no
@@ -222,7 +222,7 @@ public class CheckoutService {
                 throw new UnprocessableException(
                         com.nbh.backend.cart.service.CartService.demoProductMessage(
                                 target.cartItem().getVariant().getProduct().getName())
-                                + " Please remove it from your basket and try again.");
+                                + " Please remove it from your cart and try again.");
             }
         }
         targets.sort(java.util.Comparator.comparing(t -> t.variant().getId()));
@@ -249,7 +249,7 @@ public class CheckoutService {
                         cartItem.getVariant().getProduct().getName()
                                 + (cartItem.getVariant().getVariantName().equalsIgnoreCase("Default")
                                         ? "" : " (" + cartItem.getVariant().getVariantName() + ")")
-                                + " just went out of stock — please update your basket");
+                                + " just went out of stock — please update your cart");
             }
             if (target.isKitComponent()) {
                 componentsByCartItem.computeIfAbsent(target.cartItem(), k -> new java.util.ArrayList<>())

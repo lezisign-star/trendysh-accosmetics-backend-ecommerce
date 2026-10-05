@@ -7,12 +7,17 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface KitRepository extends JpaRepository<Kit, UUID> {
 
     Optional<Kit> findByVariantId(UUID variantId);
+
+    /** Batched, for the catalogue's card page (which kits are on it) — avoids an N+1 per kit card. */
+    List<Kit> findByVariantIdIn(Collection<UUID> variantIds);
 
     boolean existsByVariantId(UUID variantId);
 

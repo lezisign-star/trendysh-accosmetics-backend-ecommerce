@@ -57,11 +57,12 @@ public class KitService {
     private final CategoryRepository categoryRepository;
     private final ProductImageRepository imageRepository;
     private final ProfessionRepository professions;
+    private final KitAvailabilityService kitAvailability;
 
     public KitService(KitRepository kits, KitComponentRepository componentRepository,
                        ProductVariantRepository variantRepository, ProductRepository productRepository,
                        CategoryRepository categoryRepository, ProductImageRepository imageRepository,
-                       ProfessionRepository professions) {
+                       ProfessionRepository professions, KitAvailabilityService kitAvailability) {
         this.kits = kits;
         this.componentRepository = componentRepository;
         this.variantRepository = variantRepository;
@@ -69,6 +70,7 @@ public class KitService {
         this.categoryRepository = categoryRepository;
         this.imageRepository = imageRepository;
         this.professions = professions;
+        this.kitAvailability = kitAvailability;
     }
 
     // ---- admin CRUD ----
@@ -239,6 +241,7 @@ public class KitService {
             }
         }
         Map<UUID, String> imageByProduct = coverImageByProduct(productIds);
+        Map<UUID, BigDecimal> wholeKits = kitAvailability.wholeKitsAvailable(active, componentsByKit);
 
         return active.stream()
                 // A kit with NOTHING left purchasable disappears from the storefront entirely — the
@@ -246,7 +249,8 @@ public class KitService {
                 // A kit can never legitimately have zero components (creation requires at least
                 // one), so an absent map entry here means every one of them is unavailable right now.
                 .filter(k -> componentsByKit.containsKey(k.getId()))
-                .map(k -> toPublicDto(k, componentsByKit.get(k.getId()), imageByProduct))
+                .map(k -> toPublicDto(k, componentsByKit.get(k.getId()), imageByProduct,
+                        wholeKits.getOrDefault(k.getVariant().getId(), BigDecimal.ZERO).signum() > 0))
                 .toList();
     }
 
@@ -264,7 +268,8 @@ public class KitService {
 
     public record KitComponentLine(ProductVariant variant, BigDecimal qtyPerKit) {}
 
-    private KitPublicDto toPublicDto(Kit k, List<KitComponent> comps, Map<UUID, String> imageByProduct) {
+    private KitPublicDto toPublicDto(Kit k, List<KitComponent> comps, Map<UUID, String> imageByProduct,
+                                      boolean inStock) {
         ProductVariant variant = k.getVariant();
         Product product = variant.getProduct();
         List<KitPublicDto.Item> items = comps.stream().map(c -> {
@@ -276,12 +281,13 @@ public class KitService {
         BigDecimal sum = items.stream().map(KitPublicDto.Item::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal packagePrice = variant.getSellingPrice() == null ? BigDecimal.ZERO : variant.getSellingPrice();
         Profession profession = k.getProfession();
-        // Real availability is never checked here (a kit holds no stock of its own) — checkout is
-        // authoritative, reserving each real component; see ProductVariant#isKit's javadoc.
+        // A kit holds no stock of its own; it is in stock while every one of its (purchasable) components
+        // can still make up at least one whole kit — see KitAvailabilityService. Checkout stays the
+        // authority (it reserves each component), this only keeps the shop from offering what is gone.
         return new KitPublicDto(variant.getId(), product.getId(), product.getSlug(), product.getName(),
                 profession.getId(), profession.getLabel(), profession.getSlug(), k.getDescription(),
                 imageByProduct.get(product.getId()),
-                packagePrice, sum, sum.subtract(packagePrice).max(BigDecimal.ZERO), true, items);
+                packagePrice, sum, sum.subtract(packagePrice).max(BigDecimal.ZERO), inStock, items);
     }
 
     // ---- professions (kit form's dropdown + inline "+ New" quick-add) ----

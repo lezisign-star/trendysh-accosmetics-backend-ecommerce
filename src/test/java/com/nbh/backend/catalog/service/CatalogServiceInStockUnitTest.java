@@ -4,6 +4,7 @@ import com.nbh.backend.catalog.dto.CatalogVariantDetailDto;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.*;
+import com.nbh.backend.kits.service.KitAvailabilityService;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class CatalogServiceInStockUnitTest {
     @Mock private ProductViewEventRepository viewEventRepository;
     @Mock private CategoryRepository categoryRepository;
     @Mock private StockAvailabilityService availabilityService;
+    @Mock private KitAvailabilityService kitAvailability;
     @Mock private PromoCampaignService promoCampaignService;
 
     private CatalogService catalogService;
@@ -56,7 +58,7 @@ class CatalogServiceInStockUnitTest {
         org.mockito.Mockito.lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         catalogService = new CatalogService(productRepository, variantRepository, imageRepository,
                 reviewRepository, saleEventRepository, viewEventRepository,
-                categoryRepository, availabilityService, new EffectivePriceResolver(Clock.systemUTC()),
+                categoryRepository, availabilityService, kitAvailability, new EffectivePriceResolver(Clock.systemUTC()),
                 promoCampaignService, Clock.systemUTC());
 
         product = new Product();
@@ -103,6 +105,30 @@ class CatalogServiceInStockUnitTest {
 
         assertThat(detail.card().inStock()).isFalse();
         assertThat(detail.siblings()).allMatch(c -> !c.inStock());
+    }
+
+    @Test
+    void aKitIsInStockOnlyWhileItsComponentsCanStillMakeUpAWholeKit() {
+        // A kit holds no stock of its own. It used to be reported "in stock" always, so a sold-out kit
+        // could be put in a cart and was only refused at the last step of checkout.
+        ProductVariant makeable = variant("KIT-A");
+        makeable.setKit(true);
+        ProductVariant soldOut = variant("KIT-B");
+        soldOut.setKit(true);
+        when(variantRepository.findById(makeable.getId())).thenReturn(Optional.of(makeable));
+        when(variantRepository.findByProductIdAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNullOrderBySortOrderAsc(product.getId()))
+                .thenReturn(List.of(makeable, soldOut));
+        when(availabilityService.available(anyCollection())).thenReturn(Map.of());
+        when(kitAvailability.wholeKitsAvailable(anyCollection())).thenReturn(Map.of(
+                makeable.getId(), new BigDecimal("3"), soldOut.getId(), BigDecimal.ZERO));
+
+        CatalogVariantDetailDto detail = catalogService.variantDetail(makeable.getId());
+
+        assertThat(detail.card().inStock()).isTrue();
+        assertThat(detail.card().availableQty()).isEqualByComparingTo("3");
+        assertThat(detail.siblings())
+                .filteredOn(c -> c.variantId().equals(soldOut.getId()))
+                .allMatch(c -> !c.inStock() && c.availableQty().signum() == 0);
     }
 
     private ProductVariant variant(String sku) {

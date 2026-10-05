@@ -3,6 +3,7 @@ package com.nbh.backend.catalog.service;
 import com.nbh.backend.catalog.dto.*;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
+import com.nbh.backend.kits.service.KitAvailabilityService;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.data.domain.Page;
@@ -35,6 +36,7 @@ public class CatalogService {
     private final ProductViewEventRepository viewEventRepository;
     private final CategoryRepository categoryRepository;
     private final StockAvailabilityService availabilityService;
+    private final KitAvailabilityService kitAvailability;
     private final EffectivePriceResolver priceResolver;
     private final PromoCampaignService promoCampaignService;
     private final Clock clock;
@@ -47,6 +49,7 @@ public class CatalogService {
                            ProductViewEventRepository viewEventRepository,
                            CategoryRepository categoryRepository,
                            StockAvailabilityService availabilityService,
+                           KitAvailabilityService kitAvailability,
                            EffectivePriceResolver priceResolver,
                            PromoCampaignService promoCampaignService,
                            Clock clock) {
@@ -58,6 +61,7 @@ public class CatalogService {
         this.viewEventRepository = viewEventRepository;
         this.categoryRepository = categoryRepository;
         this.availabilityService = availabilityService;
+        this.kitAvailability = kitAvailability;
         this.priceResolver = priceResolver;
         this.promoCampaignService = promoCampaignService;
         this.clock = clock;
@@ -81,7 +85,7 @@ public class CatalogService {
         Map<UUID, String> imageByVariant = imageByVariant(pageVariants);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(variantIds);
-        Map<UUID, BigDecimal> availableByVariant = availabilityService.available(variantIds);
+        Map<UUID, BigDecimal> availableByVariant = availability(pageVariants);
         PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         return page.map(v -> toCard(v, activeCampaign, sellableCountByProduct, imageByVariant, ratingByProduct,
@@ -108,7 +112,7 @@ public class CatalogService {
         Map<UUID, String> imageByVariant = imageByVariant(siblings);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(siblingIds);
-        Map<UUID, BigDecimal> availableByVariant = availabilityService.available(siblingIds);
+        Map<UUID, BigDecimal> availableByVariant = availability(siblings);
         PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         List<CatalogVariantCardDto> siblingCards = siblings.stream()
@@ -161,12 +165,27 @@ public class CatalogService {
                 v.getId(), p.getId(), p.getSlug(), p.getName(), variantName, displayName,
                 imageByVariant.get(v.getId()), categoryIds, categoryIds.isEmpty() ? null : categoryIds.get(0),
                 price.effectivePrice(), price.originalPrice(), price.onDeal(), price.dealEndsAt(),
-                v.isKit() || availableQty.signum() > 0,
+                availableQty.signum() > 0,
                 p.isPopular(), p.isNewArrival(),
                 rating != null ? rating.getAvgRating() : 0.0, rating != null ? rating.getReviewCount() : 0L,
                 soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO),
-                v.isKit() ? BigDecimal.ZERO : availableQty, v.getSku(), p.getDescription(),
+                availableQty, v.getSku(), p.getDescription(),
                 (int) Math.max(0, sellableCount - 1), v.getWholesaleMinQty(), v.getWholesalePrice());
+    }
+
+    /**
+     * What each variant on a page can sell right now. A plain variant sells what its own stock holds; a kit
+     * holds none, so it sells however many whole kits its components can still make up. Without that, every
+     * kit read "in stock" and a sold-out one was only refused at the last step of checkout.
+     */
+    private Map<UUID, BigDecimal> availability(List<ProductVariant> variants) {
+        List<UUID> ids = variants.stream().map(ProductVariant::getId).toList();
+        Map<UUID, BigDecimal> result = new HashMap<>(availabilityService.available(ids));
+        List<UUID> kitVariantIds = variants.stream().filter(ProductVariant::isKit).map(ProductVariant::getId).toList();
+        if (!kitVariantIds.isEmpty()) {
+            result.putAll(kitAvailability.wholeKitsAvailable(kitVariantIds));
+        }
+        return result;
     }
 
     private Map<UUID, Long> sellableVariantCountByProduct(List<UUID> productIds) {

@@ -13,6 +13,7 @@ import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PromoCampaignService;
 import com.nbh.backend.common.exception.PriceChangedException;
 import com.nbh.backend.common.exception.UnprocessableException;
+import com.nbh.backend.kits.service.KitAvailabilityService;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -41,6 +42,7 @@ public class CartService {
     private final CartItemRepository cartItemRepository;
     private final ProductVariantRepository variantRepository;
     private final StockAvailabilityService availabilityService;
+    private final KitAvailabilityService kitAvailability;
     private final EffectivePriceResolver priceResolver;
     private final PromoCampaignService promoCampaignService;
 
@@ -48,12 +50,14 @@ public class CartService {
                         CartItemRepository cartItemRepository,
                         ProductVariantRepository variantRepository,
                         StockAvailabilityService availabilityService,
+                        KitAvailabilityService kitAvailability,
                         EffectivePriceResolver priceResolver,
                         PromoCampaignService promoCampaignService) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.variantRepository = variantRepository;
         this.availabilityService = availabilityService;
+        this.kitAvailability = kitAvailability;
         this.priceResolver = priceResolver;
         this.promoCampaignService = promoCampaignService;
     }
@@ -104,11 +108,11 @@ public class CartService {
         for (CartItem item : refreshed.items()) {
             if (item.getVariant().getProduct().isMockData()) {
                 throw new UnprocessableException(demoProductMessage(item.getProductNameSnapshot())
-                        + " Please remove it from your basket and try again.");
+                        + " Please remove it from your cart and try again.");
             }
             if (!isPurchasable(item.getVariant())) {
                 throw new UnprocessableException(item.getProductNameSnapshot()
-                        + " is no longer available. Please remove it from your basket and try again.");
+                        + " is no longer available. Please remove it from your cart and try again.");
             }
         }
         BigDecimal subtotal = refreshed.items().stream()
@@ -116,7 +120,7 @@ public class CartService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         if (expectedSubtotal != null && expectedSubtotal.compareTo(subtotal) != 0) {
             throw new PriceChangedException("Some prices changed while you were checking out. We've updated your"
-                    + " basket: please look over the new total and place your order again.");
+                    + " cart: please look over the new total and place your order again.");
         }
     }
 
@@ -258,12 +262,12 @@ public class CartService {
     private static final BigDecimal LOW_STOCK_THRESHOLD = new BigDecimal("5");
 
     private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty) {
-        if (variant.isKit()) {
-            // A kit holds no StockBalance of its own — the real stock lives on its components, and
-            // real availability is enforced at checkout by reserving each of those instead.
-            return;
-        }
-        BigDecimal available = availabilityService.available(variant.getId());
+        // A kit holds no StockBalance of its own — what it can sell is however many whole kits its components
+        // can still make up. Checkout still reserves each component and is the final word.
+        BigDecimal available = variant.isKit()
+                ? kitAvailability.wholeKitsAvailable(java.util.List.of(variant.getId()))
+                        .getOrDefault(variant.getId(), BigDecimal.ZERO)
+                : availabilityService.available(variant.getId());
         if (available.compareTo(requestedQty) >= 0) {
             return;
         }
@@ -291,11 +295,25 @@ public class CartService {
      */
     private CartDto toDto(Cart cart) {
         Refreshed refreshed = refreshPrices(cart);
+        Map<UUID, BigDecimal> stockLeft = stockLeftFor(refreshed.items());
         List<CartItemDto> items = refreshed.items().stream()
                 .map(item -> CartItemDto.from(item, isPurchasable(item.getVariant()),
+                        stockLeft.getOrDefault(item.getVariant().getId(), BigDecimal.ZERO),
                         refreshed.changedFrom().get(item.getId())))
                 .toList();
         return CartDto.from(cart, items);
+    }
+
+    /** What each line's variant can sell right now: its own stock, or for a kit the whole kits its components can make. */
+    private Map<UUID, BigDecimal> stockLeftFor(List<CartItem> items) {
+        List<ProductVariant> variants = items.stream().map(CartItem::getVariant).distinct().toList();
+        Map<UUID, BigDecimal> result = new java.util.HashMap<>(availabilityService.available(
+                variants.stream().map(ProductVariant::getId).toList()));
+        List<UUID> kitIds = variants.stream().filter(ProductVariant::isKit).map(ProductVariant::getId).toList();
+        if (!kitIds.isEmpty()) {
+            result.putAll(kitAvailability.wholeKitsAvailable(kitIds));
+        }
+        return result;
     }
 
     private record Refreshed(List<CartItem> items, Map<UUID, BigDecimal> changedFrom) {}

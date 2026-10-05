@@ -10,6 +10,7 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PromoCampaignService;
+import com.nbh.backend.kits.service.KitAvailabilityService;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +42,7 @@ class CartServiceUnitTest {
     @Mock private CartItemRepository cartItemRepository;
     @Mock private ProductVariantRepository variantRepository;
     @Mock private StockAvailabilityService availabilityService;
+    @Mock private KitAvailabilityService kitAvailability;
     @Mock private PromoCampaignService promoCampaignService;
 
     private CartService cartService;
@@ -56,7 +58,7 @@ class CartServiceUnitTest {
         // price is what should end up in unitPriceSnapshot, same as before this dependency existed.
         lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         cartService = new CartService(cartRepository, cartItemRepository, variantRepository,
-                availabilityService, new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService);
+                availabilityService, kitAvailability, new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -161,5 +163,33 @@ class CartServiceUnitTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Only 3 of Gel polish (Red) left");
         verify(cartItemRepository, never()).save(any());
+    }
+
+    private void variantIsAKitMaking(String wholeKits) {
+        variant.setKit(true);
+        when(kitAvailability.wholeKitsAvailable(List.of(variant.getId())))
+                .thenReturn(java.util.Map.of(variant.getId(), new BigDecimal(wholeKits)));
+    }
+
+    @Test
+    void aKitWhoseComponentsAreSoldOutCannotBeAddedToTheCart() {
+        variantIsAKitMaking("0");
+
+        // Kits used to skip this check entirely, so a sold-out kit went into the cart and was only
+        // refused at the last step of checkout.
+        assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), BigDecimal.ONE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Gel polish (Red) is out of stock");
+        verify(cartItemRepository, never()).save(any());
+        verifyNoInteractions(availabilityService);
+    }
+
+    @Test
+    void aKitIsLimitedByHowManyWholeKitsItsComponentsCanStillMakeUp() {
+        variantIsAKitMaking("2");
+
+        assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), new BigDecimal("3")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Only 2 of Gel polish (Red) left");
     }
 }

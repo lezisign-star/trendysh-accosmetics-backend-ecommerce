@@ -235,6 +235,14 @@ class StockInsightsIntegrationTest {
     }
 
     @Test
+    void aMissingRequiredParameterIsTheCallersMistakeNotAServerError() throws Exception {
+        // GET /stock/balance needs ?variantId=. Leaving it out used to surface as a 500 "unexpected error".
+        MvcResult missing = call(get("/api/v1/stock/balance"), null, token);
+        assertThat(missing.getResponse().getStatus()).isEqualTo(400);
+        assertThat(missing.getResponse().getContentAsString()).contains("variantId");
+    }
+
+    @Test
     void summaryCountsWhatNeedsAttention() throws Exception {
         UUID[] ids = newProduct("Forecast Summary " + UUID.randomUUID().toString().substring(0, 8), true, 4);
         sell(ids[0], ids[1], 30, 4);

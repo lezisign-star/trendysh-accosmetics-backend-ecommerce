@@ -108,9 +108,9 @@ public class ProductVariant extends BaseEntity {
     /**
      * True for the one variant that represents an admin-curated {@code Kit} — see that package's
      * javadoc. A kit variant holds no {@code StockBalance} of its own (the real stock lives on its
-     * components), so both {@code CatalogService.toCard} and {@code CartService}'s courtesy
-     * availability check bypass their normal stock lookup for it; checkout enforces the real
-     * availability by reserving each component instead.
+     * components), so {@code CatalogService.toCard} and {@code CartService}'s courtesy availability
+     * check ask {@code KitAvailabilityService} instead — how many whole kits the components can make
+     * up — and checkout enforces the real availability by reserving each component.
      */
     @Column(name = "is_kit", nullable = false)
     private boolean isKit = false;
