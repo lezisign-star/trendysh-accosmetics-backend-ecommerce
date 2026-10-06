@@ -304,14 +304,58 @@ public class CartService {
         return CartDto.from(cart, items);
     }
 
-    /** What each line's variant can sell right now: its own stock, or for a kit the whole kits its components can make. */
+    /**
+     * What each line can still be sold, keyed by variant: its own stock, or for a kit the whole kits its
+     * components can make. Lines draw on one shelf, so they are served in the order they were added: a
+     * line's figure is what is left AFTER the lines before it took their share. A kit and a loose unit of
+     * one of its parts, or two kits sharing a part, therefore cannot both look fine while together asking for
+     * more than there is (checkout adds up what every line needs from the same part before it reserves, and
+     * would refuse an order the cart had just called fine). The line that does not fit is the one flagged.
+     */
     private Map<UUID, BigDecimal> stockLeftFor(List<CartItem> items) {
-        List<ProductVariant> variants = items.stream().map(CartItem::getVariant).distinct().toList();
-        Map<UUID, BigDecimal> result = new java.util.HashMap<>(availabilityService.available(
-                variants.stream().map(ProductVariant::getId).toList()));
-        List<UUID> kitIds = variants.stream().filter(ProductVariant::isKit).map(ProductVariant::getId).toList();
-        if (!kitIds.isEmpty()) {
-            result.putAll(kitAvailability.wholeKitsAvailable(kitIds));
+        List<CartItem> inOrder = items.stream()
+                .sorted(java.util.Comparator.comparing(CartItem::getCreatedAt,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+        List<UUID> kitIds = inOrder.stream().map(CartItem::getVariant).filter(ProductVariant::isKit)
+                .map(ProductVariant::getId).distinct().toList();
+        Map<UUID, List<KitAvailabilityService.Part>> partsByKit = kitAvailability.partsOf(kitIds);
+
+        // The real variants whose shelf matters: a plain line's own, a kit's parts.
+        java.util.Set<UUID> shelfIds = new java.util.HashSet<>();
+        for (CartItem line : inOrder) {
+            ProductVariant v = line.getVariant();
+            if (v.isKit()) {
+                partsByKit.getOrDefault(v.getId(), List.of()).forEach(p -> shelfIds.add(p.variant().getId()));
+            } else {
+                shelfIds.add(v.getId());
+            }
+        }
+        Map<UUID, BigDecimal> remaining = new HashMap<>(availabilityService.available(shelfIds));
+
+        Map<UUID, BigDecimal> result = new HashMap<>();
+        for (CartItem line : inOrder) {
+            ProductVariant v = line.getVariant();
+            if (!v.isKit()) {
+                BigDecimal left = remaining.getOrDefault(v.getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
+                result.put(v.getId(), left);
+                remaining.put(v.getId(), left.subtract(line.getQty().min(left)));
+                continue;
+            }
+            List<KitAvailabilityService.Part> parts = partsByKit.getOrDefault(v.getId(), List.of());
+            BigDecimal whole = null;
+            for (KitAvailabilityService.Part part : parts) {
+                BigDecimal have = remaining.getOrDefault(part.variant().getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
+                BigDecimal kitsFromThis = have.divide(part.qty(), 0, java.math.RoundingMode.DOWN);
+                whole = whole == null ? kitsFromThis : whole.min(kitsFromThis);
+            }
+            BigDecimal left = whole == null ? BigDecimal.ZERO : whole;
+            result.put(v.getId(), left);
+            BigDecimal taken = line.getQty().min(left);
+            for (KitAvailabilityService.Part part : parts) {
+                BigDecimal id = remaining.getOrDefault(part.variant().getId(), BigDecimal.ZERO);
+                remaining.put(part.variant().getId(), id.subtract(taken.multiply(part.qty())).max(BigDecimal.ZERO));
+            }
         }
         return result;
     }

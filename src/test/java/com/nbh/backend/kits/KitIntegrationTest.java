@@ -357,6 +357,43 @@ class KitIntegrationTest {
         assertThat(tooMany.getResponse().getContentAsString()).contains("Only 2 of");
     }
 
+    @Test
+    void aKitAndALooseUnitOfItsPartAreCheckedAgainstOneShelfSoCheckoutsRefusalHasAWayOut() throws Exception {
+        String categoryId = newCategory();
+        String part = newComponentVariant(new BigDecimal("500"));
+        // Two on the shelf; the kit uses one per kit. A kit plus two loose ones needs three: each add passes
+        // on its own, but checkout adds them up and refuses.
+        receiveStock(Map.of(part, new BigDecimal("2")));
+        JsonNode kit = createKit(categoryId, newProfession(), "For a working Nail Tech", List.of(part), List.of("1"), "400");
+        String kitVariantId = kit.get("variantId").asText();
+
+        String sessionId = "kit-shelf-session-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
+        JsonNode cart = cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + part + "\",\"qty\":2}", sessionId);
+
+        JsonNode kitLine = null;
+        JsonNode looseLine = null;
+        for (JsonNode item : cart.get("items")) {
+            if (item.get("variantId").asText().equals(kitVariantId)) kitLine = item;
+            else looseLine = item;
+        }
+        assertThat(kitLine).isNotNull();
+        assertThat(looseLine).isNotNull();
+        // The kit came first and fits; the loose line gets what is left once the kit took its part.
+        assertThat(kitLine.get("stockLeft").decimalValue()).isEqualByComparingTo("2");
+        assertThat(looseLine.get("stockLeft").decimalValue()).isEqualByComparingTo("1");
+
+        MvcResult refused = cartRaw(post("/api/v1/checkout"),
+                checkoutRequestBody("kit-shelf-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
+        assertThat(refused.getResponse().getStatus()).isEqualTo(409);
+
+        // Lowering the flagged line to what is left lets the same cart through.
+        cartOk(put("/api/v1/cart/items/" + looseLine.get("id").asText()), "{\"qty\":1}", sessionId);
+        MvcResult placed = cartRaw(post("/api/v1/checkout"),
+                checkoutRequestBody("kit-shelf-ok-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
+        assertThat(placed.getResponse().getStatus()).as(placed.getResponse().getContentAsString()).isEqualTo(200);
+    }
+
     private JsonNode kitCardInSearch(String kitName) throws Exception {
         MvcResult result = mvc.perform(get("/api/v1/catalog/variants").param("q", kitName)).andReturn();
         assertThat(result.getResponse().getStatus()).isEqualTo(200);

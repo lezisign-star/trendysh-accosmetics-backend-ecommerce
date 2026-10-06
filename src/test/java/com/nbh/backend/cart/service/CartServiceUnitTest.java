@@ -21,12 +21,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.*;
 
 /**
@@ -191,5 +193,75 @@ class CartServiceUnitTest {
         assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), new BigDecimal("3")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Only 2 of Gel polish (Red) left");
+    }
+
+    private CartItem line(ProductVariant v, String qty, String price) {
+        CartItem item = new CartItem();
+        item.setCart(cart);
+        item.setVariant(v);
+        item.setQty(new BigDecimal(qty));
+        item.setUnitPriceSnapshot(new BigDecimal(price));
+        item.setProductNameSnapshot(v.getProduct().getName());
+        item.setVariantNameSnapshot(v.getVariantName());
+        return item;
+    }
+
+    private ProductVariant aKit(String sku) {
+        ProductVariant kit = new ProductVariant();
+        kit.setId(UUID.randomUUID());
+        kit.setProduct(variant.getProduct());
+        kit.setSku(sku);
+        kit.setVariantName("Kit");
+        kit.setSellingPrice(new BigDecimal("700.00"));
+        kit.setKit(true);
+        return kit;
+    }
+
+    @Test
+    void aKitAndALooseUnitOfItsPartShareOneShelfSoOnlyTheLaterLineIsFlagged() {
+        // Two on the shelf. The kit (one of them per kit) was added first, then two loose ones: together they
+        // need three, and checkout would refuse that, so the cart has to show it.
+        ProductVariant kit = aKit("KIT-A");
+        CartItem kitLine = line(kit, "1", "700.00");
+        CartItem looseLine = line(variant, "2", "800.00");
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine, looseLine));
+        when(availabilityService.available(anyCollection())).thenReturn(Map.of(variant.getId(), new BigDecimal("2")));
+        when(kitAvailability.partsOf(List.of(kit.getId())))
+                .thenReturn(Map.of(kit.getId(), List.of(new KitAvailabilityService.Part(variant, BigDecimal.ONE))));
+
+        CartDto dto = cartService.getOrCreateCart(SESSION);
+
+        assertThat(dto.items()).hasSize(2);
+        assertThat(dto.items().get(0).stockLeft()).isEqualByComparingTo("2"); // the kit fits: it came first
+        assertThat(dto.items().get(1).stockLeft()).isEqualByComparingTo("1"); // 2 asked, 1 left once the kit took its part
+    }
+
+    @Test
+    void twoKitsSharingAPartAreServedInTheOrderTheyWereAdded() {
+        ProductVariant firstKit = aKit("KIT-1");
+        ProductVariant secondKit = aKit("KIT-2");
+        CartItem first = line(firstKit, "2", "700.00");
+        CartItem second = line(secondKit, "1", "700.00");
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(first, second));
+        when(availabilityService.available(anyCollection())).thenReturn(Map.of(variant.getId(), new BigDecimal("2")));
+        when(kitAvailability.partsOf(anyCollection())).thenReturn(Map.of(
+                firstKit.getId(), List.of(new KitAvailabilityService.Part(variant, BigDecimal.ONE)),
+                secondKit.getId(), List.of(new KitAvailabilityService.Part(variant, BigDecimal.ONE))));
+
+        CartDto dto = cartService.getOrCreateCart(SESSION);
+
+        assertThat(dto.items().get(0).stockLeft()).isEqualByComparingTo("2");
+        assertThat(dto.items().get(1).stockLeft()).isEqualByComparingTo("0"); // the first kit took both
+    }
+
+    @Test
+    void lineThatsAloneOnTheShelfJustReportsWhatIsThere() {
+        CartItem only = line(variant, "1", "800.00");
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(only));
+        when(availabilityService.available(anyCollection())).thenReturn(Map.of(variant.getId(), new BigDecimal("7")));
+
+        CartDto dto = cartService.getOrCreateCart(SESSION);
+
+        assertThat(dto.items().get(0).stockLeft()).isEqualByComparingTo("7");
     }
 }

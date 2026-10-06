@@ -1,5 +1,6 @@
 package com.nbh.backend.kits.service;
 
+import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.kits.dto.KitDtos;
 import com.nbh.backend.kits.entity.Kit;
 import com.nbh.backend.kits.entity.KitComponent;
@@ -41,6 +42,36 @@ public class KitAvailabilityService {
         this.kits = kits;
         this.componentRepository = componentRepository;
         this.stockAvailability = stockAvailability;
+    }
+
+    /** One real component of a kit: the variant that holds the stock and how many of it one kit uses. */
+    public record Part(ProductVariant variant, BigDecimal qty) {}
+
+    /**
+     * The purchasable parts of each kit, keyed by the kit's own variant id: exactly the set checkout reserves
+     * (see {@code KitService#componentsForVariant}). A kit with none left maps to an empty list; a variant that
+     * is not a kit is absent. The cart uses it to share one shelf between the lines that draw on it.
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, List<Part>> partsOf(Collection<UUID> kitVariantIds) {
+        if (kitVariantIds.isEmpty()) {
+            return Map.of();
+        }
+        List<Kit> found = kits.findByVariantIdIn(kitVariantIds);
+        if (found.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, List<KitComponent>> componentsByKit = componentRepository
+                .findByKitIdInOrderByLineNoAsc(found.stream().map(Kit::getId).toList())
+                .stream()
+                .collect(Collectors.groupingBy(c -> c.getKit().getId()));
+        Map<UUID, List<Part>> result = new HashMap<>();
+        for (Kit kit : found) {
+            result.put(kit.getVariant().getId(), purchasable(componentsByKit.get(kit.getId())).stream()
+                    .map(c -> new Part(c.getComponentVariant(), c.getQty()))
+                    .toList());
+        }
+        return result;
     }
 
     /** Whole kits available, keyed by the kit's own variant id. A variant that is not a kit is absent. */
