@@ -4,8 +4,10 @@ import com.nbh.backend.payment.dto.AdminPaymentDtos.AwaitingPaymentDto;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.ClaimDto;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.CreditDto;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.RecordCreditRequest;
+import com.nbh.backend.payment.dto.PaymentCodeStatus;
 import com.nbh.backend.payment.entity.BankCredit;
 import com.nbh.backend.payment.entity.PaymentClaim;
+import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentClaimRepository;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import org.springframework.stereotype.Service;
@@ -14,10 +16,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * The staff payments screen's facade: every method maps to DTOs inside its own
@@ -51,20 +53,32 @@ public class AdminPaymentService {
         this.clock = clock;
     }
 
+    /**
+     * Every unpaid order, with where its M-PESA code stands. An order the customer placed and then walked away from
+     * (to pay on their phone) has no code and is listed here all the same: that is the point of keeping it visible.
+     */
     @Transactional(readOnly = true)
     public List<AwaitingPaymentDto> awaiting() {
-        Set<UUID> underReview = new HashSet<>();
-        for (PaymentClaim c : claimRepository.findByStatusOrderByCreatedAtAsc(PaymentClaim.ClaimStatus.PENDING)) {
-            underReview.add(c.getPayment().getId());
-        }
+        List<PaymentRecord> payments = paymentRecordRepository
+                .findAwaitingBankPayments(Instant.now(clock).minus(EXPIRED_ORDER_VISIBILITY));
+        // One query for every code on every listed payment, newest first.
+        Map<UUID, List<PaymentClaim>> claimsByPayment = payments.isEmpty() ? Map.of()
+                : claimRepository.findByPaymentIdInOrderByCreatedAtDesc(payments.stream().map(PaymentRecord::getId).toList())
+                        .stream().collect(Collectors.groupingBy(c -> c.getPayment().getId()));
         boolean paybillConfigured = !paymentSettings.paybillNumber().isBlank();
-        return paymentRecordRepository.findAwaitingBankPayments(Instant.now(clock).minus(EXPIRED_ORDER_VISIBILITY)).stream()
+        return payments.stream()
                 .map(p -> {
                     var o = p.getOrder();
                     String expected = paybillConfigured
                             ? paymentSettings.paybillAccountFor(o.getCustomerName(), o.getGuestPhone(), o.getOrderNo(), p.getPaymentReference())
                             : "";
-                    return AwaitingPaymentDto.from(p, underReview.contains(p.getId()), expected);
+                    List<PaymentClaim> claims = claimsByPayment.getOrDefault(p.getId(), List.of());
+                    PaymentCodeStatus codeStatus = PaymentCodeStatus.of(claims.stream().map(PaymentClaim::getStatus).toList());
+                    String submittedCode = claims.stream()
+                            .filter(c -> c.getStatus() == PaymentClaim.ClaimStatus.PENDING)
+                            .map(PaymentClaim::getTransactionCode)
+                            .findFirst().orElse(null);
+                    return AwaitingPaymentDto.from(p, codeStatus, submittedCode, expected);
                 })
                 .toList();
     }

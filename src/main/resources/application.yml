@@ -62,7 +62,9 @@ app:
     # dev origins, not a guess.
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5250}
   bootstrap:
-    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:admin@nairobibeautyhub.co.ke}
+    # Blank = no placeholder account. (It used to default to admin@nairobibeautyhub.co.ke, an address nobody here
+    # owns: whoever registered that domain could reset its password and become Super Admin.)
+    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
     # Extra SUPER_ADMINs created on boot if missing (comma-separated); they set their password via
     # "Forgot your password?". trendyshaccosmetic@gmail.com is the shop owner's own address, given
     # to us directly for this purpose. Set BOOTSTRAP_ADDITIONAL_ADMIN_EMAILS to change or (empty) to disable.

@@ -16,6 +16,11 @@ public interface ProductSaleEventRepository extends JpaRepository<ProductSaleEve
     @Query("SELECT COALESCE(SUM(s.qty), 0) FROM ProductSaleEvent s WHERE s.product.id = :productId")
     BigDecimal totalUnitsSold(@Param("productId") UUID productId);
 
+    /** A cancelled order was never a sale: its rows leave the "units sold" figures (top sellers, popularity, the stock forecast). */
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("DELETE FROM ProductSaleEvent s WHERE s.order.id = :orderId")
+    int deleteByOrderId(@Param("orderId") UUID orderId);
+
     /** Batch aggregate for a page of products — same batching reasoning as ProductReviewRepository. */
     @Query("""
             SELECT s.product.id AS productId, COALESCE(SUM(s.qty), 0) AS totalQty

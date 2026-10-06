@@ -154,7 +154,7 @@ class StaffManagementRulesUnitTest {
     void theLastActiveSuperAdminCannotBeDemotedOrDisabled() {
         StaffUser lastSuperAdmin = user(superAdminRole);
         StaffUser developer = user(developerRole);
-        when(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndIdNot(anyString(), any(UUID.class)))
+        when(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot(anyString(), any(UUID.class)))
                 .thenReturn(0L);
 
         assertThatThrownBy(() -> service.updateRole(lastSuperAdmin.getId(), "CASHIER", developer))
@@ -169,7 +169,7 @@ class StaffManagementRulesUnitTest {
     void aSuperAdminMayBeDemotedOrDisabledWhenAnotherOneRemains() {
         StaffUser superAdmin = user(superAdminRole);
         StaffUser developer = user(developerRole);
-        when(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndIdNot(anyString(), any(UUID.class)))
+        when(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot(anyString(), any(UUID.class)))
                 .thenReturn(1L);
 
         assertThat(service.setEnabled(superAdmin.getId(), false, developer).status()).isEqualTo("DISABLED");

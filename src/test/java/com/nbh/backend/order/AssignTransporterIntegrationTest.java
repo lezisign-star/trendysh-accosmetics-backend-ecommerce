@@ -140,6 +140,30 @@ class AssignTransporterIntegrationTest {
         assertThat(statusStaff(post("/api/v1/orders/" + orderId + "/fulfil"))).isEqualTo(200);
     }
 
+    /**
+     * A matatu parcel desk or a sacco office may be a landline, so the rule is looser than a customer's mobile
+     * number, but staff must be able to dial it: the 2026-10-06 QA saved the "phone number" "banana".
+     */
+    @Test
+    void theTransportersPhoneMustBeSomethingStaffCanDialButMayBeALandline() throws Exception {
+        String orderId = paidOrder("DELIVERY_COURIER", "MATATU")[0];
+        String url = "/api/v1/orders/" + orderId + "/assign-transporter";
+
+        for (String bad : new String[] {"banana", "12345", "call me", "07;DROP"}) {
+            assertThat(statusStaff(post(url).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"transporterName\":\"Easy Coach\",\"transporterPhone\":\"" + bad + "\",\"agreedPrice\":300}")))
+                    .as("phone '" + bad + "'").isEqualTo(400);
+        }
+
+        okStaff(post(url).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"transporterName\":\"Easy Coach parcel desk\",\"transporterPhone\":\"020 222 3344\",\"agreedPrice\":300}"));
+        assertThat(okStaff(get("/api/v1/orders/" + orderId)).get("transporterPhone").asText()).isEqualTo("254202223344");
+
+        okStaff(post(url).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"transporterName\":\"Boda Joe\",\"transporterPhone\":\"+254 733 111 222\",\"agreedPrice\":300}"));
+        assertThat(okStaff(get("/api/v1/orders/" + orderId)).get("transporterPhone").asText()).isEqualTo("254733111222");
+    }
+
     @Test
     void assigningATransporterToAPickupOrderIsRejected() throws Exception {
         String orderId = paidOrder("PICKUP", null)[0];

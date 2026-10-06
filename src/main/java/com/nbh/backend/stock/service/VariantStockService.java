@@ -91,6 +91,7 @@ public class VariantStockService {
         if (!variant.getProduct().getId().equals(productId)) {
             throw new EntityNotFoundException("No variant " + variantId + " on product " + productId);
         }
+        QuantityRules.requireSensible(variant.getSku(), variant, targetOnHand);
         if (variant.isKit()) {
             // A kit sells however many whole kits its parts can still make up; stock posted against the kit
             // itself would be a phantom the checkout never reads.

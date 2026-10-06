@@ -17,6 +17,10 @@ spring:
     clean-disabled: false
 
 app:
+  bootstrap:
+    # The placeholder Super Admin the integration tests sign in as. Production no longer creates one by default
+    # (see StaffUserSeeder), so the tests ask for it explicitly.
+    admin-email: admin@nairobibeautyhub.co.ke
   mpesa:
     # Known value for live/manual testing of the callback endpoint (§4 C1) —
     # never used outside the test profile.
@@ -26,6 +30,7 @@ app:
   # sweep landing mid-test made that count flaky. Tests that need a sweep call the sweeper directly.
   orders:
     expiry-sweep-initial-delay-ms: 3600000
+    reminder-sweep-initial-delay-ms: 3600000
   stock:
     reservation-sweep-initial-delay-ms: 3600000
   # Emails are sent on the calling thread in tests, so a test can assert on a send (e.g. read a one-time

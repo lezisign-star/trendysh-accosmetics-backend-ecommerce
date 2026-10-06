@@ -10,6 +10,7 @@ import com.nbh.backend.stock.entity.StockAccount;
 import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
+import com.nbh.backend.stock.service.QuantityRules;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockPostingService;
 import jakarta.persistence.EntityNotFoundException;
@@ -86,6 +87,7 @@ public class OrderReturnService {
             if (qty.signum() <= 0) {
                 throw new UnprocessableException(item.getVariant().getSku() + ": return qty must be positive");
             }
+            QuantityRules.requireSensible(item.getVariant().getSku(), item.getVariant(), qty);
             BigDecimal outstanding = item.getQty().subtract(item.getReturnedQty());
             if (qty.compareTo(outstanding) > 0) {
                 throw new UnprocessableException(

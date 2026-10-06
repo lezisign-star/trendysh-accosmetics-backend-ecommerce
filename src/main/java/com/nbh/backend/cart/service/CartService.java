@@ -14,6 +14,7 @@ import com.nbh.backend.catalog.service.PromoCampaignService;
 import com.nbh.backend.common.exception.PriceChangedException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.kits.service.KitAvailabilityService;
+import com.nbh.backend.stock.service.QuantityRules;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -98,7 +99,12 @@ public class CartService {
      */
     @Transactional
     public void refreshPricesForCheckout(String sessionId, BigDecimal expectedSubtotal) {
-        Cart cart = cartRepository.findBySessionId(sessionId)
+        // The basket is read UNDER the checkout lock, here, as the very first thing the transaction does. Checkout takes
+        // the same lock a few lines later, but a lock does not refresh a basket this transaction has already read: a
+        // second simultaneous submit (a double-click, a retry) used to read it open before the first had finished,
+        // wait for the lock, then carry on with that stale copy and make a second order and a second stock hold.
+        // Reading it under the lock makes the second submit wait first and then see it checked out.
+        Cart cart = cartRepository.findWithLockBySessionId(sessionId)
                 .filter(c -> c.getStatus() == Cart.CartStatus.ACTIVE)
                 .orElse(null);
         if (cart == null) {
@@ -133,6 +139,7 @@ public class CartService {
         ProductVariant variant = variantRepository.findById(variantId)
                 .orElseThrow(() -> new EntityNotFoundException("No product variant: " + variantId));
         requireSellable(variant);
+        QuantityRules.requireSensible(variant.getProduct().getName(), variant, qty);
 
         CartItem item = cartItemRepository.findByCartIdAndVariantId(cart.getId(), variantId)
                 .orElseGet(() -> {
@@ -165,6 +172,7 @@ public class CartService {
                 .orElseThrow(() -> new EntityNotFoundException("No cart item: " + itemId));
 
         requireSellable(item.getVariant());
+        QuantityRules.requireSensible(item.getVariant().getProduct().getName(), item.getVariant(), qty);
         checkCourtesyAvailability(item.getVariant(), qty);
         item.setQty(qty);
         // Repriced here rather than left to toDto's refresh: crossing a wholesale threshold is the

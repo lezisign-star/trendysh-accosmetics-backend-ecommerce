@@ -137,6 +137,7 @@ public class StockCountService {
                 .findFirst()
                 .orElseThrow(() -> new NotFoundException(variantId + " isn't on this count"));
 
+        QuantityRules.requireSensible(line.getVariant().getSku(), line.getVariant(), countedQty);
         line.setCountedQty(countedQty);
         line.setNote(note);
         line.setCountedByUserId(staffUserId);

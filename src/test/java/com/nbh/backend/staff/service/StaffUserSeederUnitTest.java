@@ -48,7 +48,7 @@ class StaffUserSeederUnitTest {
         ReflectionTestUtils.setField(seeder, "developerEmails", "");
         // The bootstrap primary-admin block runs unconditionally unless it already exists — keep
         // every test focused on just the behaviour under test by treating it as already seeded.
-        when(staffUsers.existsByEmailIgnoreCase("admin@nairobibeautyhub.co.ke")).thenReturn(true);
+        org.mockito.Mockito.lenient().when(staffUsers.existsByEmailIgnoreCase("admin@nairobibeautyhub.co.ke")).thenReturn(true);
 
         superAdmin = new StaffRole();
         superAdmin.setName("SUPER_ADMIN");
@@ -107,6 +107,40 @@ class StaffUserSeederUnitTest {
         assertThat(saved.getEmail()).isEqualTo("new-dev@example.com");
         assertThat(saved.getStaffRole()).isEqualTo(developer);
         assertThat(saved.isMustChangePassword()).isTrue();
+    }
+
+    /**
+     * The placeholder admin used to default to admin@nairobibeautyhub.co.ke, a domain nobody here owns (it does not
+     * resolve in DNS), so anyone who registered it could use "forgot your password" and become Super Admin. With no
+     * bootstrap email configured, nothing is created.
+     */
+    @Test
+    void createsNoPlaceholderAccountWhenNoBootstrapEmailIsConfigured() {
+        ReflectionTestUtils.setField(seeder, "bootstrapEmail", "");
+        when(staffUsers.findByEmailIgnoreCaseAndDeletedFalse("mdaucodes@gmail.com")).thenReturn(Optional.empty());
+
+        seeder.seed();
+
+        verify(staffUsers, never()).save(any(StaffUser.class));
+        verify(staffUsers, never()).existsByEmailIgnoreCase("");
+        verify(passwordEncoder, never()).encode(anyString());
+    }
+
+    @Test
+    void stillCreatesTheConfiguredBootstrapAccountWhenOneIsGiven() {
+        ReflectionTestUtils.setField(seeder, "bootstrapEmail", "owner-controlled@example.com");
+        when(staffUsers.findByEmailIgnoreCaseAndDeletedFalse("mdaucodes@gmail.com")).thenReturn(Optional.empty());
+        when(staffUsers.existsByEmailIgnoreCase("owner-controlled@example.com")).thenReturn(false);
+        when(staffRoles.findByName("SUPER_ADMIN")).thenReturn(Optional.of(superAdmin));
+        when(passwordEncoder.encode(anyString())).thenReturn("hashed");
+
+        seeder.seed();
+
+        var captor = org.mockito.ArgumentCaptor.forClass(StaffUser.class);
+        verify(staffUsers).save(captor.capture());
+        assertThat(captor.getValue().getEmail()).isEqualTo("owner-controlled@example.com");
+        assertThat(captor.getValue().getStaffRole()).isEqualTo(superAdmin);
+        assertThat(captor.getValue().isMustChangePassword()).isTrue();
     }
 
     @Test

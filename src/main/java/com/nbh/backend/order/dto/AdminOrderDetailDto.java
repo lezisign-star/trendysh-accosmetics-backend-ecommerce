@@ -1,8 +1,10 @@
 package com.nbh.backend.order.dto;
 
+import com.nbh.backend.customer.entity.CustomerAccount;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.OrderStatus;
+import com.nbh.backend.payment.entity.PaymentClaim;
 import com.nbh.backend.payment.entity.PaymentRecord;
 
 import java.math.BigDecimal;
@@ -30,6 +32,8 @@ public record AdminOrderDetailDto(
         String deliveryAddress,
         /** Who the rider should actually call at drop-off, if different from {@code guestPhone}. Null means "same as above". */
         String deliveryContactPhone,
+        /** The optional extras the customer gave about the delivery (building, directions, who receives it, ...); null when none. */
+        DeliveryDetails deliveryDetails,
         BigDecimal subtotal,
         BigDecimal vatTotal,
         BigDecimal deliveryFee,
@@ -41,8 +45,31 @@ public record AdminOrderDetailDto(
         BigDecimal agreedDeliveryPrice,
         Tumaboda tumaboda,
         List<Line> items,
-        List<Payment> payments
+        List<Payment> payments,
+        /** The shopper account this order belongs to; null for a guest order. */
+        Account account,
+        /** The M-PESA codes the customer sent for this order, newest first. Empty means none has been entered yet. */
+        List<Claim> claims
 ) {
+    /**
+     * Who the order is attached to, so staff can see at a glance whether it counts toward a customer's account
+     * (the link coupons and points will be earned through). Null for a guest checkout.
+     */
+    public record Account(UUID id, String email, String fullName, boolean emailVerified) {
+        static Account from(CustomerAccount a) {
+            return a == null ? null : new Account(a.getId(), a.getEmail(), a.getFullName(), a.isEmailVerified());
+        }
+    }
+
+    /** One M-PESA code a customer sent, and what staff did with it. */
+    public record Claim(UUID id, String transactionCode, BigDecimal amountClaimed, String status, Instant createdAt,
+                        String payerName, String resolvedBy, String resolutionNote) {
+        static Claim from(PaymentClaim c) {
+            return new Claim(c.getId(), c.getTransactionCode(), c.getAmountClaimed(), c.getStatus().name(),
+                    c.getCreatedAt(), c.getPayerName(), c.getResolvedBy(), c.getResolutionNote());
+        }
+    }
+
     /**
      * The TumaBoda API side of the delivery, for the staff panel. Null when this order is not booked
      * through the API (phone-arranged, pickup, or rerouted back to manual — {@code rerouted} says which).
@@ -93,6 +120,10 @@ public record AdminOrderDetailDto(
     }
 
     public static AdminOrderDetailDto from(CustomerOrder o, List<PaymentRecord> payments) {
+        return from(o, payments, List.of());
+    }
+
+    public static AdminOrderDetailDto from(CustomerOrder o, List<PaymentRecord> payments, List<PaymentClaim> claims) {
         Map<CustomerOrderItem, List<CustomerOrderItem>> childrenByParent = o.getItems().stream()
                 .filter(i -> i.getParentItem() != null)
                 .collect(Collectors.groupingBy(CustomerOrderItem::getParentItem));
@@ -104,11 +135,14 @@ public record AdminOrderDetailDto(
                 o.getId(), o.getOrderNo(), o.getStatus(), o.getFulfilmentType().name(),
                 o.getDeliveryMethod(), o.getCustomerName(), o.getGuestEmail(), o.getGuestPhone(), o.getDeliveryAddress(),
                 o.getDeliveryContactPhone(),
+                DeliveryDetails.of(o),
                 o.getSubtotal(), o.getVatTotal(), o.getDeliveryFee(), o.getGrandTotal(),
                 o.getCreatedAt(), o.getPlacedAt(),
                 o.getTransporterName(), o.getTransporterPhone(), o.getAgreedDeliveryPrice(),
                 Tumaboda.from(o),
                 lines,
-                payments.stream().map(Payment::from).toList());
+                payments.stream().map(Payment::from).toList(),
+                Account.from(o.getCustomerAccount()),
+                claims.stream().map(Claim::from).toList());
     }
 }

@@ -401,6 +401,49 @@ class MigrationUpgradePathTest {
     }
 
     @Test
+    void v54_everyExistingOrderIsMarkedAsAlreadyRemindedSoDeployingNeverEmailsABacklogOfOldOrders() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM customer_order WHERE payment_reminder_sent_at IS NULL"))
+                    .as("no legacy order is left waiting for a reminder").isZero();
+            assertThat(count(s, "SELECT count(*) FROM customer_order WHERE payment_reminder_sent_at IS NOT NULL"))
+                    .as("the legacy orders are the ones marked").isGreaterThanOrEqualTo(3);
+
+            // An order placed after the migration starts unreminded, which is what makes it eligible for its one reminder.
+            UUID fresh = UUID.randomUUID();
+            insertOrder(s, fresh, "SO-AFTER-V54", "PICKUP", null);
+            try {
+                assertThat(count(s, "SELECT count(*) FROM customer_order WHERE id = '" + fresh + "' AND payment_reminder_sent_at IS NULL"))
+                        .isEqualTo(1);
+            } finally {
+                s.execute("DELETE FROM customer_order WHERE id = '" + fresh + "'");
+            }
+        }
+    }
+
+    @Test
+    void v55_legacyOrdersHoldNoDeliveryDetailsAndTheTimeWindowIsLimitedToTheFourChoices() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            assertThat(count(s, "SELECT count(*) FROM customer_order WHERE delivery_estate IS NOT NULL OR delivery_street IS NOT NULL"
+                    + " OR delivery_building IS NOT NULL OR delivery_unit IS NOT NULL OR delivery_courier_office IS NOT NULL"
+                    + " OR delivery_directions IS NOT NULL OR delivery_instructions IS NOT NULL"
+                    + " OR delivery_receiver_name IS NOT NULL OR delivery_time_window IS NOT NULL"))
+                    .as("nothing is backfilled onto an order that pre-dates the details").isZero();
+
+            UUID fresh = UUID.randomUUID();
+            insertOrder(s, fresh, "SO-AFTER-V55", "DELIVERY_COURIER", "BODA");
+            try {
+                s.execute("UPDATE customer_order SET delivery_building = 'Yaya Towers', delivery_unit = '4th floor',"
+                        + " delivery_time_window = 'ANY_TIME' WHERE id = '" + fresh + "'");
+                assertThat(text(s, "SELECT delivery_building FROM customer_order WHERE id = '" + fresh + "'")).isEqualTo("Yaya Towers");
+                assertThatThrownBy(() -> s.execute("UPDATE customer_order SET delivery_time_window = 'MIDNIGHT' WHERE id = '" + fresh + "'"))
+                        .as("only the four choices").hasMessageContaining("customer_order_delivery_time_window_check");
+            } finally {
+                s.execute("DELETE FROM customer_order WHERE id = '" + fresh + "'");
+            }
+        }
+    }
+
+    @Test
     void theNewVersionColumnsStartAtZeroForRowsThatAlreadyExisted() throws Exception {
         try (Connection c = connect(); Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT count(*) FROM stock_balance WHERE version <> 0")) {

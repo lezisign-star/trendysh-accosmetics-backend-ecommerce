@@ -3,6 +3,7 @@ package com.nbh.backend.staff.service;
 import com.nbh.backend.common.email.EmailTemplates;
 import com.nbh.backend.common.event.CustomerEmailRequestedEvent;
 import com.nbh.backend.common.exception.UnprocessableException;
+import com.nbh.backend.customer.service.LoginThrottle;
 import com.nbh.backend.staff.entity.StaffPasswordResetToken;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.staff.repository.StaffPasswordResetTokenRepository;
@@ -45,6 +46,7 @@ public class StaffPasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher events;
     private final Clock clock;
+    private final LoginThrottle loginThrottle;
     private final String frontendUrl;
 
     public StaffPasswordResetService(StaffUserRepository staff,
@@ -52,12 +54,14 @@ public class StaffPasswordResetService {
                                      PasswordEncoder passwordEncoder,
                                      ApplicationEventPublisher events,
                                      Clock clock,
+                                     LoginThrottle loginThrottle,
                                      @Value("${app.frontend-url:http://localhost:5250}") String frontendUrl) {
         this.staff = staff;
         this.tokens = tokens;
         this.passwordEncoder = passwordEncoder;
         this.events = events;
         this.clock = clock;
+        this.loginThrottle = loginThrottle;
         this.frontendUrl = frontendUrl.replaceAll("/+$", "");
     }
 
@@ -131,6 +135,8 @@ public class StaffPasswordResetService {
         staff.save(user);
         token.setUsedAt(Instant.now(clock));
         tokens.save(token);
+        // Proving control of the mailbox is the way back in after too many wrong passwords.
+        loginThrottle.reset(LoginThrottle.staffKey(user.getEmail()));
         return true;
     }
 

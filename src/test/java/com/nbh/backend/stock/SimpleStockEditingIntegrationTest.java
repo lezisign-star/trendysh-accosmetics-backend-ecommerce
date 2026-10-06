@@ -132,6 +132,11 @@ class SimpleStockEditingIntegrationTest {
         JsonNode row = ok(get("/api/v1/stock/inventory").param("productId", product.get("id").asText()), null)
                 .get("content").get(0);
         assertThat(row.get("kit").asBoolean()).as("the list marks it so the screen can leave it uneditable").isTrue();
+
+        // Its zero is not a shortage the shop can fix by typing a number, so the "out of stock" view leaves it out.
+        JsonNode out = ok(get("/api/v1/stock/inventory").param("productId", product.get("id").asText())
+                .param("outOfStockOnly", "true"), null).get("content");
+        assertThat(out).as("a kit is never listed as out of stock").isEmpty();
     }
 
     @Test

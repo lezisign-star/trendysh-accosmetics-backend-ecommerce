@@ -1,6 +1,7 @@
 package com.nbh.backend.order.dto;
 
 import com.nbh.backend.order.entity.FulfilmentType;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -19,6 +20,9 @@ import java.math.BigDecimal;
  * used to set a price (the server always charges its own): only to notice that the real amount is no
  * longer the one on screen and refuse with 409 {@code PRICE_CHANGED} instead of charging something else.
  * Both optional, so an older client that sends neither behaves as before.
+ *
+ * <p>{@code deliveryDetails} are the optional extras about a delivery (where exactly, how to find it, who receives it,
+ * when). They are kept only for a delivery, and only the ones that suit its {@code deliveryMethod}.
  */
 public record CheckoutRequest(
         @NotBlank @Size(max = 200) String customerName,
@@ -32,19 +36,21 @@ public record CheckoutRequest(
         @PositiveOrZero BigDecimal expectedSubtotal,
         @PositiveOrZero BigDecimal expectedDeliveryFee,
         /** Who the rider should call at drop-off, if different from {@code guestPhone}. Optional — null means "same as above". */
-        String deliveryContactPhone
+        String deliveryContactPhone,
+        /** Optional extras about a delivery; null means the customer gave none. */
+        @Valid DeliveryDetails deliveryDetails
 ) {
     /** The request as it was before the drop-off point existed: delivery arranged by phone. */
     public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
                            String deliveryAddress, String deliveryMethod) {
-        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod, null, null, null, null, null);
+        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod, null, null, null, null, null, null);
     }
 
     /** The request as it was before the shown-price check existed. */
     public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
                            String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng) {
         this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
-                dropoffLat, dropoffLng, null, null, null);
+                dropoffLat, dropoffLng, null, null, null, null);
     }
 
     /** The request as it was before the delivery-contact phone existed. */
@@ -52,6 +58,14 @@ public record CheckoutRequest(
                            String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng,
                            BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee) {
         this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
-                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, null);
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, null, null);
+    }
+
+    /** The request as it was before the optional delivery details existed. */
+    public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
+                           String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng,
+                           BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee, String deliveryContactPhone) {
+        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, deliveryContactPhone, null);
     }
 }

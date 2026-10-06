@@ -8,6 +8,9 @@ import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.payment.entity.PaymentRecord;
+import com.nbh.backend.payment.repository.PaymentRecordRepository;
+import com.nbh.backend.payment.service.PaymentReferenceGenerator;
 import com.nbh.backend.staff.repository.StaffUserRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -56,6 +59,8 @@ class CustomerAccountsIntegrationTest {
     @Autowired private JwtService jwtService;
     @Autowired private StaffUserRepository staffUsers;
     @Autowired private CustomerOrderRepository orders;
+    @Autowired private PaymentRecordRepository paymentRecords;
+    @Autowired private PaymentReferenceGenerator referenceGenerator;
     @MockitoBean private EmailSender emailSender;
 
     private static String uniqueEmail() {
@@ -215,5 +220,88 @@ class CustomerAccountsIntegrationTest {
         JsonNode again = post("/api/v1/customer/auth/register",
                 "{\"email\":\"" + email.toUpperCase() + "\",\"password\":\"" + PASSWORD + "\",\"fullName\":\"Dup\"}", null);
         assertThat(again.get("_status").asInt()).isEqualTo(409);
+    }
+
+    /**
+     * Owner's decision, 2026-10-06: orders must add up on one account so coupons and points can be earned from them
+     * later. A verified shopper who forgot to sign in before checking out has a guest order under their own email;
+     * it joins their account the next time they sign in. Verification only ever adopted orders that already existed.
+     */
+    @Test
+    void aVerifiedShoppersGuestOrderJoinsTheAccountAtTheNextSignIn() throws Exception {
+        String email = uniqueEmail();
+        register(email);
+        post("/api/v1/customer/auth/verify-email", "{\"token\":\"" + lastLinkToken(email) + "\"}", null);
+
+        // Bought afterwards, as a guest, with the same email (typed in capitals: matching ignores case).
+        String guestOrderNo = placeGuestOrder(email.toUpperCase());
+        String someoneElsesOrderNo = placeGuestOrder(uniqueEmail());
+
+        JsonNode login = post("/api/v1/customer/auth/login",
+                "{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}", null);
+        assertThat(login.get("_status").asInt()).isEqualTo(200);
+        String token = login.get("accessToken").asText();
+
+        mvc.perform(get("/api/v1/customer/orders").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$[0].orderNo").value(guestOrderNo))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.length()").value(1));
+        // Another email's guest order is never swept up.
+        assertThat(orders.findByOrderNo(someoneElsesOrderNo).orElseThrow().getCustomerAccount()).isNull();
+    }
+
+    @Test
+    void anUnverifiedEmailProvesNothingSoSigningInAdoptsNoGuestOrders() throws Exception {
+        String email = uniqueEmail();
+        register(email);
+        String guestOrderNo = placeGuestOrder(email);
+
+        JsonNode login = post("/api/v1/customer/auth/login",
+                "{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}", null);
+        assertThat(login.get("_status").asInt()).isEqualTo(200);
+
+        mvc.perform(get("/api/v1/customer/orders").header("Authorization", "Bearer " + login.get("accessToken").asText()))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().json("[]"));
+        assertThat(orders.findByOrderNo(guestOrderNo).orElseThrow().getCustomerAccount()).isNull();
+    }
+
+    /**
+     * The way back to the page that takes the M-PESA code: an order's owner is given the pay-page reference while the
+     * order is still waiting on money, and never once it is paid.
+     */
+    @Test
+    void anOwnerGetsThePayPageReferenceOnlyWhileTheOrderIsWaitingOnMoney() throws Exception {
+        String email = uniqueEmail();
+        String orderNo = placeGuestOrder(email);
+        String reference = referenceGenerator.generate();
+        CustomerOrder order = orders.findByOrderNo(orderNo).orElseThrow();
+        PaymentRecord record = new PaymentRecord();
+        record.setOrder(order);
+        record.setProvider("BANK");
+        record.setMethod(PaymentRecord.PaymentMethod.BANK);
+        record.setAmount(new BigDecimal("500.00"));
+        record.setStatus(PaymentRecord.PaymentStatus.INITIATED);
+        record.setPaymentReference(reference);
+        record.setExpiresAt(java.time.Instant.now().plusSeconds(2700));
+        paymentRecords.save(record);
+
+        String token = register(email);
+        post("/api/v1/customer/auth/verify-email", "{\"token\":\"" + lastLinkToken(email) + "\"}", null);
+
+        mvc.perform(get("/api/v1/customer/orders/" + orderNo).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.payRef").value(reference));
+
+        order = orders.findByOrderNo(orderNo).orElseThrow();
+        order.setStatus(OrderStatus.PAID);
+        orders.save(order);
+        mvc.perform(get("/api/v1/customer/orders/" + orderNo).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.payRef").doesNotExist());
     }
 }

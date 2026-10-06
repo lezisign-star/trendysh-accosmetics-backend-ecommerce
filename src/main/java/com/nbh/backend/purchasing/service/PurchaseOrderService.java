@@ -22,6 +22,7 @@ import com.nbh.backend.stock.entity.StockDocument;
 import com.nbh.backend.stock.entity.StockDocumentLine;
 import com.nbh.backend.stock.entity.StockDocumentType;
 import com.nbh.backend.stock.repository.StockDocumentCounterRepository;
+import com.nbh.backend.stock.service.QuantityRules;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.staff.entity.StaffUser;
@@ -150,6 +151,7 @@ public class PurchaseOrderService {
             if (unitCost.signum() < 0) {
                 throw new UnprocessableException(variant.getSku() + ": unitCost cannot be negative");
             }
+            QuantityRules.requireSensible(variant.getSku(), variant, qty);
             PurchaseOrderLine poLine = new PurchaseOrderLine();
             poLine.setPurchaseOrder(po);
             poLine.setLineNo(lineNo++);
@@ -213,6 +215,7 @@ public class PurchaseOrderService {
             if (qty.signum() <= 0) {
                 throw new UnprocessableException("Quantity must be positive");
             }
+            QuantityRules.requireSensible(poLine.getVariant().getSku(), poLine.getVariant(), qty);
             BigDecimal remaining = poLine.getQtyOrdered().subtract(poLine.getQtyReceived());
             if (qty.compareTo(remaining) > 0) {
                 throw new UnprocessableException(

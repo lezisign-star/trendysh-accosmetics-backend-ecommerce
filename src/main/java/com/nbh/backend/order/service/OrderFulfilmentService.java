@@ -136,8 +136,14 @@ public class OrderFulfilmentService {
                     + " through the API. Switch it to a phone-arranged delivery first if you want to assign someone else.");
         }
 
+        // A matatu parcel desk or a sacco office may be a landline, so this is looser than a customer's mobile
+        // number, but it must still be a number staff can dial (the 2026-10-06 QA saved "banana" without complaint).
+        String transporterPhone = request.transporterPhone().trim();
+        if (!transporterPhone.matches("[0-9+()\\s-]+") || transporterPhone.replaceAll("\\D", "").length() < 9) {
+            throw new IllegalArgumentException("Enter a phone number for the transporter, e.g. 0720 000 111");
+        }
         order.setTransporterName(request.transporterName().trim());
-        order.setTransporterPhone(PhoneNumbers.normalize(request.transporterPhone()));
+        order.setTransporterPhone(PhoneNumbers.normalize(transporterPhone));
         order.setAgreedDeliveryPrice(request.agreedPrice());
         return orderRepository.save(order);
     }

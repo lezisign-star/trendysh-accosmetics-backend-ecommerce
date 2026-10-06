@@ -34,7 +34,13 @@ public class StaffUserSeeder {
     private final StaffRoleRepository staffRoleRepository;
     private final PasswordEncoder passwordEncoder;
 
-    @Value("${app.bootstrap.admin-email:admin@nairobibeautyhub.co.ke}")
+    /**
+     * Blank (the default) creates no placeholder account. It used to default to admin@nairobibeautyhub.co.ke, an
+     * address on a domain nobody here owns (it does not even resolve in DNS, so anyone could register it, receive the
+     * "forgot your password" code and become Super Admin), created in every environment including production.
+     * Real owners come from {@link #additionalAdminEmails}; set this only for an address the team controls.
+     */
+    @Value("${app.bootstrap.admin-email:}")
     private String bootstrapEmail;
 
     /**
@@ -79,7 +85,8 @@ public class StaffUserSeeder {
 
         seedEmails(additionalAdminEmails, "SUPER_ADMIN", "Owner", "Admin");
         seedEmails(developerEmails, "DEVELOPER", "Developer", "Account");
-        if (staffUserRepository.existsByEmailIgnoreCase(bootstrapEmail)) {
+        if (bootstrapEmail == null || bootstrapEmail.isBlank()
+                || staffUserRepository.existsByEmailIgnoreCase(bootstrapEmail)) {
             return;
         }
 

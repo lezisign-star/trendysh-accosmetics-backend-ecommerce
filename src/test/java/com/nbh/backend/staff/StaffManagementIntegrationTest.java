@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -248,6 +249,36 @@ class StaffManagementIntegrationTest {
                         .header("Authorization", "Bearer " + superAdminToken)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
                 .andExpect(status().is(422));
+    }
+
+    /**
+     * "At least one active Super Admin" has to mean someone who can really sign in. Found in the 2026-10-06 go-live
+     * QA: the never-used placeholder admin (and any invitee who had not yet set a password) counted as "another Super
+     * Admin", so the real owner could be demoted with nobody left able to run the shop. The count is relative because
+     * the other tests in this class share the database and create their own Super Admins.
+     */
+    @Test
+    void onlyASuperAdminWhoCanSignInCountsAsAnotherOwner() {
+        UUID nobody = UUID.randomUUID();
+        long before = staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot("SUPER_ADMIN", nobody);
+
+        StaffUser neverSignedIn = staffWithRole("SUPER_ADMIN");
+        neverSignedIn.setMustChangePassword(true);
+        staffUsers.save(neverSignedIn);
+        assertThat(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot("SUPER_ADMIN", nobody))
+                .as("an invited owner who has not set a password yet").isEqualTo(before);
+
+        StaffUser switchedOff = staffWithRole("SUPER_ADMIN");
+        switchedOff.setEnabled(false);
+        staffUsers.save(switchedOff);
+        assertThat(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot("SUPER_ADMIN", nobody))
+                .as("a disabled owner").isEqualTo(before);
+
+        StaffUser working = staffWithRole("SUPER_ADMIN");
+        assertThat(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot("SUPER_ADMIN", nobody))
+                .as("an owner who is enabled and has signed in").isEqualTo(before + 1);
+        assertThat(staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot("SUPER_ADMIN", working.getId()))
+                .as("…but never counted against themselves").isEqualTo(before);
     }
 
     @Test

@@ -16,9 +16,9 @@ import java.util.Map;
 
 /**
  * Sends through Brevo's transactional API (the provider this client's other
- * projects use). Active only when {@code BREVO_API_KEY} is set. Untested against
- * the live API — no key was available when this was written; the request shape
- * follows Brevo's documented {@code POST /v3/smtp/email}.
+ * projects use). Active only when {@code BREVO_API_KEY} is set. Confirmed working in
+ * production: since 2026-09-23 a real email arrives, and the owner's staff sign in with
+ * the codes it sends. The request shape follows Brevo's documented {@code POST /v3/smtp/email}.
  */
 @Slf4j
 @Component

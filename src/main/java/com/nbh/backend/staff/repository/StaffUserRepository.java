@@ -15,6 +15,11 @@ public interface StaffUserRepository extends JpaRepository<StaffUser, UUID> {
     /** Everyone the stock-alert emails go to: enabled accounts that haven't been switched off. */
     List<StaffUser> findByEnabledTrueAndDeletedFalseAndReceivesStockAlertsTrue();
 
-    /** Active holders of a role other than {@code id} — used to keep at least one Super Admin around. */
-    long countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndIdNot(String roleName, UUID id);
+    /**
+     * Holders of a role other than {@code id} who can actually sign in today — enabled, and past their first sign-in (an
+     * invited or env-seeded account that has never set a password is "pending" and cannot stand in for an owner). Used
+     * to keep at least one Super Admin around: found in the 2026-10-06 go-live QA, the never-used placeholder admin
+     * counted as "another Super Admin", so the real owner could be demoted with nobody left able to run the shop.
+     */
+    long countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot(String roleName, UUID id);
 }

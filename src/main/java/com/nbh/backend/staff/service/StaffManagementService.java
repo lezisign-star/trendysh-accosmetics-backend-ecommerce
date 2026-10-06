@@ -148,7 +148,8 @@ public class StaffManagementService {
 
     /** Stops the shop being left with nobody who can manage staff. */
     private void requireAnotherActiveSuperAdmin(StaffUser leaving) {
-        if (staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndIdNot(SUPER_ADMIN_ROLE, leaving.getId()) == 0) {
+        if (staffUsers.countByStaffRoleNameAndEnabledTrueAndDeletedFalseAndMustChangePasswordFalseAndIdNot(
+                SUPER_ADMIN_ROLE, leaving.getId()) == 0) {
             throw new UnprocessableException("There must always be at least one active Super Admin");
         }
     }

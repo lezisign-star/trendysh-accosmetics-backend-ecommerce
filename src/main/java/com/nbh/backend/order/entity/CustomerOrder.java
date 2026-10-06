@@ -71,6 +71,42 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "delivery_contact_phone", length = 20)
     private String deliveryContactPhone;
 
+    // ---- Optional extras about where a delivery goes and who gets it (V55). All null for a pickup and for orders that
+    // gave none; which of them a delivery can hold depends on its method, see DeliveryDetails (the dto that moves them). ----
+
+    @Column(name = "delivery_estate", length = 120)
+    private String deliveryEstate;
+
+    @Column(name = "delivery_street", length = 120)
+    private String deliveryStreet;
+
+    @Column(name = "delivery_building", length = 120)
+    private String deliveryBuilding;
+
+    /** Floor, door or house number. */
+    @Column(name = "delivery_unit", length = 60)
+    private String deliveryUnit;
+
+    /** For a courier or sacco parcel: the office or branch it is collected from. */
+    @Column(name = "delivery_courier_office", length = 120)
+    private String deliveryCourierOffice;
+
+    /** How to find the place, in the customer's own words (may run to several lines). */
+    @Column(name = "delivery_directions", length = 400)
+    private String deliveryDirections;
+
+    /** Gate, security, "call when outside" and the like (may run to several lines). */
+    @Column(name = "delivery_instructions", length = 400)
+    private String deliveryInstructions;
+
+    /** When someone other than the buyer receives it; the number to ring is {@link #deliveryContactPhone}. */
+    @Column(name = "delivery_receiver_name", length = 100)
+    private String deliveryReceiverName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "delivery_time_window", length = 20)
+    private DeliveryTimeWindow deliveryTimeWindow;
+
     /**
      * BODA, MATATU or COURIER for DELIVERY_COURIER orders — the customer's preferred manually-arranged
      * transport, all paid directly to the transporter and confirmed by phone (V33). Null for pickup and
@@ -81,6 +117,10 @@ public class CustomerOrder extends BaseEntity {
 
     @Column(name = "placed_at")
     private Instant placedAt;
+
+    /** When the one automatic "we still need your M-PESA code" email went out (V54); null until it has. */
+    @Column(name = "payment_reminder_sent_at")
+    private Instant paymentReminderSentAt;
 
     /** Who was actually assigned to carry a DELIVERY_COURIER order, and what they and the customer agreed on the phone (V35). Null until {@code OrderFulfilmentService.assignTransporter} runs; always null for PICKUP. */
     @Column(name = "transporter_name", length = 200)

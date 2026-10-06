@@ -404,6 +404,26 @@ class TumaBodaIntegrationTest {
     }
 
     @Test
+    void whatTheCustomerAddedAboutTheDoorGoesToTheRiderAndTheNamedReceiverIsWhoTheRiderAsksFor() throws Exception {
+        MvcResult result = checkoutRaw(cartWith("1000", 1), "BODA", true,
+                ",\"deliveryDetails\":{\"building\":\"Yaya Towers\",\"unit\":\"4th floor\","
+                        + "\"directions\":\"Opposite the pharmacy\",\"instructions\":\"Call at the gate\","
+                        + "\"receiverName\":\"Njeri Receptionist\"}");
+        assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200);
+        JsonNode checkout = json.readTree(result.getResponse().getContentAsString());
+        JsonNode order = checkout.get("order");
+        Placed placed = new Placed(order.get("id").asText(), order.get("orderNo").asText(),
+                checkout.get("paymentRecordId").asText(), order);
+        pay(placed);
+        okStaff(post("/api/v1/orders/" + placed.orderId() + "/mark-ready"));
+
+        JsonNode sent = json.readTree(FAKE.requestsTo("POST", CREATE).get(0).body());
+        assertThat(sent.at("/recipient/name").asText()).isEqualTo("Njeri Receptionist");
+        assertThat(sent.at("/recipient/location").asText()).isEqualTo(
+                "Kilimani, Wood Avenue, Nairobi — Yaya Towers, 4th floor — Opposite the pharmacy — Note: Call at the gate");
+    }
+
+    @Test
     void anOrderIsNotBookedBeforeItIsReady() throws Exception {
         Placed placed = placeTumaboda();
         pay(placed);

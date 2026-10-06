@@ -2,6 +2,7 @@ package com.nbh.backend.catalog.service;
 
 import com.nbh.backend.catalog.entity.ProductSaleEvent;
 import com.nbh.backend.catalog.repository.ProductSaleEventRepository;
+import com.nbh.backend.common.event.OrderCancelledEvent;
 import com.nbh.backend.common.event.PaymentConfirmedEvent;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
@@ -75,6 +76,24 @@ public class ProductAnalyticsListener {
             }
         } catch (Exception e) {
             log.error("Failed to record product sale events for order {}: {}", event.orderId(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Staff can cancel an order after it was paid (the customer changed their mind, the goods were damaged): the
+     * units were counted as sold when the payment landed, so they are taken back out. Found in the 2026-10-06
+     * go-live QA, where "top sellers" showed 7 lipsticks sold against 5 on orders that were still standing.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onOrderCancelled(OrderCancelledEvent event) {
+        try {
+            int removed = saleEventRepository.deleteByOrderId(event.orderId());
+            if (removed > 0) {
+                log.info("Order {} was cancelled: removed its {} product sale event(s)", event.orderNo(), removed);
+            }
+        } catch (Exception e) {
+            log.error("Failed to remove product sale events for cancelled order {}: {}", event.orderId(), e.getMessage(), e);
         }
     }
 }

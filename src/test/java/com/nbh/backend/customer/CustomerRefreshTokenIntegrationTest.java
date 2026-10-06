@@ -149,6 +149,26 @@ class CustomerRefreshTokenIntegrationTest {
         assertThat(refresh(login.refreshCookie()).getResponse().getStatus()).isEqualTo(200);
     }
 
+    /**
+     * Found in the 2026-10-06 live QA: a mistyped current password answered 401, which to every signed-in page means
+     * "your session is gone", so the shopper was signed out for a typo. It is a 422 with the reason, and the session lives.
+     */
+    @Test
+    void aMistypedCurrentPasswordIsRefusedWithAReasonAndDoesNotEndTheSession() throws Exception {
+        Login device = login();
+
+        MvcResult refused = mvc.perform(post("/api/v1/customer/auth/change-password")
+                .header("Authorization", "Bearer " + device.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"not-my-password\",\"newPassword\":\"another-long-password\"}")).andReturn();
+
+        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+        assertThat(refused.getResponse().getContentAsString()).contains("Current password is incorrect");
+        assertThat(mvc.perform(get("/api/v1/customer/auth/me")
+                .header("Authorization", "Bearer " + device.accessToken())).andReturn().getResponse().getStatus())
+                .as("the same session still works").isEqualTo(200);
+    }
+
     @Test
     void changingThePasswordSignsOutOtherDevicesButKeepsThisOneSignedIn() throws Exception {
         Login device = login();
@@ -165,6 +185,16 @@ class CustomerRefreshTokenIntegrationTest {
                 .content("{\"currentPassword\":\"" + PASSWORD + "\",\"newPassword\":\"another-long-password\"}")).andReturn();
         assertThat(changed.getResponse().getStatus()).isEqualTo(200);
         Login fresh = toLogin(changed);
+
+        // The point of changing it: the new password signs in and the old one no longer does. (Found in the
+        // 2026-10-06 go-live QA: ending the other sessions cleared the persistence context before the new
+        // password was flushed, so the change was silently lost while the request answered 200.)
+        assertThat(mvc.perform(post("/api/v1/customer/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}")).andReturn()
+                .getResponse().getStatus()).as("the old password").isEqualTo(401);
+        assertThat(mvc.perform(post("/api/v1/customer/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email + "\",\"password\":\"another-long-password\"}")).andReturn()
+                .getResponse().getStatus()).as("the new password").isEqualTo(200);
 
         assertThat(refresh(other.refreshCookie()).getResponse().getStatus()).isEqualTo(401);
         assertThat(refresh(device.refreshCookie()).getResponse().getStatus()).isEqualTo(401);

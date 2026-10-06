@@ -18,9 +18,12 @@ public final class AdminPaymentDtos {
 
     private AdminPaymentDtos() {}
 
-    // ---- customer -> "I've paid"
+    // ---- customer -> the M-PESA code that completes an order. Six characters is the floor (owner's call, 2026-10-06:
+    // loose on purpose, staff check every code against the statement); PaymentClaimService trims before it counts.
     public record ClaimRequest(
-            @NotBlank @Size(max = 60) String transactionCode,
+            @NotBlank(message = "Enter the M-PESA code from your confirmation message")
+            @Size(min = 6, max = 60, message = "Enter the M-PESA code from your confirmation message (at least 6 characters)")
+            String transactionCode,
             @NotNull @DecimalMin("1") BigDecimal amount,
             LocalDate paidOn,
             @Size(max = 200) String payerName) {}
@@ -47,13 +50,19 @@ public final class AdminPaymentDtos {
     public record AwaitingPaymentDto(
             UUID paymentId, String orderNo, String customerName, String phone, String email,
             BigDecimal amount, String reference, Instant expiresAt, Instant createdAt, boolean underReview,
-            String orderStatus, String expectedAccount) {
+            String orderStatus, String expectedAccount,
+            /** NONE (the customer has not entered an M-PESA code), PENDING (one is waiting for a check) or REJECTED. */
+            String codeStatus,
+            /** The code waiting for a check, if any. */
+            String submittedCode) {
 
-        public static AwaitingPaymentDto from(PaymentRecord p, boolean underReview, String expectedAccount) {
+        public static AwaitingPaymentDto from(PaymentRecord p, PaymentCodeStatus codeStatus, String submittedCode,
+                                              String expectedAccount) {
             var o = p.getOrder();
             return new AwaitingPaymentDto(p.getId(), o.getOrderNo(), o.getCustomerName(), o.getGuestPhone(),
                     o.getGuestEmail(), p.getAmount(), p.getPaymentReference(), p.getExpiresAt(), p.getCreatedAt(),
-                    underReview, o.getStatus().name(), expectedAccount);
+                    codeStatus == PaymentCodeStatus.PENDING, o.getStatus().name(), expectedAccount,
+                    codeStatus.name(), submittedCode);
         }
     }
 

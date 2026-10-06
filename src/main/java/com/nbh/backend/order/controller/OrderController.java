@@ -5,6 +5,9 @@ import com.nbh.backend.order.dto.AdminOrderDetailDto;
 import com.nbh.backend.order.dto.AssignTransporterRequest;
 import com.nbh.backend.order.dto.OrderDto;
 import com.nbh.backend.order.dto.OrderReturnRequest;
+import com.nbh.backend.payment.dto.PaymentCodeStatus;
+import com.nbh.backend.payment.entity.PaymentClaim;
+import com.nbh.backend.payment.repository.PaymentClaimRepository;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.order.dto.OrderSummaryDto;
 import com.nbh.backend.order.entity.CustomerOrder;
@@ -18,6 +21,10 @@ import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -34,13 +41,16 @@ public class OrderController {
     private final OrderFulfilmentService fulfilmentService;
     private final OrderReturnService returnService;
     private final PaymentRecordRepository paymentRecordRepository;
+    private final PaymentClaimRepository claimRepository;
 
     public OrderController(CustomerOrderRepository orderRepository, OrderFulfilmentService fulfilmentService,
-                            OrderReturnService returnService, PaymentRecordRepository paymentRecordRepository) {
+                            OrderReturnService returnService, PaymentRecordRepository paymentRecordRepository,
+                            PaymentClaimRepository claimRepository) {
         this.orderRepository = orderRepository;
         this.fulfilmentService = fulfilmentService;
         this.returnService = returnService;
         this.paymentRecordRepository = paymentRecordRepository;
+        this.claimRepository = claimRepository;
     }
 
     /**
@@ -57,9 +67,12 @@ public class OrderController {
                                        @RequestParam(required = false) String q,
                                        @RequestParam(defaultValue = "false") boolean needsAttentionOnly,
                                        @RequestParam(defaultValue = "false") boolean queue,
+                                       @RequestParam(required = false) String pickupPlace,
                                        @PageableDefault(size = 20) Pageable pageable) {
         String term = (q == null || q.isBlank()) ? null : q.trim();
         String phone = PhoneNumbers.searchFragment(term);
+        // Only pickup orders can be narrowed to a shop, by the name the customer chose at checkout ("Simara Mall").
+        String place = (pickupPlace == null || pickupPlace.isBlank()) ? null : pickupPlace.trim();
         Instant now = Instant.now();
         if (queue) {
             // The to-do list: only orders still waiting on staff, longest-waiting first. An explicit
@@ -67,11 +80,32 @@ public class OrderController {
             Collection<OrderStatus> open = status == null ? QUEUE_STATUSES
                     : QUEUE_STATUSES.contains(status) ? List.of(status) : List.of();
             if (open.isEmpty()) return Page.empty(pageable);
-            return orderRepository.searchQueue(open, term, phone, needsAttentionOnly, pageable)
-                    .map(o -> o.withUrgency(now));
+            return withPaymentCodes(orderRepository.searchQueue(open, term, phone, needsAttentionOnly, place, pageable)
+                    .map(o -> o.withUrgency(now)));
         }
-        return orderRepository.search(status, term, phone, needsAttentionOnly, pageable)
-                .map(o -> o.withUrgency(now));
+        return withPaymentCodes(orderRepository.search(status, term, phone, needsAttentionOnly, place, pageable)
+                .map(o -> o.withUrgency(now)));
+    }
+
+    /**
+     * Tells staff, for every unpaid order on the page, whether the customer has entered the M-PESA code that
+     * completes it. A customer who goes off to pay and never comes back leaves an order with no code: it stays on
+     * the list, flagged, so someone can chase it. One query for the whole page.
+     */
+    private Page<OrderSummaryDto> withPaymentCodes(Page<OrderSummaryDto> page) {
+        Set<UUID> unpaid = page.getContent().stream()
+                .filter(o -> o.status() == OrderStatus.PENDING_PAYMENT || o.status() == OrderStatus.EXPIRED)
+                .map(OrderSummaryDto::id)
+                .collect(Collectors.toSet());
+        if (unpaid.isEmpty()) {
+            return page;
+        }
+        Map<UUID, List<PaymentClaim.ClaimStatus>> claimsByOrder = claimRepository.statusesForOrders(unpaid).stream()
+                .collect(Collectors.groupingBy(PaymentClaimRepository.OrderClaimStatus::getOrderId,
+                        Collectors.mapping(PaymentClaimRepository.OrderClaimStatus::getStatus, Collectors.toList())));
+        return page.map(o -> unpaid.contains(o.id())
+                ? o.withPaymentCode(PaymentCodeStatus.of(claimsByOrder.getOrDefault(o.id(), List.of())).name())
+                : o);
     }
 
     /**
@@ -101,7 +135,8 @@ public class OrderController {
     public AdminOrderDetailDto get(@PathVariable java.util.UUID id) {
         CustomerOrder order = orderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + id));
-        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id));
+        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id),
+                claimRepository.findByOrderIdNewestFirst(id));
     }
 
     /** Who's actually carrying a DELIVERY_COURIER order, and the price agreed by phone. See {@code OrderFulfilmentService.assignTransporter}. */
@@ -171,7 +206,8 @@ public class OrderController {
     @Transactional
     public AdminOrderDetailDto postReturn(@PathVariable java.util.UUID id, @jakarta.validation.Valid @RequestBody OrderReturnRequest request) {
         CustomerOrder order = returnService.post(id, request);
-        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id));
+        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id),
+                claimRepository.findByOrderIdNewestFirst(id));
     }
 
     public record CancelOrderRequest(String reason) {}

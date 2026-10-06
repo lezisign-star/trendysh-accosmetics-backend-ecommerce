@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -38,6 +39,11 @@ public class PaymentClaimService {
     static final Duration REVIEW_HOLD = Duration.ofHours(12);
     /** Stops a bot or a confused customer flooding the review queue. */
     static final int MAX_PENDING_CLAIMS_PER_PAYMENT = 3;
+    /**
+     * The shortest M-PESA code taken. Entering one is what finishes placing an order, and the owner chose to keep the
+     * rule loose (2026-10-06): it only keeps out an empty box or "paid", and staff check every code against the statement.
+     */
+    static final int MIN_CODE_LENGTH = 6;
 
     private final PaymentRecordRepository paymentRecordRepository;
     private final PaymentClaimRepository claimRepository;
@@ -66,6 +72,12 @@ public class PaymentClaimService {
     @Transactional
     public PaymentClaim submit(String orderNo, String reference, String transactionCode, BigDecimal amount,
                                LocalDate paidOn, String payerName) {
+        // M-PESA codes are upper case; storing them that way means staff compare like with like on the statement.
+        String code = transactionCode == null ? "" : transactionCode.trim().toUpperCase(Locale.ROOT);
+        if (code.length() < MIN_CODE_LENGTH) {
+            throw new IllegalArgumentException(
+                    "Enter the M-PESA code from your confirmation message (at least " + MIN_CODE_LENGTH + " characters)");
+        }
         String normalised = referenceGenerator.normaliseAndValidate(reference);
         UUID paymentId = normalised == null ? null
                 : paymentRecordRepository.findIdByReferenceAndOrderNo(normalised, orderNo).orElse(null);
@@ -82,7 +94,13 @@ public class PaymentClaimService {
         if (payment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS) {
             throw new ConflictException("This order has already been paid");
         }
-        String code = transactionCode.trim();
+        // Staff marked this payment failed (or it was reversed): a claim on it could never be approved, so it would
+        // only sit in the queue as a dead end. The customer is better told now to contact the shop.
+        if (payment.getStatus() == PaymentRecord.PaymentStatus.FAILED
+                || payment.getStatus() == PaymentRecord.PaymentStatus.REVERSED) {
+            throw new ConflictException("This payment was cancelled by the shop, so we can't take a payment code for it."
+                    + " Please message us on WhatsApp and we'll sort it out.");
+        }
         if (claimRepository.existsByPaymentIdAndTransactionCodeIgnoreCase(payment.getId(), code)) {
             throw new ConflictException("You've already sent us that transaction code");
         }

@@ -3,6 +3,7 @@ package com.nbh.backend.tumaboda;
 import com.nbh.backend.common.event.TumaBodaDeliveryUpdatedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.util.PhoneNumbers;
+import com.nbh.backend.order.dto.DeliveryDetails;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
@@ -200,10 +201,15 @@ public class TumaBodaBookingService {
         String recipientPhone = order.getDeliveryContactPhone() == null || order.getDeliveryContactPhone().isBlank()
                 ? order.getGuestPhone()
                 : order.getDeliveryContactPhone();
+        // The optional extras the customer gave (building and floor, directions, a note) go to the rider as part of
+        // the location text, and a named receiver is who the rider asks for at the door.
+        DeliveryDetails details = DeliveryDetails.of(order);
+        String buyerName = order.getCustomerName() == null || order.getCustomerName().isBlank()
+                ? "Customer" : order.getCustomerName();
         Recipient recipient = new Recipient(
-                order.getCustomerName() == null || order.getCustomerName().isBlank() ? "Customer" : order.getCustomerName(),
+                details != null && details.receiverName() != null ? details.receiverName() : buyerName,
                 internationalPhone(recipientPhone),
-                order.getDeliveryAddress() == null ? "" : order.getDeliveryAddress(),
+                DeliveryDetails.locationFor(order.getDeliveryAddress(), details),
                 order.getDropoffLat(), order.getDropoffLng());
         String reference = order.getTumabodaRestartCount() == 0
                 ? order.getOrderNo() : order.getOrderNo() + "-R" + order.getTumabodaRestartCount();

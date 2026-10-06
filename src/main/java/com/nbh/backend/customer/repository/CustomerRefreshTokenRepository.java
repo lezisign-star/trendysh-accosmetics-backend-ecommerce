@@ -16,11 +16,11 @@ public interface CustomerRefreshTokenRepository extends JpaRepository<CustomerRe
     @EntityGraph(attributePaths = "account")
     Optional<CustomerRefreshToken> findByTokenHash(String tokenHash);
 
-    @Modifying(clearAutomatically = true)
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update CustomerRefreshToken t set t.revokedAt = :now where t.familyId = :familyId and t.revokedAt is null")
     int revokeFamily(@Param("familyId") UUID familyId, @Param("now") Instant now);
 
-    @Modifying(clearAutomatically = true)
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update CustomerRefreshToken t set t.revokedAt = :now where t.account.id = :accountId and t.revokedAt is null")
     int revokeAllForAccount(@Param("accountId") UUID accountId, @Param("now") Instant now);
 

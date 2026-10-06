@@ -16,6 +16,7 @@ import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.dto.CheckoutRequest;
+import com.nbh.backend.order.dto.DeliveryDetails;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
@@ -118,6 +119,7 @@ public class CheckoutService {
     @Transactional
     public CheckoutResult checkout(String sessionId, CheckoutRequest request,
                                     com.nbh.backend.customer.entity.CustomerAccount customer) {
+        requireUsableContactDetails(request);
         Cart cart = cartRepository.findWithLockBySessionId(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("No cart for this session"));
         if (cart.getStatus() != Cart.CartStatus.ACTIVE) {
@@ -173,6 +175,13 @@ public class CheckoutService {
                 deliveryContact != null && deliveryContact.equals(contactPhone) ? null : deliveryContact);
         // Pickup has no courier leg, so a stray method on a pickup order is dropped, not stored.
         order.setDeliveryMethod(request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER ? request.deliveryMethod() : null);
+        // The optional extras (where exactly, how to find it, who receives it, when) only mean something for a delivery,
+        // and only the ones that suit how it travels are kept; a pickup or an order that gave none stores none.
+        DeliveryDetails.store(
+                request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER && request.deliveryDetails() != null
+                        ? request.deliveryDetails().cleanedFor(request.deliveryMethod())
+                        : null,
+                order);
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(BigDecimal.ZERO);
         order.setVatTotal(BigDecimal.ZERO);
@@ -333,6 +342,25 @@ public class CheckoutService {
                 order.getGrandTotal(), cartItems.size()));
 
         return new CheckoutResult(order, paymentRecord);
+    }
+
+    /**
+     * The checks the checkout form already makes, repeated where they cannot be skipped: staff call the customer on
+     * this number to settle payment and delivery, so a made-up one (found in the 2026-10-06 go-live QA: "12345" and
+     * "abc" were accepted) leaves an order nobody can act on, and a delivery with no place to deliver to cannot be sent.
+     */
+    private static void requireUsableContactDetails(CheckoutRequest request) {
+        if (!PhoneNumbers.isValidKenyanMobile(request.guestPhone())) {
+            throw new IllegalArgumentException("Enter a valid Kenyan mobile number, e.g. 0720 000 111");
+        }
+        String dropoffContact = request.deliveryContactPhone();
+        if (dropoffContact != null && !dropoffContact.isBlank() && !PhoneNumbers.isValidKenyanMobile(dropoffContact)) {
+            throw new IllegalArgumentException("Enter a valid Kenyan mobile number for the person receiving the delivery, e.g. 0720 000 111");
+        }
+        if (request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER
+                && (request.deliveryAddress() == null || request.deliveryAddress().isBlank())) {
+            throw new IllegalArgumentException("Tell us where to deliver the order");
+        }
     }
 
     /**

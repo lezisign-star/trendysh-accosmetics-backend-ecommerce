@@ -5,6 +5,7 @@ import com.nbh.backend.customer.dto.CustomerDtos.MyOrderDto;
 import com.nbh.backend.customer.entity.CustomerAccount;
 import com.nbh.backend.order.dto.OrderDto;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.payment.service.PaymentInstructionsService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,9 +21,12 @@ import java.util.List;
 public class CustomerOrderController {
 
     private final CustomerOrderRepository orderRepository;
+    private final PaymentInstructionsService instructionsService;
 
-    public CustomerOrderController(CustomerOrderRepository orderRepository) {
+    public CustomerOrderController(CustomerOrderRepository orderRepository,
+                                   PaymentInstructionsService instructionsService) {
         this.orderRepository = orderRepository;
+        this.instructionsService = instructionsService;
     }
 
     @GetMapping
@@ -36,7 +40,8 @@ public class CustomerOrderController {
         // An order that exists but belongs to someone else is reported exactly like one that doesn't exist.
         return orderRepository.findByOrderNo(orderNo)
                 .filter(o -> o.getCustomerAccount() != null && o.getCustomerAccount().getId().equals(customer.getId()))
-                .map(OrderDto::from)
+                // Its owner can get back to the page that takes the M-PESA code, if the order is still waiting on money.
+                .map(o -> OrderDto.from(o).withPayRef(instructionsService.payReferenceFor(o)))
                 .orElseThrow(() -> new NotFoundException("No order " + orderNo + " on your account"));
     }
 }

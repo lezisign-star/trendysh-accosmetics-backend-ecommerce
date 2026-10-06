@@ -99,6 +99,24 @@ class PaymentClaimsAndCreditsIntegrationTest {
                 .andExpect(status().isTooManyRequests());
     }
 
+    /**
+     * Found in the 2026-10-06 go-live QA: a customer could still send a payment code for an order whose payment staff
+     * had already marked failed. Staff can never approve a claim on a failed payment, so it only sat in the queue as a
+     * dead end. The customer is told at once to contact the shop.
+     */
+    @Test
+    void aClaimOnAPaymentStaffMarkedFailedIs409SoItNeverSitsInTheQueueAsADeadEnd() throws Exception {
+        payment.setStatus(PaymentRecord.PaymentStatus.FAILED);
+        paymentRecordRepository.save(payment);
+
+        mvc.perform(post("/api/v1/payments/pay/" + orderNo + "/claim").param("ref", reference)
+                        .contentType(MediaType.APPLICATION_JSON).content(claimBody(uniq("QF"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("WhatsApp")));
+
+        assertEquals(0, claimService.pending().stream().filter(c -> orderNo.equals(c.getPayment().getOrder().getOrderNo())).count());
+    }
+
     @Test
     void aClaimForTheWrongReferenceIs404() throws Exception {
         mvc.perform(post("/api/v1/payments/pay/" + orderNo + "/claim").param("ref", "BCDFGH0")

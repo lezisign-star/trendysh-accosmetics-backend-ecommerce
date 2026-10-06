@@ -4,6 +4,7 @@ import com.nbh.backend.auth.dto.AuthResponse;
 import com.nbh.backend.auth.dto.ChangePasswordRequest;
 import com.nbh.backend.auth.dto.LoginRequest;
 import com.nbh.backend.common.security.JwtService;
+import com.nbh.backend.customer.service.LoginThrottle;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.staff.repository.StaffUserRepository;
 import jakarta.validation.Valid;
@@ -32,27 +33,43 @@ public class AuthController {
     private final JwtService jwtService;
     private final StaffUserRepository staffUserRepository;
     private final PasswordEncoder passwordEncoder;
+    private final LoginThrottle loginThrottle;
 
     public AuthController(AuthenticationManager authenticationManager,
                            JwtService jwtService,
                            StaffUserRepository staffUserRepository,
-                           PasswordEncoder passwordEncoder) {
+                           PasswordEncoder passwordEncoder,
+                           LoginThrottle loginThrottle) {
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.staffUserRepository = staffUserRepository;
         this.passwordEncoder = passwordEncoder;
+        this.loginThrottle = loginThrottle;
     }
 
     @PostMapping("/login")
     public AuthResponse login(@Valid @RequestBody LoginRequest request) {
+        // Same slow-down the shop's customers get: five wrong passwords for one email close the door for a while
+        // (a staff reset code, which has its own limit, always works). Before this a staff password could be
+        // guessed without limit.
+        String throttleKey = LoginThrottle.staffKey(request.email());
+        loginThrottle.checkAllowed(throttleKey);
         Authentication authentication;
         try {
             authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(request.email(), request.password()));
         } catch (org.springframework.security.core.AuthenticationException e) {
+            // Only a real staff account's email counts. The one sign-in form tries THIS login first for every email and
+            // only then the shopper login, so counting a shopper's email here (found in the 2026-10-06 live QA) shut
+            // shoppers out of signing in after five visits in a quarter of an hour, and let anyone lock a shopper out
+            // by guessing here. An email that is not staff never adds up, so it can never be locked.
+            if (staffUserRepository.existsByEmailIgnoreCase(request.email())) {
+                loginThrottle.recordFailure(throttleKey);
+            }
             throw new BadCredentialsException("Invalid email or password");
         }
 
+        loginThrottle.reset(throttleKey);
         StaffUser staff = (StaffUser) authentication.getPrincipal();
         return toAuthResponse(staff);
     }

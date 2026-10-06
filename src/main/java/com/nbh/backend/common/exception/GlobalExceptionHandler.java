@@ -3,6 +3,7 @@ package com.nbh.backend.common.exception;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.catalina.connector.ClientAbortException;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -140,6 +141,13 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Object> handleDataIntegrityViolation(DataIntegrityViolationException e) {
+        // A number too big for its column (typing an extra few zeros into a stock count or a price) is the typist's
+        // mistake and can be fixed on the spot, not "a conflicting record": Postgres reports it as SQLSTATE 22003.
+        if (NestedExceptionUtils.getMostSpecificCause(e) instanceof java.sql.SQLException sql
+                && "22003".equals(sql.getSQLState())) {
+            log.warn("400: a number was too large for its column: {}", sql.getMessage());
+            return body(HttpStatus.BAD_REQUEST, "One of the numbers is too large — check it and try again");
+        }
         log.error("409: unhandled data integrity violation", e);
         return body(HttpStatus.CONFLICT, "A conflicting record already exists — please retry");
     }
@@ -192,6 +200,13 @@ public class GlobalExceptionHandler {
             org.springframework.web.bind.MissingServletRequestParameterException e) {
         log.warn("400: missing parameter '{}'", e.getParameterName());
         return body(HttpStatus.BAD_REQUEST, "Missing required parameter '" + e.getParameterName() + "'");
+    }
+
+    /** Same shadowing risk — a required header left out (e.g. checkout without the X-Cart-Session header) is the caller's mistake: 400, not a 500. */
+    @ExceptionHandler(org.springframework.web.bind.MissingRequestHeaderException.class)
+    public ResponseEntity<Object> handleMissingHeader(org.springframework.web.bind.MissingRequestHeaderException e) {
+        log.warn("400: missing header '{}'", e.getHeaderName());
+        return body(HttpStatus.BAD_REQUEST, "Missing required header '" + e.getHeaderName() + "'");
     }
 
     /** Same shadowing risk — e.g. a GET against a POST-only endpoint. Spring's own default is 405; keep it that way. */

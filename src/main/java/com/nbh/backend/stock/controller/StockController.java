@@ -10,6 +10,7 @@ import com.nbh.backend.stock.dto.StockDocumentDetailDto;
 import com.nbh.backend.stock.dto.StockMovementDto;
 import com.nbh.backend.stock.dto.WriteOffRequest;
 import com.nbh.backend.stock.entity.*;
+import com.nbh.backend.stock.service.QuantityRules;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import com.nbh.backend.stock.service.StockDocumentNoGenerator;
 import com.nbh.backend.stock.service.StockMovementQueryService;
@@ -82,6 +83,7 @@ public class StockController {
             if (unitCost.signum() < 0) {
                 throw new IllegalArgumentException(variant.getSku() + ": unitCost cannot be negative");
             }
+            QuantityRules.requireSensible(variant.getSku(), variant, qty);
             StockDocumentLine docLine = new StockDocumentLine();
             docLine.setDocument(document);
             docLine.setLineNo(lineNo++);
@@ -106,6 +108,7 @@ public class StockController {
         if (qtyChange.signum() == 0) {
             throw new IllegalArgumentException("qtyChange must be non-zero");
         }
+        QuantityRules.requireSensible(variant.getSku(), variant, qtyChange);
 
         StockDocument document = new StockDocument();
         document.setDocumentNo(documentNoGenerator.next(StockDocumentType.ADJUSTMENT));
@@ -166,6 +169,7 @@ public class StockController {
             if (qty.signum() <= 0) {
                 throw new IllegalArgumentException(variant.getSku() + ": qty must be positive");
             }
+            QuantityRules.requireSensible(variant.getSku(), variant, qty);
             StockDocumentLine docLine = new StockDocumentLine();
             docLine.setDocument(document);
             docLine.setLineNo(lineNo++);

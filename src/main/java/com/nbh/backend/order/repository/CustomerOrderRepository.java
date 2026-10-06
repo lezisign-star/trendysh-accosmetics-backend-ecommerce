@@ -110,6 +110,27 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     List<UUID> findIdsByStatus(@Param("status") OrderStatus status);
 
     /**
+     * Unpaid orders due their one "we still need your M-PESA code" email: placed before {@code cutoff}, no reminder
+     * sent yet, a payment window still open ({@code now} is before it ends), and not a single code sent for them.
+     * Ids only: {@code OrderPaymentReminderService} locks and re-checks each one before it sends anything.
+     */
+    @Query("""
+            select o.id from CustomerOrder o
+            where o.status = com.nbh.backend.order.entity.OrderStatus.PENDING_PAYMENT
+              and o.paymentReminderSentAt is null
+              and o.isMockData = false
+              and o.createdAt <= :cutoff
+              and exists (select 1 from PaymentRecord p
+                          where p.order = o and p.paymentReference is not null
+                            and p.status in (com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.INITIATED,
+                                             com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.PENDING)
+                            and p.expiresAt > :now)
+              and not exists (select 1 from PaymentClaim c where c.payment.order = o)
+            order by o.createdAt asc
+            """)
+    List<UUID> findIdsDueForPaymentReminder(@Param("cutoff") Instant cutoff, @Param("now") Instant now);
+
+    /**
      * Orders this person already has waiting for payment, matched on phone OR email — the cap
      * on how many stock holds one contact can have open at once (see CheckoutService).
      */
@@ -153,7 +174,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                      WHEN LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled') THEN true
                      WHEN o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL THEN true
                      ELSE false END,
-                o.tumabodaBookingFailure)
+                o.tumabodaBookingFailure, o.fulfilmentType, o.deliveryAddress)
             FROM CustomerOrder o
             WHERE (:status IS NULL OR o.status = :status)
               AND (:q IS NULL
@@ -166,11 +187,14 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                    OR (o.tumabodaRerouted = false
                        AND (LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled')
                             OR (o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL))))
+              AND (:pickupPlace IS NULL
+                   OR (o.fulfilmentType = com.nbh.backend.order.entity.FulfilmentType.PICKUP
+                       AND LOWER(o.deliveryAddress) LIKE LOWER(CONCAT(CAST(:pickupPlace AS string), '%'))))
             ORDER BY o.createdAt DESC
             """)
     Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q,
                                   @Param("phoneQ") String phoneQ, @Param("needsAttentionOnly") boolean needsAttentionOnly,
-                                  Pageable pageable);
+                                  @Param("pickupPlace") String pickupPlace, Pageable pageable);
 
     /**
      * The fulfilment queue: only orders still waiting on staff ({@code statuses} — dispatched, delivered,
@@ -185,7 +209,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                      WHEN LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled') THEN true
                      WHEN o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL THEN true
                      ELSE false END,
-                o.tumabodaBookingFailure)
+                o.tumabodaBookingFailure, o.fulfilmentType, o.deliveryAddress)
             FROM CustomerOrder o
             WHERE o.status IN :statuses
               AND (:q IS NULL
@@ -198,11 +222,15 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                    OR (o.tumabodaRerouted = false
                        AND (LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled')
                             OR (o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL))))
+              AND (:pickupPlace IS NULL
+                   OR (o.fulfilmentType = com.nbh.backend.order.entity.FulfilmentType.PICKUP
+                       AND LOWER(o.deliveryAddress) LIKE LOWER(CONCAT(CAST(:pickupPlace AS string), '%'))))
             ORDER BY o.createdAt ASC
             """)
     Page<OrderSummaryDto> searchQueue(@Param("statuses") java.util.Collection<OrderStatus> statuses,
                                       @Param("q") String q, @Param("phoneQ") String phoneQ,
-                                      @Param("needsAttentionOnly") boolean needsAttentionOnly, Pageable pageable);
+                                      @Param("needsAttentionOnly") boolean needsAttentionOnly,
+                                      @Param("pickupPlace") String pickupPlace, Pageable pageable);
 
     /** The "Needs attention (N)" chip's count — same predicate as {@code search}'s needsAttentionOnly branch, unfiltered by status/q. */
     @Query("""

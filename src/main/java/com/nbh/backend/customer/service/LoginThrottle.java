@@ -19,8 +19,15 @@ public class LoginThrottle {
 
     static final int MAX_FAILURES = 5;
     static final Duration WINDOW = Duration.ofMinutes(15);
+    /** Above this many remembered emails, lapsed entries are swept so a flood of made-up emails can't grow the map for good. */
+    static final int SWEEP_ABOVE = 10_000;
 
     private record Attempts(int failures, Instant windowStart) {}
+
+    /** The key for a staff sign-in: kept apart from a shopper with the same email, so one can't lock out the other. */
+    public static String staffKey(String email) {
+        return "staff:" + (email == null ? "" : email);
+    }
 
     private final ConcurrentHashMap<String, Attempts> byEmail = new ConcurrentHashMap<>();
     private final Clock clock;
@@ -48,6 +55,9 @@ public class LoginThrottle {
         Instant now = Instant.now(clock);
         byEmail.merge(key(email), new Attempts(1, now),
                 (old, ignored) -> expired(old) ? new Attempts(1, now) : new Attempts(old.failures() + 1, old.windowStart()));
+        if (byEmail.size() > SWEEP_ABOVE) {
+            byEmail.entrySet().removeIf(entry -> expired(entry.getValue()));
+        }
     }
 
     public void reset(String email) {

@@ -57,6 +57,7 @@ public class OrderTrackingService {
     private final Clock clock;
     private final OrderFulfilmentService fulfilment;
     private final com.nbh.backend.catalog.service.ProductReviewService reviews;
+    private final com.nbh.backend.payment.service.PaymentInstructionsService paymentInstructions;
     private final String frontendUrl;
 
     public OrderTrackingService(CustomerOrderRepository orders, OrderTrackingCodeRepository codes,
@@ -64,7 +65,9 @@ public class OrderTrackingService {
                                 ApplicationEventPublisher events, Clock clock,
                                 OrderFulfilmentService fulfilment,
                                 com.nbh.backend.catalog.service.ProductReviewService reviews,
+                                com.nbh.backend.payment.service.PaymentInstructionsService paymentInstructions,
                                 @Value("${app.frontend-url:http://localhost:5250}") String frontendUrl) {
+        this.paymentInstructions = paymentInstructions;
         this.orders = orders;
         this.codes = codes;
         this.sessions = sessions;
@@ -177,7 +180,8 @@ public class OrderTrackingService {
         String email = emailFor(token);
         return orders.findByOrderNo(normalizeOrderNo(rawOrderNo))
                 .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
-                .map(OrderDto::from)
+                // This guest has proved the mailbox, so they may get back to the page that takes the M-PESA code.
+                .map(o -> OrderDto.from(o).withPayRef(paymentInstructions.payReferenceFor(o)))
                 .orElseThrow(() -> new NotFoundException("No order with that number under this email"));
     }
 

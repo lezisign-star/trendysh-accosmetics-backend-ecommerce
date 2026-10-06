@@ -12,7 +12,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -132,13 +131,17 @@ public class PaymentController {
     @PostMapping("/mpesa/callback/{secret}")
     public ResponseEntity<Map<String, String>> mpesaCallback(
             @PathVariable String secret,
-            @RequestBody(required = false) MpesaCallbackRequest callback) {
+            @RequestBody(required = false) String rawBody) {
 
         if (!isAuthenticCallback(secret)) {
             log.warn("M-Pesa callback rejected: callback secret missing or did not match");
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
 
+        // Read here, not by Spring: an unreadable body is acknowledged for THIS endpoint only. The answer used
+        // to come from a controller-wide @ExceptionHandler, which also turned a malformed staff request to
+        // confirm-manual / fail-manual into a 200 "Accepted" while doing nothing.
+        MpesaCallbackRequest callback = readCallback(rawBody);
         MpesaCallbackRequest.StkCallback stkCallback =
                 callback != null && callback.body() != null ? callback.body().stkCallback() : null;
         if (stkCallback == null || stkCallback.checkoutRequestId() == null || stkCallback.resultCode() == null) {
@@ -185,11 +188,17 @@ public class PaymentController {
         return accepted();
     }
 
-    /** Safaricom retries any non-200 response, so a rejected/malformed callback is still answered this way. */
-    @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<Map<String, String>> handleUnreadableCallback(HttpMessageNotReadableException e) {
-        log.warn("Unreadable M-Pesa callback body: {}", e.getMessage());
-        return accepted();
+    /** Null for a missing or unreadable body; the caller then answers Safaricom's 200 "Accepted", since it retries any other response. */
+    private MpesaCallbackRequest readCallback(String rawBody) {
+        if (rawBody == null || rawBody.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(rawBody, MpesaCallbackRequest.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.warn("Unreadable M-Pesa callback body: {}", e.getOriginalMessage());
+            return null;
+        }
     }
 
     private ResponseEntity<Map<String, String>> accepted() {

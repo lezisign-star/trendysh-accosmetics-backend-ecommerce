@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -44,6 +45,29 @@ class LoginThrottleTest {
         fail("a@example.com", 4);
 
         assertThatCode(() -> throttle.checkAllowed("a@example.com")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aStaffSignInIsKeptApartFromAShopperWithTheSameEmail() {
+        fail(LoginThrottle.staffKey("owner@example.com"), 5);
+
+        assertThatThrownBy(() -> throttle.checkAllowed(LoginThrottle.staffKey("Owner@Example.com")))
+                .isInstanceOf(TooManyRequestsException.class);
+        // The shopper account that happens to share the address is not locked out by someone guessing the staff password.
+        assertThatCode(() -> throttle.checkAllowed("owner@example.com")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aFloodOfMadeUpEmailsCannotGrowTheMemoryForeverBecauseLapsedEntriesAreSwept() {
+        for (int i = 0; i < LoginThrottle.SWEEP_ABOVE + 5; i++) {
+            throttle.recordFailure("bot" + i + "@example.com");
+        }
+        clock.now = clock.now.plus(LoginThrottle.WINDOW).plusSeconds(1);
+
+        throttle.recordFailure("next-one@example.com");
+
+        java.util.Map<?, ?> remembered = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(throttle, "byEmail");
+        assertThat(remembered.size()).isLessThan(10);
     }
 
     @Test

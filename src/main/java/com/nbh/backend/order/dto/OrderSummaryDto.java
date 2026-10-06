@@ -1,5 +1,6 @@
 package com.nbh.backend.order.dto;
 
+import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.service.OrderUrgency;
 
@@ -36,19 +37,42 @@ public record OrderSummaryDto(
         /** Red-warning flag for the fulfilment queue — see {@link OrderUrgency}; filled in after the query. */
         boolean urgent,
         /** "From yesterday" or "Placed overnight" when {@link #urgent}, else null. */
-        String urgentReason
+        String urgentReason,
+        /** PICKUP or DELIVERY_COURIER, so the list can say how each order leaves the shop without opening it. */
+        FulfilmentType fulfilmentType,
+        /**
+         * For a pickup, the shop the customer chose at checkout ("Simara Mall — Shop GS 07"); null for a delivery
+         * (whose address stays in the detail view) and for pickups placed before the shop picker existed.
+         */
+        String pickupPlace,
+        /**
+         * For an order still waiting on money: NONE (no M-PESA code entered yet), PENDING (one is waiting for a check)
+         * or REJECTED — see {@code PaymentCodeStatus}. Null for every other status. Filled in after the query.
+         */
+        String paymentCode
 ) {
-    /** The shape the JPQL constructor expression selects; urgency is worked out afterwards. */
+    /** The shape the JPQL constructor expression selects; urgency and the code status are worked out afterwards. */
     public OrderSummaryDto(UUID id, String orderNo, OrderStatus status, String customerName, String guestEmail,
                            String guestPhone, long itemCount, BigDecimal grandTotal, Instant createdAt,
-                           boolean needsAttention, String tumabodaBookingFailure) {
+                           boolean needsAttention, String tumabodaBookingFailure,
+                           FulfilmentType fulfilmentType, String deliveryAddress) {
         this(id, orderNo, status, customerName, guestEmail, guestPhone, itemCount, grandTotal, createdAt,
-                needsAttention, tumabodaBookingFailure, false, null);
+                needsAttention, tumabodaBookingFailure, false, null, fulfilmentType,
+                fulfilmentType == FulfilmentType.PICKUP && deliveryAddress != null && !deliveryAddress.isBlank()
+                        ? deliveryAddress.trim() : null,
+                null);
     }
 
     public OrderSummaryDto withUrgency(Instant now) {
         String reason = OrderUrgency.reason(createdAt, now);
         return new OrderSummaryDto(id, orderNo, status, customerName, guestEmail, guestPhone, itemCount, grandTotal,
-                createdAt, needsAttention, tumabodaBookingFailure, reason != null, reason);
+                createdAt, needsAttention, tumabodaBookingFailure, reason != null, reason, fulfilmentType,
+                pickupPlace, paymentCode);
+    }
+
+    public OrderSummaryDto withPaymentCode(String code) {
+        return new OrderSummaryDto(id, orderNo, status, customerName, guestEmail, guestPhone, itemCount, grandTotal,
+                createdAt, needsAttention, tumabodaBookingFailure, urgent, urgentReason, fulfilmentType,
+                pickupPlace, code);
     }
 }

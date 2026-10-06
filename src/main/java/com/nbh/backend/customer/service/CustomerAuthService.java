@@ -145,7 +145,14 @@ public class CustomerAuthService {
 
         throttle.reset(normalized);
         account.setLastLoginAt(Instant.now(clock));
-        return newSession(accounts.save(account));
+        CustomerAccount saved = accounts.save(account);
+        // A verified account's email has been proven, so anything bought as a guest with it since (the shopper
+        // forgot to sign in first) is theirs: attach it now, so the orders always add up on one account. An
+        // unverified email proves nothing, and verification does this same step when it happens.
+        if (saved.isEmailVerified()) {
+            orders.attachGuestOrders(saved, saved.getEmail());
+        }
+        return newSession(saved);
     }
 
     @Transactional(readOnly = true)
@@ -165,7 +172,9 @@ public class CustomerAuthService {
     public SessionResult changePassword(UUID accountId, String currentPassword, String newPassword) {
         CustomerAccount account = load(accountId);
         if (!passwordEncoder.matches(currentPassword, account.getPassword())) {
-            throw new BadCredentialsException("Current password is incorrect");
+            // Not a 401: to the signed-in shopper's pages a 401 means "your session is gone", so a mistyped current
+            // password used to sign them out (found in the 2026-10-06 live QA). It is a problem with what they typed.
+            throw new UnprocessableException("Current password is incorrect");
         }
         account.setPassword(passwordEncoder.encode(newPassword));
         accounts.save(account);

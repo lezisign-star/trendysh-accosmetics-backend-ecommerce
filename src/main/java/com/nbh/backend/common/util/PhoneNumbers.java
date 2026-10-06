@@ -23,6 +23,14 @@ public final class PhoneNumbers {
     }
 
     /**
+     * The same rule the storefront's forms apply (validators.ts {@code isValidKenyanPhone}): a mobile number as
+     * 07xx / 01xx, +2547xx / +2541xx or 2547xx, with spaces and dashes allowed because that is how people write them.
+     */
+    public static boolean isValidKenyanMobile(String raw) {
+        return raw != null && raw.replaceAll("[\\s-]", "").matches("(?:\\+?254|0)[17]\\d{8}");
+    }
+
+    /**
      * For substring search over stored (normalised) numbers: staff type "0720…"
      * or "+254720…", stored numbers read "254720…", so a leading 0 is dropped and
      * the rest is matched as a fragment. Null when the text isn't phone-shaped.
