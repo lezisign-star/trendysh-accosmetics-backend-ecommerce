@@ -1,5 +1,186 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-07 — optional delivery details (where exactly, how to find it, who receives it, when)
+
+Committed 2026-10-07 in ONE code commit together with the 2026-10-06 entries below (they share files), rebased onto the other
+session's cart-shelf commits (863f409, 94ee9ca). **Full suite 752/752 on a fresh DB after the rebase** (748 on my own tree: 728 before;
++20: `DeliveryDetailsTest` 11,
+`CheckoutDeliveryDetailsIntegrationTest` 7, one in `TumaBodaIntegrationTest`, one in `MigrationUpgradePathTest`; +4 from the other
+session). Owner's ask: "more
+delivery location details and specifications ... so that the customer can specify even more, even if they will be optional". Owner's
+answers (AskUserQuestion): all four groups (where exactly; how to find it; handing over = instructions + receiver name and phone; when =
+best time of day), NO map pin, tailored per delivery type.
+
+- **V55** adds nine nullable columns to `customer_order`: `delivery_estate`, `_street`, `_building`, `_unit`, `_courier_office`,
+  `_directions`, `_instructions`, `_receiver_name`, `_time_window` (CHECK: MORNING / AFTERNOON / EVENING / ANY_TIME). Nothing is
+  backfilled: an order that pre-dates it holds none (proved in `MigrationUpgradePathTest`). Flat fields on `CustomerOrder`, like the
+  other `delivery_*` and `tumaboda_*` ones; `DeliveryTimeWindow` is the enum.
+- `order/dto/DeliveryDetails` (a record; it is the request AND the response shape, and the one place that tailors and tidies):
+  `cleanedFor(method)` keeps, for **BODA** estate, street, building, unit, directions, instructions, receiver name, time of day; for
+  **MATATU** estate, directions, instructions, receiver name, time; for **COURIER** estate, courier office, directions, instructions;
+  anything else (pickup, no method) keeps nothing. Single-line fields are flattened and stripped of control characters;
+  directions/instructions may run to several lines (blank lines dropped); blank is null; all-null is null (an order with no extras
+  holds none). `@Size` caps with readable messages (120/120/120/60/120/400/400/100) answer 400; an unknown time of day answers 400.
+  Also `of(order)`, `store(details, order)` and `locationFor(address, details)`. `isEmpty()` is `@JsonIgnore`: without it every
+  response grew an `"empty": false` key (the unit and integration tests did not notice; the live check did).
+- `CheckoutRequest` gained `@Valid DeliveryDetails deliveryDetails` as its 12th component (a compat constructor keeps the old
+  11-argument one). `CheckoutService` stores it only for DELIVERY_COURIER. **Who to ring at the door is still
+  `deliveryContactPhone`**, which the checkout now sends for MATATU and COURIER too (it only sent it for BODA; the server always
+  accepted and validated it for any delivery).
+- `AdminOrderDetailDto.deliveryDetails` (null when none) feeds the staff order panel. Nothing was added to the staff Orders LIST, the
+  customer-facing order JSON/tracking, or the order emails (the customer typed these; staff are who need them).
+- `TumaBodaBookingService`: the rider's `recipient.location` is the address, then building, floor/door, street, estate, then the
+  directions, then "Note: <instructions>", on one line and cut at 255 characters so a long note can never get a booking refused (TumaBoda's
+  real limit is unknown; the fake partner accepts anything). A named receiver is sent as `recipient.name` (otherwise the buyer).
+- Checked live on a scratch DB + second backend + second Vite + the fake TumaBoda (all stopped and dropped): a rider order, a courier
+  order and the Metro form were placed/driven through the real checkout at 375px, and the staff panel showed exactly the tailored fields.
+
+### Pre-push audit (2026-10-07: an independent read-only Opus review of this change and the frontend) and what came of it
+
+No blocker. **Fixed in a second commit ("Fixes from the pre-push audit"; full suite 755/755 after it):** a code sent for an order staff
+**cancelled** is now refused with "cancelled by the shop ... message us on WhatsApp and we'll refund you" (the pay page shows a cancelled
+order as expired, which takes a late code, so the code used to be accepted and then could never be approved: `PaymentClaimService.submit`);
+the order emails greet by the first word of the name only if it looks like a name (letters, digits, ' and -, at most 30), otherwise
+"there", because the checkout is public and a web address typed as the name would open an email from the shop's own address and be
+linked by the reader's mail app (`OrderEmailService.firstName`); direction-override characters (U+200E/F, U+202A-E, U+2066-9) are stripped
+from the delivery text fields; the stock-alert emails now link to Stock levels (`/admin/stock`) instead of the Forecast screen that
+SIMPLE_STOCK switched off, and say "Open stock levels".
+
+**Still open, for the owner:**
+- **`FRONTEND_URL` on Railway is `https://trendyshaccosmetic.com/`, which serves an OLDER copy of the shop** (last built 16 Sep, and it has no
+  `/trendysh-logo.png`); the live shop is `https://trendyaccosmetics.site`. Every email builds its links and logo from this variable (the pay
+  link in the placed and reminder emails, the track link in the receipt, the logo in all of them, including the sign-in codes). Set it to the
+  live domain before the new emails go out.
+- No per-IP or overall limit on the public checkout: the cap is 3 open orders per phone OR email, so the order emails can be aimed at other
+  people's addresses (and each order holds real stock). Consider a per-IP limit.
+- The staff-login throttle lets anyone who knows a staff email lock it for 15 minutes (a reset code reopens it); a 429 also reveals that an
+  email is a staff one. Accepted trade-off.
+- While the new backend is live and the old frontend still is, the new emails say the order is not complete until the code is typed, while
+  the old pay page calls the code optional: push the frontend straight after the backend (or set `APP_ORDERS_PAYMENT_REMINDER_AFTER_MINUTES`
+  high until then).
+
+## 2026-10-06 (evening) — the M-PESA code completes an order; orders line up with accounts; staff see the pickup shop
+
+Committed 2026-10-07 in the same code commit as the entry above. **Full suite 721/721 on a fresh DB** at the time
+(707 before; +14: `PaymentCodeVisibilityIntegrationTest` 8, `ConcurrentCheckoutRaceTest` 1, three in `CustomerAccountsIntegrationTest`,
+one in `StaffLoginThrottleIntegrationTest`, one in `CustomerRefreshTokenIntegrationTest`). Owner's asks, in order: (1) the customer must enter the M-PESA payment reference to complete an order, but an order
+whose reference has not been entered must stay visible to staff (a customer may go off to pay and never come back); (2) orders must
+line up with customer accounts so coupons and points can be earned later; (3) a later-feature "coming soon" for coupons and points
+in the admin menu, and POS dropped from it (it will never be built). Owner's answers to my questions: the order is saved at "Place
+order" and the code completes it (not pay-first); a guest order joins an account at the next sign-in; any code of six characters or
+more is accepted.
+
+- **The code.** Orders are still created at "Place order" (stock held, visible to staff at once, as before); the pay page now makes
+  the M-PESA code the required last step. `ClaimRequest.transactionCode` is `@Size(min = 6, max = 60)` and
+  `PaymentClaimService.submit` trims, upper-cases and re-checks the length (400 otherwise). No new column: where an order stands is
+  derived from its claims (`PaymentCodeStatus`: `NONE` / `PENDING` / `REJECTED`, a waiting or approved code beats a rejected one).
+  Exposed as `codeStatus` + `submittedCode` on `PaymentInstructionsDto` (customer pay page) and `AwaitingPaymentDto` (staff Awaiting
+  payment), `paymentCode` on `OrderSummaryDto` (staff Orders list, filled in after the page query in `OrderController.withPaymentCodes`,
+  one query per page), and `claims` (newest first) on `AdminOrderDetailDto`. `underReview` is kept (= `PENDING`).
+  An EXPIRED order still takes a code (a Paybill payment cannot be recalled), so a customer who comes back late is not stranded.
+- **Cross-order duplicate codes are NOT checked** (a fake code only costs staff a rejection; staff see the code and compare it with
+  the statement). The first code on an order still extends the stock hold to 12 h (`REVIEW_HOLD`), so the fake-code route to hoarding
+  stock is capped only by the 3-open-orders-per-contact limit: watch for it.
+- **Way back for the customer.** `OrderDto.payRef` (the pay-page reference) is filled in ONLY for the order's own owner (signed-in
+  `GET /customer/orders/{no}`, or a guest's email-verified `GET /orders/track/email/orders/{no}`) and only while the order is
+  PENDING_PAYMENT or EXPIRED (`PaymentInstructionsService.payReferenceFor`). The public order-number-only view and the staff list never
+  carry it (tested).
+- **Accounts.** The link already existed (`CustomerOrder.customerAccount`, set at checkout when a signed-in token is sent, and by
+  `attachGuestOrders` when an email is verified). Added: `CustomerAuthService.login` now also calls `attachGuestOrders` for a VERIFIED
+  account, so a guest order placed with the account's email after verification joins it at the next sign-in (an unverified email proves
+  nothing and adopts nothing; another email's orders are never swept up). `AdminOrderDetailDto.account` (id, email, name, verified; null =
+  guest) lets staff see it. Nothing more is built for coupons/points: this is the link they will use.
+- **Pickup shop on the staff list.** `OrderSummaryDto` gained `fulfilmentType` and `pickupPlace` (the "Shop — address" label the
+  customer chose, pickups only; null for deliveries and for pickups placed before the shop picker existed, which never recorded one), and
+  `GET /orders` takes `pickupPlace` (matched as a case-insensitive prefix of the stored label, pickups only; both the plain list and the
+  queue). MockMvc double-encodes `%20` in a URL string: tests pass it with `.param(...)`.
+- **Double submit made duplicate orders (found by the other session's live QA, reproduced first: 3 orders from 6 simultaneous
+  submits).** `CartService.refreshPricesForCheckout` read the basket WITHOUT the lock one step before `CheckoutService` took it, and a
+  lock does not refresh what the transaction already read, so the second submit carried on with a stale "still open" basket. It now reads
+  the basket under the lock first. `ConcurrentCheckoutRaceTest`: exactly one order and one stock hold, the rest 409.
+- **My own staff-login lockout locked SHOPPERS out (found by the other session's live QA).** The one sign-in form tries the staff login
+  for every email before the shopper login, and the lockout counted every failure, so a shopper's 5th visit in 15 minutes got a 429 from
+  the staff step and never reached their own login (and anyone could lock a shopper out by guessing at the staff door). Only an email that
+  belongs to a staff account is counted now (`AuthController.login`). Consequence to know about: a 429 therefore tells you the email is
+  a staff account (needs 5 wrong tries to see). Tests in `StaffLoginThrottleIntegrationTest`.
+- **A mistyped current password signed a shopper out.** `CustomerAuthService.changePassword` threw `BadCredentialsException` (401), which
+  every signed-in page reads as "session gone". It is a 422 `UnprocessableException` with the reason now; the staff endpoint was fine (its
+  page does not treat 401 as expiry).
+- **Order emails (owner chose all three, one reminder at 15 minutes).** Before this the shop sent NO order emails. Now, to the order's
+  checkout email: (1) **order placed**: how to pay (Paybill number, account, amount when the owner has set them), the items and total,
+  and the pay link `{app.frontend-url}/pay/{orderNo}?ref=...`; (2) **one reminder** 15 minutes after placing, only if no code of any
+  kind has been sent, the order is still PENDING_PAYMENT and its stock hold is still open (`app.orders.payment-reminder-after-minutes`,
+  sweep every minute); (3) **payment received** with where a pickup is collected (or that we will arrange delivery) and the track link.
+  Built on events already published: `OrderEmailListener` turns `OrderPlacedEvent` and `PaymentConfirmedEvent` (AFTER_COMMIT, each in
+  a `REQUIRES_NEW` read, failures logged and swallowed so a mail problem never fails checkout or a confirmation) into a
+  `CustomerEmailRequestedEvent`; no existing service or its unit test changed. The reminder is `OrderPaymentReminderSweeper` ->
+  `OrderPaymentReminderService.remindIfStillWaiting` (locks and re-checks the order, then sets `customer_order.payment_reminder_sent_at`
+  so it can never go twice). **V54** adds that column and marks EVERY existing order as already reminded, so deploying never emails a
+  backlog (proved in `MigrationUpgradePathTest`). Templates: `EmailTemplates.orderMessage` (HTML, every dynamic value escaped) and a
+  plain-text twin built in `OrderEmailService`. Demo-data orders get nothing. **Production already sends email** (Brevo is live since
+  2026-09-23, see that entry below; the owner confirmed again on 2026-10-06 that staff sign in with the emailed code), so **these three
+  go out for real, to real customers, the moment this backend is deployed: there is no switch**. Locally (no `BREVO_API_KEY`) each one
+  is only written to the backend log, like the OTP emails. Abuse note: checkout is public, so an email can be sent to an address a
+  stranger typed; the 3-open-orders-per-contact cap bounds it to a handful per victim per 45 minutes.
+  Tests: `OrderEmailsIntegrationTest` 4, `EmailTemplatesUnitTest` +2, `MigrationUpgradePathTest` +1.
+- **Still open from the other session's QA list, not touched here:** (its "BREVO_API_KEY unset" note is true only locally; production
+  sends) open staff order panel does not live-refresh; a duplicate M-PESA code on confirm reads "A conflicting record already exists";
+  analytics "Low stock" ignores simple-stock mode; TumaBoda settlement accepts more than is owed; a payment marked failed cannot be
+  revived.
+
+## 2026-10-06 — go-live QA of the whole shop (customers and every staff role): ten fixes
+
+Committed 2026-10-07 in the same code commit as the entries above. **Full suite 707/707 on a fresh DB** at the time.
+Owner asked for the platform to be tested as customers and as every staff role, locally, and for the gaps to be split into
+"can't go live without" and "can go live with". Method: a scratch DB (`nbh_qa`, V1-V53 apply on an empty one), a second backend on
+8091, a second Vite on 5251, and Node scripts (`qa-*.mjs` in the session scratchpad: 56+51+36+45 customer checks, 7 payment-window,
+3 permission matrix across 6 roles x 38 endpoints, 45+87+91+99 staff, 49 with TumaBoda ON against a fake partner API). Staff sign-in
+through the app's own forgot-password flow with a throwaway password, as before. Everything below was found by those runs.
+
+- **Change password was silently lost (customers).** `CustomerRefreshTokenRepository.revokeFamily` / `revokeAllForAccount` were
+  `@Modifying(clearAutomatically = true)` without `flushAutomatically`, so ending the other sessions threw away the not-yet-flushed
+  new password while the request answered 200. Fixed; `CustomerRefreshTokenIntegrationTest` now signs in with the old (401) and new (200) password.
+- **A malformed staff confirm/fail of a payment answered 200 "Accepted" and did nothing.** `PaymentController` had a controller-wide
+  `@ExceptionHandler(HttpMessageNotReadableException)` meant for Safaricom's callback only. The callback now reads its own body (still
+  answers 200 "Accepted" for anything unreadable, 404 for a wrong secret); `confirm-manual` / `fail-manual` answer 400. `PaymentBodyHandlingIntegrationTest`.
+- **Staff passwords could be guessed without limit.** `AuthController.login` now uses `LoginThrottle` with a separate `staffKey` (5 wrong
+  passwords per email lock sign-in for 15 minutes with 429; a staff reset code, which has its own limit, resets it). The throttle
+  also sweeps lapsed entries above 10,000 so made-up emails cannot grow the map. `StaffLoginThrottleIntegrationTest`, `LoginThrottleTest`.
+- **Placeholder Super Admin `admin@nairobibeautyhub.co.ke`.** Created in every environment by default; the domain does not exist in DNS
+  (anyone could register it and take the account over through "forgot password"), and the never-used account also counted as "another
+  Super Admin" in the last-owner guard. `app.bootstrap.admin-email` now defaults to blank (no account); the test profile sets it
+  explicitly. The guard counts only owners who are enabled AND have signed in (`countBy...MustChangePasswordFalse...`). **PRODUCTION
+  ACTION: disable or delete that account there** (Staff screen) — changing the default does not touch an account that already exists.
+  `StaffUserSeederUnitTest`, `StaffManagementIntegrationTest.onlyASuperAdminWhoCanSignInCountsAsAnotherOwner`.
+- **Checkout accepted "12345", "abc" and a delivery with no address; a missing `X-Cart-Session` answered 500.** `CheckoutService` now
+  refuses a guest phone or drop-off contact phone that is not a Kenyan mobile (same rule as the form: `PhoneNumbers.isValidKenyanMobile`)
+  and a `DELIVERY_COURIER` order with a blank address, before touching the cart; `GlobalExceptionHandler` answers a missing header with 400.
+  `CheckoutContactDetailsIntegrationTest`, `PhoneNumbersTest`.
+- **Quantities.** New `stock/service/QuantityRules`: whole numbers for anything counted in pieces, nothing above 1,000,000 (a count of 2.5 was
+  saved; a count of a trillion came back "A conflicting record already exists"). Applied to the cart (add and change), set stock, receive,
+  adjust, write-off, stock-count lines, purchase-order create and receive, and returns; `GlobalExceptionHandler` turns Postgres
+  numeric overflow (SQLSTATE 22003) into a 400 instead of a 409. `QuantityRulesTest`, `QuantityEnforcementIntegrationTest`, `GlobalExceptionHandlerInputErrorsTest`.
+- **Transporter phone** had no check ("banana" saved): must be dialable (digits, 9+); a landline is fine. `AssignTransporterIntegrationTest`.
+- **Top sellers / popularity / restock forecast counted cancelled orders.** Units are recorded when a payment lands; a paid order cancelled
+  afterwards stayed counted. `ProductAnalyticsListener.onOrderCancelled` deletes that order's `ProductSaleEvent` rows. `CancelledOrderSalesIntegrationTest`.
+- **A customer could send a payment code for a payment staff had marked failed** (a dead end in the claims queue, since a failed payment
+  can never be approved): now 409 with "message us on WhatsApp". `PaymentClaimsAndCreditsIntegrationTest`.
+- **Stock list "out of stock" filter excluded kits** (a kit holds no stock of its own, so every kit counted as out of stock). `SimpleStockEditingIntegrationTest`.
+
+**Checked and fine (no change):** every staff permission against each role's real permission list; order state machine and its refusals;
+courier path with transporter; cancel releasing holds; returns with and without restocking; claims, bank credits (auto-match needs the
+reference AND the exact amount; a credit for an already-paid order is flagged, not lost), payment settings; stock ledger self-check
+(`/admin/stock/consistency-check`) after every scenario; purchase orders; kits; categories; delivery places and suggestions; integration
+keys never echoed back; analytics revenue, order counts and per-product units equal the orders; staff invite/role/disable rules
+(a disabled account's open session dies at once, role changes apply at once); TumaBoda with the fake partner API (quote, PRICE_CHANGED,
+unserved drop-off refused, rider booked after mark-ready, signed webhook incl. replay and out-of-order, delivered by itself, cancel blocked
+once booked, amount owed and settlement, outage then retry, reroute to a phone-arranged transporter).
+
+**Noticed, not changed (see the go-live report):** no refund tracking anywhere (cancelling a paid order says nothing about the money);
+staff JWT lives 8h and a password change does not end it; the catalogue page cache means a review decision shows on the storefront
+card within 10 seconds; `Cloudinary is not configured` is a 500 by design (`ConfigurationException`); returns do not reduce revenue or
+units sold; stock valued at 0 for items whose cost was never entered; analytics `lowStockCount` is reorder-level based.
+
 ## 2026-10-06 — cart lines share one shelf (audit follow-up)
 
 The pre-push audit found that the cart judged each line alone while `CheckoutService` adds up what every line needs from the same
