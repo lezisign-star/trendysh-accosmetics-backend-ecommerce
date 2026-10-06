@@ -127,6 +127,26 @@ class PaymentCodeVisibilityIntegrationTest {
     }
 
     @Test
+    void aCodeForAnOrderStaffCancelledIsRefusedWithAMessageThatSaysToWhatsAppForARefund() throws Exception {
+        String cancelledNo = "CODEVIS-" + UUID.randomUUID().toString().substring(0, 8);
+        String cancelledRef = referenceGenerator.generate();
+        unpaidOrder(cancelledNo, cancelledRef, FulfilmentType.PICKUP, "Simara Mall — Shop GS 07", OrderStatus.CANCELLED);
+
+        String body = mvc.perform(post("/api/v1/payments/pay/" + cancelledNo + "/claim").param("ref", cancelledRef)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"transactionCode\":\"QJK7ABC123\",\"amount\":500}"))
+                .andExpect(status().isConflict()).andReturn().getResponse().getContentAsString();
+
+        assertTrue(body.contains("cancelled by the shop"), body);
+        assertTrue(body.contains("refund you"), body);
+        // An expired order is different: it still takes a late code, because the customer may have paid after the window.
+        String expiredNo = "CODEVIS-" + UUID.randomUUID().toString().substring(0, 8);
+        String expiredRef = referenceGenerator.generate();
+        unpaidOrder(expiredNo, expiredRef, FulfilmentType.PICKUP, "Simara Mall — Shop GS 07", OrderStatus.EXPIRED);
+        claim(expiredNo, expiredRef, "QJK7ABC124");
+    }
+
+    @Test
     void anOrderWithNoCodeIsOnTheStaffListsFlaggedAsNoCodeYet() throws Exception {
         assertEquals("NONE", listRow("paymentCode"));
         assertEquals("NONE", awaitingRow("codeStatus"));

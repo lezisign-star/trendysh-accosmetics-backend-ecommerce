@@ -101,6 +101,13 @@ public class PaymentClaimService {
             throw new ConflictException("This payment was cancelled by the shop, so we can't take a payment code for it."
                     + " Please message us on WhatsApp and we'll sort it out.");
         }
+        // Staff cancelled the whole order, which leaves its payment untouched: approving a code on a cancelled order is
+        // refused as well, so a code taken now would only wait in the queue to be turned down. The pay page shows a
+        // cancelled order as expired (and expired ones do take a late code), so say plainly what happened instead.
+        if (payment.getOrder().getStatus() == OrderStatus.CANCELLED) {
+            throw new ConflictException("This order was cancelled by the shop, so we can't take a payment code for it."
+                    + " If you have already paid, please message us on WhatsApp and we'll refund you.");
+        }
         if (claimRepository.existsByPaymentIdAndTransactionCodeIgnoreCase(payment.getId(), code)) {
             throw new ConflictException("You've already sent us that transaction code");
         }

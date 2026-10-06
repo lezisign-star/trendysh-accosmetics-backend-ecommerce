@@ -74,12 +74,12 @@ public class StockAlertService {
                 + "Now in stock: " + qty(event.onHandAfter()) + " (was " + qty(event.onHandBefore()) + ")\n"
                 + "Reorder level: " + qty(event.reorderLevel()) + "\n\n"
                 + "It has dropped below its reorder level. Restock soon so it doesn't run out.\n"
-                + "Forecast and suggested quantities: " + forecastLink() + "\n";
+                + "Stock levels: " + stockLevelsLink() + "\n";
         String html = "<p><strong>" + esc(name) + "</strong><br>SKU: " + esc(variant.getSku()) + "</p>"
                 + "<p>Now in stock: <strong>" + qty(event.onHandAfter()) + "</strong> (was " + qty(event.onHandBefore())
                 + ")<br>Reorder level: " + qty(event.reorderLevel()) + "</p>"
                 + "<p>It has dropped below its reorder level. Restock soon so it doesn't run out.</p>"
-                + "<p><a href=\"" + forecastLink() + "\">See the forecast and suggested quantities</a></p>";
+                + "<p><a href=\"" + stockLevelsLink() + "\">Open stock levels</a></p>";
         return sendToAll(to, subject, text, html);
     }
 
@@ -118,9 +118,9 @@ public class StockAlertService {
         if (rows.isEmpty()) {
             sendToAll(to, "Stock digest: nothing running low",
                     "Nothing is out of stock, running out within a week, or below its reorder level.\n"
-                            + "Forecast: " + forecastLink() + "\n",
+                            + "Stock levels: " + stockLevelsLink() + "\n",
                     "<p>Nothing is out of stock, running out within a week, or below its reorder level.</p>"
-                            + "<p><a href=\"" + forecastLink() + "\">Open the forecast</a></p>");
+                            + "<p><a href=\"" + stockLevelsLink() + "\">Open stock levels</a></p>");
             return;
         }
         List<ForecastRow> shown = rows.size() > DIGEST_ROW_LIMIT ? rows.subList(0, DIGEST_ROW_LIMIT) : rows;
@@ -148,12 +148,12 @@ public class StockAlertService {
         }
         html.append("</table>");
         if (rows.size() > shown.size()) {
-            String more = "+" + (rows.size() - shown.size()) + " more — see the full list in the forecast.";
+            String more = "+" + (rows.size() - shown.size()) + " more — open stock levels to see them all.";
             text.append("\n").append(more).append("\n");
             html.append("<p>").append(more).append("</p>");
         }
-        text.append("\nForecast and suggested quantities: ").append(forecastLink()).append("\n");
-        html.append("<p><a href=\"").append(forecastLink()).append("\">Open the forecast</a></p>");
+        text.append("\nStock levels: ").append(stockLevelsLink()).append("\n");
+        html.append("<p><a href=\"").append(stockLevelsLink()).append("\">Open stock levels</a></p>");
         String subject = "Stock digest: " + (rows.size() == 1 ? "1 product needs" : rows.size() + " products need") + " attention";
         sendToAll(to, subject, text.toString(), html.toString());
     }
@@ -171,8 +171,12 @@ public class StockAlertService {
         return sent;
     }
 
-    private String forecastLink() {
-        return frontendUrl.replaceAll("/+$", "") + "/admin/forecast";
+    /**
+     * Where the alerts send staff. It was the Forecast screen, but the shop keeps stock simple now (SIMPLE_STOCK in the
+     * frontend's adminAccess.ts) and that screen is switched off, so the link goes to Stock levels, which always works.
+     */
+    private String stockLevelsLink() {
+        return frontendUrl.replaceAll("/+$", "") + "/admin/stock";
     }
 
     private static String displayName(String product, String variant) {

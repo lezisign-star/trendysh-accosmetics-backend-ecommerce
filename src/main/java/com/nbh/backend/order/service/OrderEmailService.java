@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * The emails about an order (owner's decision, 2026-10-06): one when it is placed, with the way to pay and the link back
@@ -219,9 +220,20 @@ public class OrderEmailService {
         events.publishEvent(new CustomerEmailRequestedEvent(order.getGuestEmail(), subject, textBody, htmlBody));
     }
 
+    /**
+     * A name a person could have: letters, digits, apostrophes and hyphens, at most 30. The checkout is public and the
+     * name is whatever the sender typed, so a "first name" like www.refund-example.co.ke would otherwise open an email
+     * from the shop's own address and be turned into a link by the reader's mail app. Anything else greets as "there".
+     */
+    private static final Pattern NAME_LIKE = Pattern.compile("[\\p{L}\\p{M}\\p{N}'’-]{1,30}");
+
     private static String firstName(CustomerOrder order) {
         String name = order.getCustomerName() == null ? "" : order.getCustomerName().trim();
-        return name.isEmpty() ? "there" : name.split("\\s+")[0];
+        if (name.isEmpty()) {
+            return "there";
+        }
+        String first = name.split("\\s+")[0];
+        return NAME_LIKE.matcher(first).matches() ? first : "there";
     }
 
     /** "KSh 2,400", or "KSh 2,400.50" when there are cents. */

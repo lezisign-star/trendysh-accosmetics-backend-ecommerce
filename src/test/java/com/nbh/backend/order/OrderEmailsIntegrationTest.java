@@ -90,15 +90,19 @@ class OrderEmailsIntegrationTest {
     private record Placed(String orderNo, String reference, String email) {}
 
     private Placed placeOrder(String address) throws Exception {
+        return placeOrder(address, "Njeri Christine");
+    }
+
+    private Placed placeOrder(String address, String customerName) throws Exception {
         String session = UUID.randomUUID().toString();
         MvcResult added = mvc.perform(post("/api/v1/cart/items").header("X-Cart-Session", session)
                 .contentType(MediaType.APPLICATION_JSON).content("{\"variantId\":\"" + variantId + "\",\"qty\":1}")).andReturn();
         assertThat(added.getResponse().getStatus()).isEqualTo(200);
         String email = TestContacts.email();
         String body = """
-                {"customerName":"Njeri Christine","guestEmail":"%s","guestPhone":"%s","fulfilmentType":"PICKUP",
+                {"customerName":"%s","guestEmail":"%s","guestPhone":"%s","fulfilmentType":"PICKUP",
                  "deliveryAddress":"%s"}
-                """.formatted(email, TestContacts.phone(), address);
+                """.formatted(customerName, email, TestContacts.phone(), address);
         MvcResult placed = mvc.perform(post("/api/v1/checkout").header("X-Cart-Session", session)
                 .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn();
         assertThat(placed.getResponse().getStatus()).as(placed.getResponse().getContentAsString()).isEqualTo(200);
@@ -145,6 +149,25 @@ class OrderEmailsIntegrationTest {
         assertThat(text).contains("Hi Njeri,").contains(link).contains("KSh 1,000").contains("M-PESA code");
         assertThat(html).contains("href=\"http://localhost:5250" + link + "\"").contains("Pay and enter my M-PESA code")
                 .contains("KSh 1,000");
+    }
+
+    @Test
+    void aNameThatIsNotANameNeverBecomesTheGreeting() throws Exception {
+        // The checkout is public, so the name is whatever the sender typed. A web address as the "first name" would
+        // open an email from the shop's own address and be linked by the reader's mail app.
+        Placed link = placeOrder("Junction — Stalls D5", "www.refund-example.co.ke Kamau");
+        Placed url = placeOrder("Junction — Stalls D5", "http://evil.example/login");
+        Placed tooLong = placeOrder("Junction — Stalls D5", "A".repeat(31) + " Wanjiru");
+        Placed apostrophe = placeOrder("Junction — Stalls D5", "O'Brien Wanjiru");
+        Placed hyphen = placeOrder("Junction — Stalls D5", "Jean-Luc Otieno");
+
+        for (Placed odd : List.of(link, url, tooLong)) {
+            String[] email = sentTo(odd.email()).get(0);
+            assertThat(email[1]).startsWith("Hi there,");
+            assertThat(email[2]).contains("Hi there,").doesNotContain("refund-example").doesNotContain("evil.example");
+        }
+        assertThat(sentTo(apostrophe.email()).get(0)[1]).startsWith("Hi O'Brien,");
+        assertThat(sentTo(hyphen.email()).get(0)[1]).startsWith("Hi Jean-Luc,");
     }
 
     @Test

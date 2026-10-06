@@ -134,12 +134,18 @@ public record DeliveryDetails(
         return lines == null ? null : lines.replace("\n", ", ");
     }
 
-    /** One line: control characters and runs of whitespace (line breaks included) become a single space. */
+    /**
+     * One line: control characters and runs of whitespace (line breaks included) become a single space, and the
+     * invisible characters that change which way text reads (left-to-right and right-to-left marks, embeddings,
+     * overrides and isolates) are removed, so a staff screen or a rider's phone cannot be shown text that reads
+     * differently from what was typed.
+     */
     private static String oneLine(String raw) {
         if (raw == null) {
             return null;
         }
-        String s = raw.replaceAll("[\\p{Cc}\\s]+", " ").trim();
+        String s = raw.replaceAll("[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]", "")
+                .replaceAll("[\\p{Cc}\\s]+", " ").trim();
         return s.isEmpty() ? null : s;
     }
 

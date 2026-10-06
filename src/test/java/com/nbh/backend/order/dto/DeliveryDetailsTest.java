@@ -61,6 +61,17 @@ class DeliveryDetailsTest {
     }
 
     @Test
+    void invisibleCharactersThatChangeWhichWayTextReadsAreRemoved() {
+        DeliveryDetails sneaky = new DeliveryDetails("Kili‮mani‏", null, null, null, null,
+                "Gate ⁦is blue⁩", null, null, null);
+
+        DeliveryDetails kept = sneaky.cleanedFor("MATATU");
+
+        assertThat(kept.estate()).isEqualTo("Kilimani");
+        assertThat(kept.directions()).isEqualTo("Gate is blue");
+    }
+
+    @Test
     void aSingleLineFieldNeverKeepsALineBreak() {
         assertThat(new DeliveryDetails("Kilimani\nNairobi", null, null, null, null, null, null, null, null)
                 .cleanedFor("MATATU").estate()).isEqualTo("Kilimani Nairobi");
