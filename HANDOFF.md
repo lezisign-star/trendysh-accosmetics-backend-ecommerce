@@ -1,5 +1,25 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-06 — cart lines share one shelf (audit follow-up)
+
+The pre-push audit found that the cart judged each line alone while `CheckoutService` adds up what every line needs from the same
+part: a kit plus loose units of one of its parts, or two kits sharing a part, could each look fine in the cart and still be refused
+at checkout with nothing flagged, so the shopper had no Remove / "Set to N". `CartService.stockLeftFor` now walks the lines in the
+order they were added and subtracts what earlier lines take, so a line's `stockLeft` is what is left after the ones before it and
+the line that does not fit is the one flagged. `KitAvailabilityService.partsOf` exposes a kit's purchasable parts (the set checkout
+reserves). Tests: 3 unit tests in `CartServiceUnitTest`, and `KitIntegrationTest` follows a kit + loose part from flagged to a
+successful order after lowering the flagged line (targeted 65/65). Add-time (`checkCourtesyAvailability`) is still per line.
+
+Audit items deliberately NOT done: other stock paths (`/stock/receive`, `/adjust`, write-offs, counts, PO receive) still accept a kit
+variant (only `setOnHand` refuses it), so stray stock on a kit shows in Stock levels and Valuation though the shop ignores it; Stock
+levels now hides variants of deleted products while Valuation and `totalStockValue` still count them, so the two totals differ and
+stock left on a deleted product cannot be seen or written off from Stock levels; no unit test for `KitAvailabilityService` itself
+(minimum across several parts, a 0.5 qty per kit, an unpurchasable part, a kit with no parts).
+
+**Production risk unrelated to this push, from the audit:** `application.yml` defaults `BOOTSTRAP_ADMIN_EMAIL` to
+`admin@nairobibeautyhub.co.ke`, which creates a SUPER_ADMIN on an address nobody owns unless Railway overrides it. Check the Railway
+variable or disable that account.
+
 ## 2026-10-05 (very late night) — stock editing API for a small shop, pickup place on orders, shop addresses in emails
 
 NOT committed or pushed (owner: the other session pushes after confirming everything lines up). Targeted run 21/21 on a fresh DB
