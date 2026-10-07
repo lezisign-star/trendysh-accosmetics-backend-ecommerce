@@ -27,6 +27,9 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
     /** The same lookup without regard to case, for the "this code is already used" check on a hand-typed code. */
     Optional<PaymentRecord> findFirstByProviderReferenceIgnoreCase(String providerReference);
 
+    /** Another payment (not {@code id}) carrying this code, ignoring case: the "already used elsewhere" check. */
+    Optional<PaymentRecord> findFirstByProviderReferenceIgnoreCaseAndIdNot(String providerReference, UUID id);
+
     /**
      * Staff "awaiting payment" queue: bank orders not yet paid, oldest first (order fetched, no N+1).
      * Includes orders that EXPIRED within the last window ({@code expiredSince}) — a customer can still
@@ -90,4 +93,15 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
             + "com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.PENDING) "
             + "order by p.createdAt asc")
     List<UUID> findUnpaidBankPaymentIdsByOrderId(@org.springframework.data.repository.query.Param("orderId") UUID orderId);
+
+    /**
+     * A bank payment on this order that staff marked failed (and the order is still marked failed), newest first, id
+     * only. A person allocating a bank credit to such an order is deciding the customer did pay, which brings it back.
+     */
+    @Query("select p.id from PaymentRecord p where p.order.id = :orderId "
+            + "and p.method = com.nbh.backend.payment.entity.PaymentRecord.PaymentMethod.BANK "
+            + "and p.status = com.nbh.backend.payment.entity.PaymentRecord.PaymentStatus.FAILED "
+            + "and p.order.status = com.nbh.backend.order.entity.OrderStatus.PAYMENT_FAILED "
+            + "order by p.createdAt desc")
+    List<UUID> findFailedBankPaymentIdsByOrderId(@org.springframework.data.repository.query.Param("orderId") UUID orderId);
 }

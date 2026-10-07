@@ -235,7 +235,8 @@ public class PaymentController {
         Map<String, String> note = new LinkedHashMap<>();
         note.put("type", "manual_staff_confirmation");
         note.put("notes", request.notes());
-        paymentService.confirmSuccess(paymentRecordId, request.reference(), toJson(note), request.method());
+        paymentService.confirmSuccess(paymentRecordId, request.reference(), toJson(note), request.method(),
+                Boolean.TRUE.equals(request.revive()));
     }
 
     @PreAuthorize("hasAnyAuthority('PERM_PAYMENT_MANAGE','PERM_ORDER_MANAGE_ALL')")
@@ -256,8 +257,13 @@ public class PaymentController {
         }
     }
 
-    /** {@code method} optional: how the customer actually paid (MPESA/BANK/CASH); omitted keeps the record's own. */
-    public record ManualConfirmRequest(String reference, String notes, PaymentRecord.PaymentMethod method) {}
+    /**
+     * {@code method} optional: how the customer actually paid (MPESA/BANK/CASH); omitted keeps the record's own.
+     * {@code revive} true only for "the customer did pay" on an order whose payment staff marked failed: without it a
+     * failed payment is refused (a stale Confirm click must not bring back a payment someone failed on purpose).
+     */
+    public record ManualConfirmRequest(String reference, String notes, PaymentRecord.PaymentMethod method,
+                                       Boolean revive) {}
 
     public record ManualFailRequest(String reason) {}
 }

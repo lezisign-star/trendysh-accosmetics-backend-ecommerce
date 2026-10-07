@@ -218,32 +218,61 @@ class PaymentServiceUnitTest {
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
     }
 
+    /**
+     * Bringing a failed payment back must be deliberate: a stale Confirm click, an old customer claim being approved or a
+     * late callback all reach confirmSuccess without the revive flag, and none of them may undo a decision that a payment
+     * failed (found by the 2026-10-07 pre-push audit).
+     */
     @Test
-    void aPaymentStaffMarkedFailedCanBeConfirmedAndItsReleasedStockIsTakenAgain() {
+    void aFailedPaymentIsRefusedUnlessReviveIsAskedForAndNothingIsTouched() {
+        CustomerOrder order = orderWithItems(reservation());
+        order.setStatus(OrderStatus.PAYMENT_FAILED);
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.FAILED, order);
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("marked failed")
+                .hasMessageContaining("Customer did pay");
+        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}", null))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}", null, false))
+                .isInstanceOf(IllegalStateException.class);
+
+        verifyNoInteractions(reservationService);
+        assertThat(payment.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.FAILED);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+    }
+
+    @Test
+    void aPaymentStaffMarkedFailedCanBeConfirmedOnPurposeAndItsReleasedStockIsTakenAgain() {
         StockReservation released = reservation();
         StockReservation retaken = reservation();
         when(reservationService.confirmForOrder(released.getId(), true)).thenReturn(retaken);
         CustomerOrder order = orderWithItems(released);
         order.setStatus(OrderStatus.PAYMENT_FAILED);
         PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.FAILED, order);
+        payment.setRawResponse("{\"type\":\"manual_staff_failure\",\"reason\":\"no payment seen\"}");
         when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
 
-        PaymentRecord result = paymentService.confirmSuccess(payment.getId(), "QWE123RTY4", "{}");
+        PaymentRecord result = paymentService.confirmSuccess(payment.getId(), "QWE123RTY4", "{\"type\":\"manual\"}", null, true);
 
         assertThat(result.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.SUCCESS);
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
         assertThat(order.getItems().get(0).getReservation()).isSameAs(retaken);
+        // What was written when it was failed (who, why) is kept next to the confirmation, not overwritten.
+        assertThat(result.getRawResponse()).contains("revived_after_failure").contains("no payment seen").contains("manual");
     }
 
     @Test
-    void aFailedPaymentWhoseOrderHasMovedOnCannotBeConfirmedAndNothingIsTouched() {
+    void aFailedPaymentWhoseOrderHasMovedOnCannotBeRevivedAndNothingIsTouched() {
         CustomerOrder order = orderWithItems(reservation());
         order.setOrderNo("SO-MOVED-ON");
         order.setStatus(OrderStatus.EXPIRED);
         PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.FAILED, order);
         when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
 
-        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}"))
+        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}", null, true))
                 .isInstanceOf(com.nbh.backend.common.exception.ConflictException.class)
                 .hasMessageContaining("SO-MOVED-ON")
                 .hasMessageContaining("moved on");
@@ -252,15 +281,36 @@ class PaymentServiceUnitTest {
         assertThat(payment.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.FAILED);
     }
 
+    /** Also from the audit: a stale "Payment failed" click after someone else cancelled the order must not turn CANCELLED into PAYMENT_FAILED. */
+    @Test
+    void aCancelledOrdersPaymentCannotBeMarkedFailedAndNothingIsTouched() {
+        CustomerOrder order = orderWithItems(reservation());
+        order.setOrderNo("SO-CANCELLED-2");
+        order.setStatus(OrderStatus.CANCELLED);
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, order);
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> paymentService.markFailed(payment.getId(), "stale click", "{}"))
+                .isInstanceOf(com.nbh.backend.common.exception.ConflictException.class)
+                .hasMessageContaining("SO-CANCELLED-2")
+                .hasMessageContaining("cancelled");
+
+        verifyNoInteractions(reservationService);
+        verify(paymentRecordRepository, never()).save(any());
+        assertThat(payment.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.INITIATED);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+    }
+
     @Test
     void aCodeAlreadyRecordedOnAnotherOrderIsRefusedWithAMessageThatSaysSoAndNothingIsTouched() {
         CustomerOrder otherOrder = orderWithItems();
         otherOrder.setOrderNo("SO-OTHER-1");
         PaymentRecord other = paymentWith(PaymentRecord.PaymentStatus.SUCCESS, otherOrder);
         other.setProviderReference("QWE123RTY4");
-        when(paymentRecordRepository.findFirstByProviderReferenceIgnoreCase("QWE123RTY4")).thenReturn(Optional.of(other));
         CustomerOrder order = orderWithItems(reservation());
         PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, order);
+        when(paymentRecordRepository.findFirstByProviderReferenceIgnoreCaseAndIdNot("QWE123RTY4", payment.getId()))
+                .thenReturn(Optional.of(other));
         when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
 
         assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), " qwe123rty4 ".toUpperCase(), "{}"))
@@ -275,15 +325,15 @@ class PaymentServiceUnitTest {
     }
 
     @Test
-    void theSameCodeOnTheSamePaymentIsNotACollisionWithItself() {
+    void theCodeCheckAsksForAnotherPaymentSoThePaymentsOwnRowIsNeverACollisionWithItself() {
         PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.PENDING, orderWithItems());
         payment.setProviderReference("QWE123RTY4");
-        when(paymentRecordRepository.findFirstByProviderReferenceIgnoreCase("QWE123RTY4")).thenReturn(Optional.of(payment));
         when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
 
         PaymentRecord result = paymentService.confirmSuccess(payment.getId(), "QWE123RTY4", "{}");
 
         assertThat(result.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.SUCCESS);
+        verify(paymentRecordRepository).findFirstByProviderReferenceIgnoreCaseAndIdNot("QWE123RTY4", payment.getId());
     }
 
     @Test

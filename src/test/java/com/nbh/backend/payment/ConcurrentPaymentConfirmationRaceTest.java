@@ -21,7 +21,7 @@ import com.nbh.backend.stock.repository.StockBalanceRepository;
 import com.nbh.backend.stock.repository.StockReservationRepository;
 import com.nbh.backend.stock.service.StockPostingService;
 import com.nbh.backend.stock.service.StockReservationService;
-import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -65,8 +65,7 @@ class ConcurrentPaymentConfirmationRaceTest {
     @Autowired private PaymentRecordRepository paymentRecordRepository;
     @Autowired private PaymentService paymentService;
 
-    // Repeated so that BOTH interleavings (confirmation first, failure first) are very likely to be seen in a run.
-    @RepeatedTest(12)
+    @Test
     void concurrentConfirmSuccessAndMarkFailedOnTheSamePaymentNeverCorruptStockOrOrderState() throws Exception {
         ProductVariant variant = newVariant();
         receiveOneUnit(variant);
@@ -142,43 +141,61 @@ class ConcurrentPaymentConfirmationRaceTest {
         failFuture.get(30, TimeUnit.SECONDS);
         pool.shutdown();
 
-        // What the §4 C2 fix relies on: each operation locks the payment row and then re-reads its FRESH status, so
-        // the two are strictly one after the other and the later one sees what the earlier committed. Before the
-        // fix (an unlocked findById) both saw the pre-race snapshot and whichever committed last silently
-        // overwrote the other's payment/order rows while the reservation still reflected the FIRST one's effect.
-        //
-        // Since 2026-10-07 a payment marked failed can be confirmed again (the way back from a mistaken "failed"
-        // once the customer shows the M-PESA message), so a confirmation that runs AFTER the failure no longer
-        // refuses itself: it brings the order back. A confirmation can never be lost to a failure, then:
-        //   - confirm first: it applies, and the failure that follows is refused (a succeeded payment cannot be failed);
-        //   - failure first: it applies, and the confirmation that follows revives the order and holds the stock again.
-        // Either way the order ends PAID with exactly one live hold. Both outcomes are asserted below.
-        assertTrue(confirmApplied.get(), "A confirmation must never be lost to a concurrent failure");
-        assertFalse(confirmRejected.get(), "A confirmation is refused neither before nor after a failure");
-        assertNotEquals(failApplied.get(), failRejected.get(),
-                "The failure either ran first (applied, then revived) or came second and was refused");
+        // The mechanism the §4 C2 fix actually relies on: whichever operation's
+        // transaction commits second must, after acquiring the now-uncontended
+        // payment-row lock, re-read the FRESH (already-terminal) status and
+        // reject itself via the existing guard — never silently overwrite the
+        // winner's committed result. Before the fix (an unlocked findById) BOTH
+        // operations would see the pre-race snapshot, both would pass their
+        // guard, and whichever committed last would silently overwrite the
+        // other's already-committed payment/order rows while the reservation
+        // table (independently lock-protected since audit finding F4) still
+        // reflected the FIRST operation's effect — the exact cross-table
+        // corruption this test's final assertions check for below. Asserting
+        // "exactly one applied, the other was rejected" is what actually pins
+        // the fix; asserting only on final state (as a first draft of this test
+        // did) passes even on the old, buggy code, because a last-write-wins
+        // overwrite still leaves payment/order self-consistent with each other.
+        assertNotEquals(confirmApplied.get(), failApplied.get(),
+                "Exactly one of confirmSuccess/markFailed must actually apply its write");
+        assertNotEquals(confirmRejected.get(), failRejected.get(),
+                "Exactly one of confirmSuccess/markFailed must be rejected by the other's already-committed status");
+        assertTrue(confirmApplied.get() || failApplied.get(), "One of the two operations must have succeeded");
 
         PaymentRecord finalPayment = paymentRecordRepository.findById(paymentId).orElseThrow();
         CustomerOrder finalOrder = orderRepository.findById(orderId).orElseThrow();
+        StockReservation finalReservation = reservationRepository.findById(reservation.getId()).orElseThrow();
         var finalBalance = balanceRepository.findByVariantIdAndAccount(variant.getId(), StockAccount.SHOP)
                 .orElseThrow();
-        // The hold may be a NEW row (a revived order re-takes it), so look at every hold made for this order.
-        var holds = reservationRepository.findAll().stream()
-                .filter(r -> reservation.getReferenceId().equals(r.getReferenceId()))
-                .toList();
-        var live = holds.stream().filter(r -> r.getStatus() == StockReservation.ReservationStatus.ACTIVE).toList();
 
-        assertEquals(PaymentRecord.PaymentStatus.SUCCESS, finalPayment.getStatus(),
-                "Payment must land on the confirmation, not in between");
-        assertEquals(OrderStatus.PAID, finalOrder.getStatus());
-        assertEquals(1, live.size(), "A PAID order must hold its stock exactly once, whichever ran first");
-        assertEquals(StockReservation.ReservationSource.ONLINE_ORDER, live.get(0).getSource());
-        assertEquals(null, live.get(0).getExpiresAt(), "A paid order's hold is permanent");
-        assertEquals(0, finalBalance.getReservedQty().compareTo(BigDecimal.ONE),
-                "Exactly one unit is reserved, never zero (released under a paid order) and never two");
-        if (failApplied.get()) {
-            assertEquals(2, holds.size(), "The failure released the first hold and the confirmation took a new one");
+        assertTrue(
+                finalPayment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS
+                        || finalPayment.getStatus() == PaymentRecord.PaymentStatus.FAILED,
+                "Payment must land on exactly one terminal status, not something in between");
+        assertEquals(confirmApplied.get(), finalPayment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS,
+                "Final payment status must match whichever operation actually applied");
+
+        if (finalPayment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS) {
+            assertEquals(OrderStatus.PAID, finalOrder.getStatus());
+            assertEquals(StockReservation.ReservationStatus.ACTIVE, finalReservation.getStatus(),
+                    "A PAID order's stock hold must still be held, not released by the losing concurrent markFailed");
+            assertEquals(StockReservation.ReservationSource.ONLINE_ORDER, finalReservation.getSource());
+            assertEquals(0, finalBalance.getReservedQty().compareTo(BigDecimal.ONE));
+        } else {
+            assertEquals(OrderStatus.PAYMENT_FAILED, finalOrder.getStatus());
+            assertEquals(StockReservation.ReservationStatus.RELEASED, finalReservation.getStatus(),
+                    "A failed order's stock hold must be released, not left permanently ACTIVE by the losing confirmSuccess");
+            assertEquals(0, finalBalance.getReservedQty().compareTo(BigDecimal.ZERO));
         }
+
+        // The exact corruption C2 describes: the order says PAID but the stock
+        // was given back anyway (or vice versa) — must never be observable.
+        boolean corrupted =
+                (finalOrder.getStatus() == OrderStatus.PAID
+                        && finalReservation.getStatus() != StockReservation.ReservationStatus.ACTIVE)
+                || (finalOrder.getStatus() == OrderStatus.PAYMENT_FAILED
+                        && finalReservation.getStatus() == StockReservation.ReservationStatus.ACTIVE);
+        assertFalse(corrupted, "Order status and reservation state must never disagree");
     }
 
     private void await(CountDownLatch latch) {

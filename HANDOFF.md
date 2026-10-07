@@ -1,20 +1,30 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
-## 2026-10-07 (later) — the go-live QA's open defects, fixed (UNCOMMITTED, not pushed)
+## 2026-10-07 (later) — the go-live QA's open defects, fixed (committed d4d671a + audit follow-ups)
 
 Owner: "if the gaps are still there, fix them", after the full live-click QA of the shop (customers, all six staff roles, TumaBoda on
 and off; report in the session). Against HEAD 45e1beb most of that QA's findings were already fixed by the 10-06/07 batch (the duplicate
 order race, the staff-lockout locking shoppers out, a mistyped password signing a shopper out, the missing order emails): re-checked
-live (six parallel checkouts of one cart: one order, five 409s). What was still open, and is fixed here, in a scratch worktree on a
-scratch DB and then copied into this tree; **nothing committed or pushed**. Full suite on a fresh DB: see the last line of this entry.
+live (six parallel checkouts of one cart: one order, five 409s). What was still open is fixed here, built in a scratch worktree on a
+scratch DB. An independent read-only Opus audit (2026-10-07) found no blocker and three real issues, all fixed in the follow-up commit
+(see "Audit follow-ups" below). **Full suite 774/774 on a fresh DB.**
 
-- **A payment staff marked failed can be confirmed again** (`PaymentService.confirmSuccess`, `StockReservationService.confirmForOrder(id,
-  reviving)`). It used to answer 422 "cannot confirm success from this state", so money could sit received against an order nobody could
-  bring back. A FAILED payment whose order is still PAYMENT_FAILED is now confirmed like any other: its released holds are re-taken from
-  current stock exactly like a lapsed one (and refused with the usual "stock has since gone ... restock or refund" if it has been sold);
-  an order that has since moved on (cancelled, expired) refuses with a clear 409. **A bank credit never revives one by itself**: the
-  auto-match now flags a credit whose payment was marked failed "needs a person" (`BankCreditService.tryAutoMatch`; before it would have
-  thrown on the failed state).
+- **A payment staff marked failed can be confirmed again, ON PURPOSE** (`PaymentService.confirmSuccess(..., allowRevive)`,
+  `StockReservationService.confirmForOrder(id, reviving)`). It used to answer 422, so money could sit received against an order nobody
+  could bring back. Only a request that says so brings one back: `POST /payments/{id}/confirm-manual` with `"revive": true` (the order
+  panel's "Customer did pay — confirm"), or a person allocating a bank credit to such an order (`BankCreditService.allocate`, via
+  `PaymentRecordRepository.findFailedBankPaymentIdsByOrderId`). Without the flag a FAILED payment is refused with "This payment was marked
+  failed. If the customer did pay, open the order and use \"Customer did pay — confirm\"" (a stale Confirm click on the Payments tab, an
+  old claim being approved, a late callback). A revived payment's released holds are re-taken from current stock exactly like a lapsed one
+  (refused with "stock has since gone ... restock or refund" if sold since); an order that has moved on (cancelled, expired) refuses with
+  a 409; the note written when it was failed is kept inside the new one (`revived_after_failure`). **A bank credit never revives one by
+  itself**: the auto-match leaves it for a person with "allocate this credit to that order (it brings the order back); otherwise ignore it".
+- **Audit follow-ups**: (1) approving a customer claim on a failed payment would have revived it silently: now refused as above (the claim
+  stays pending, staff reject it or use "Customer did pay"); (2) `markFailed` wrote PAYMENT_FAILED over a CANCELLED order (a stale click
+  after someone cancelled), which revive would then have turned PAID: it now refuses a cancelled order with a 409; (3) a bank credit flagged
+  against a failed payment could never be matched: `allocate` now accepts a failed bank payment on an order still marked failed; and the
+  duplicate-code check asks for "another payment" in the query (`findFirstByProviderReferenceIgnoreCaseAndIdNot`) instead of filtering
+  the first hit.
 - **A payment code already used on another order says so** (`PaymentService.checkCodeNotUsedElsewhere`, case- and space-insensitive via
   `PaymentRecordRepository.findFirstByProviderReferenceIgnoreCase`): 409 "The code X is already recorded as the payment for order SO-..,
   and one code can only pay for one order". It used to fall through to the unique index and read "A conflicting record already exists —

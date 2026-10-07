@@ -64,6 +64,19 @@ public class PaymentService {
     @Transactional
     public PaymentRecord confirmSuccess(UUID paymentRecordId, String providerReference, String rawResponse,
                                          PaymentRecord.PaymentMethod actualMethod) {
+        return confirmSuccess(paymentRecordId, providerReference, rawResponse, actualMethod, false);
+    }
+
+    /**
+     * {@code allowRevive} is the way back from a payment staff marked failed by mistake, when the customer then shows
+     * the M-PESA message: the payment is confirmed, the order comes back and its released stock is held again. It is
+     * only ever set by a deliberate "the customer did pay" request from the order panel (or by a person allocating a
+     * bank credit). A stale Confirm on the Payments tab, an old customer claim being approved, or a late callback
+     * must NOT bring a payment back that someone had decided was failed, so without it a FAILED payment is refused.
+     */
+    @Transactional
+    public PaymentRecord confirmSuccess(UUID paymentRecordId, String providerReference, String rawResponse,
+                                         PaymentRecord.PaymentMethod actualMethod, boolean allowRevive) {
         // §4 C2 fix: lock the row before reading its status — see
         // PaymentRecordRepository.lockById's javadoc for the race this closes.
         PaymentRecord payment = paymentRecordRepository.lockById(paymentRecordId)
@@ -71,8 +84,10 @@ public class PaymentService {
         if (payment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS) {
             return payment; // already confirmed — idempotent
         }
-        // A payment staff marked failed can still be confirmed: it is the way back from a mistaken "failed" when
-        // the customer then shows the M-PESA message. Anything else that is not waiting for money is refused.
+        if (payment.getStatus() == PaymentRecord.PaymentStatus.FAILED && !allowRevive) {
+            throw new IllegalStateException("This payment was marked failed. If the customer did pay, open the order and"
+                    + " use \"Customer did pay — confirm\"; a failed payment is only brought back on purpose.");
+        }
         boolean reviving = payment.getStatus() == PaymentRecord.PaymentStatus.FAILED;
         if (!reviving
                 && payment.getStatus() != PaymentRecord.PaymentStatus.INITIATED
@@ -95,6 +110,12 @@ public class PaymentService {
         }
 
         providerReference = checkCodeNotUsedElsewhere(payment, providerReference);
+        // Keep what was written when it was marked failed (who, why) instead of losing it to this confirmation's note.
+        if (reviving && payment.getRawResponse() != null && !payment.getRawResponse().isBlank()) {
+            // Both values are JSON already (the column is jsonb), so they nest as they are.
+            rawResponse = "{\"type\":\"revived_after_failure\",\"earlier\":" + payment.getRawResponse()
+                    + ",\"now\":" + (rawResponse == null || rawResponse.isBlank() ? "null" : rawResponse) + "}";
+        }
 
         payment.setStatus(PaymentRecord.PaymentStatus.SUCCESS);
         if (actualMethod != null) {
@@ -145,8 +166,9 @@ public class PaymentService {
             return code;
         }
         String trimmed = code.trim();
-        paymentRecordRepository.findFirstByProviderReferenceIgnoreCase(trimmed)
-                .filter(other -> !other.getId().equals(payment.getId()))
+        // "Another payment", asked in the query itself: with rows that differ only in case a plain find-first could
+        // hand back this payment's own row and hide the other one.
+        paymentRecordRepository.findFirstByProviderReferenceIgnoreCaseAndIdNot(trimmed, payment.getId())
                 .ifPresent(other -> {
                     throw new ConflictException("The code " + trimmed + " is already recorded as the payment for order "
                             + other.getOrder().getOrderNo() + ", and one code can only pay for one order. Check it against"
@@ -172,11 +194,17 @@ public class PaymentService {
             throw new IllegalStateException("Payment " + paymentRecordId + " already succeeded — cannot mark failed");
         }
 
+        CustomerOrder order = lockOrderOf(paymentRecordId); // as in confirmSuccess: payment, then order, then stock
+        // A cancelled order stays cancelled: writing PAYMENT_FAILED over CANCELLED (a stale "Payment failed" click after
+        // someone else cancelled) would also open the way to confirming it as paid.
+        if (order.getStatus() == OrderStatus.CANCELLED) {
+            throw new ConflictException("Order " + order.getOrderNo() + " was cancelled, so its payment can't be marked failed.");
+        }
+
         payment.setStatus(PaymentRecord.PaymentStatus.FAILED);
         payment.setRawResponse(rawResponse);
         paymentRecordRepository.save(payment);
 
-        CustomerOrder order = lockOrderOf(paymentRecordId); // as in confirmSuccess: payment, then order, then stock
         for (CustomerOrderItem item : order.getItems()) {
             if (item.getReservation() != null) {
                 reservationService.release(item.getReservation().getId());

@@ -11,6 +11,7 @@ import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.payment.service.BankCreditService;
 import com.nbh.backend.payment.service.PaymentClaimService;
 import com.nbh.backend.payment.service.PaymentReferenceGenerator;
+import com.nbh.backend.payment.service.PaymentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -51,6 +53,7 @@ class PaymentClaimsAndCreditsIntegrationTest {
     @Autowired private PaymentReferenceGenerator referenceGenerator;
     @Autowired private PaymentClaimService claimService;
     @Autowired private BankCreditService creditService;
+    @Autowired private PaymentService paymentService;
 
     private String orderNo;
     private String reference;
@@ -203,6 +206,49 @@ class PaymentClaimsAndCreditsIntegrationTest {
         assertThrows(IllegalArgumentException.class, () -> creditService.ignore(other.getId(), "staff@example.com", ""));
         assertSame(BankCredit.CreditStatus.IGNORED,
                 creditService.ignore(other.getId(), "staff@example.com", "Not an order").getStatus());
+    }
+
+    /**
+     * A bank credit never revives a payment staff marked failed by itself (the stock may have been sold since), but a
+     * person can allocate it to that order, which is a decision that the customer did pay and brings the order back.
+     */
+    @Test
+    void aCreditForAPaymentStaffMarkedFailedWaitsForAPersonWhoCanAllocateItToBringTheOrderBack() {
+        paymentService.markFailed(payment.getId(), "no payment seen", "{\"type\":\"manual_staff_failure\"}");
+        assertEquals(OrderStatus.PAYMENT_FAILED, orderRepository.findByOrderNo(orderNo).orElseThrow().getStatus());
+
+        BankCredit credit = creditService.record(uniq("TF"), new BigDecimal("500.00"), "Jane", null,
+                "MPESA " + reference, Instant.now(), BankCredit.Source.MANUAL);
+
+        assertEquals(BankCredit.CreditStatus.UNMATCHED, credit.getStatus());
+        assertTrue(credit.getResolutionNote().contains("allocate this credit"), credit.getResolutionNote());
+        assertEquals(OrderStatus.PAYMENT_FAILED, orderRepository.findByOrderNo(orderNo).orElseThrow().getStatus());
+
+        BankCredit allocated = creditService.allocate(credit.getId(), orderNo, "staff@example.com", "customer showed the SMS");
+
+        assertEquals(BankCredit.CreditStatus.MATCHED, allocated.getStatus());
+        assertEquals(OrderStatus.PAID, orderRepository.findByOrderNo(orderNo).orElseThrow().getStatus());
+        assertEquals(PaymentRecord.PaymentStatus.SUCCESS,
+                paymentRecordRepository.findById(payment.getId()).orElseThrow().getStatus());
+    }
+
+    /**
+     * Found by the pre-push audit: a customer's claim waiting in the queue could be approved after staff had marked
+     * the payment failed, quietly bringing the order back. Approving a claim does not revive a failed payment: staff are
+     * told to use "Customer did pay" on the order, which is a deliberate step.
+     */
+    @Test
+    void approvingAClaimOnAPaymentStaffMarkedFailedIsRefusedAndNothingIsRevived() {
+        PaymentClaim claim = claimService.submit(orderNo, reference, uniq("QZ"), new BigDecimal("500"), null, "Jane");
+        paymentService.markFailed(payment.getId(), "no payment seen", "{}");
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> claimService.approve(claim.getId(), "staff@example.com", "looked fine"));
+
+        assertTrue(refused.getMessage().contains("Customer did pay"), refused.getMessage());
+        assertEquals(OrderStatus.PAYMENT_FAILED, orderRepository.findByOrderNo(orderNo).orElseThrow().getStatus());
+        assertEquals(PaymentRecord.PaymentStatus.FAILED,
+                paymentRecordRepository.findById(payment.getId()).orElseThrow().getStatus());
     }
 
     private PaymentRecord newBankPayment(String no, String ref) {

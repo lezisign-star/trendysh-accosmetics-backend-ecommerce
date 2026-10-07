@@ -102,18 +102,24 @@ public class BankCreditService {
         // would be what that lock returns, however much the order changed in the meantime.
         UUID orderId = orderRepository.findIdByOrderNo(orderNo.trim())
                 .orElseThrow(() -> new NotFoundException("No such order: " + orderNo));
+        // An unpaid payment first; failing that, one staff marked failed on an order still marked failed. Allocating
+        // a credit to THAT is a person's decision that the customer did pay, so it brings the order back (the
+        // auto-match above never does: it leaves such a credit for a person, who comes here).
         UUID paymentId = paymentRecordRepository.findUnpaidBankPaymentIdsByOrderId(orderId).stream().findFirst()
+                .or(() -> paymentRecordRepository.findFailedBankPaymentIdsByOrderId(orderId).stream().findFirst())
                 .orElseThrow(() -> new ConflictException(
                         "Order " + orderNo + " has no unpaid bank payment to allocate this credit to"));
         // Locked, then re-checked: the scalar query above can go stale the instant it runs (a claim
         // approval or a callback confirming this exact payment right now), the same way an unlocked
         // findByOrderId used to — see confirmAndMatch's callers for why nothing is decided before this.
         PaymentRecord payment = paymentRecordRepository.lockById(paymentId).orElseThrow();
-        if (payment.getStatus() != PaymentRecord.PaymentStatus.INITIATED
+        boolean reviving = payment.getStatus() == PaymentRecord.PaymentStatus.FAILED;
+        if (!reviving
+                && payment.getStatus() != PaymentRecord.PaymentStatus.INITIATED
                 && payment.getStatus() != PaymentRecord.PaymentStatus.PENDING) {
             throw new ConflictException("Order " + orderNo + " has no unpaid bank payment to allocate this credit to");
         }
-        confirmAndMatch(credit, payment, staffEmail, blankToNull(note));
+        confirmAndMatch(credit, payment, staffEmail, blankToNull(note), reviving);
         return credit;
     }
 
@@ -163,7 +169,8 @@ public class BankCreditService {
                 // Staff can revive a payment they marked failed, but putting stock back under an order is a
                 // person's decision (the stock may have been sold since), never an automatic one.
                 credit.setResolutionNote("Reference " + reference + " belongs to order " + payment.getOrder().getOrderNo()
-                        + ", whose payment was marked failed: needs a person to look at it.");
+                        + ", whose payment was marked failed: needs a person. If the customer did pay, allocate this credit"
+                        + " to that order (it brings the order back); otherwise ignore it.");
                 creditRepository.save(credit);
                 return;
             }
@@ -174,15 +181,16 @@ public class BankCreditService {
                 creditRepository.save(credit);
                 return;
             }
-            confirmAndMatch(credit, payment, "system", "Matched automatically on reference " + reference);
+            confirmAndMatch(credit, payment, "system", "Matched automatically on reference " + reference, false);
             return;
         }
     }
 
-    private void confirmAndMatch(BankCredit credit, PaymentRecord payment, String resolvedBy, String note) {
+    private void confirmAndMatch(BankCredit credit, PaymentRecord payment, String resolvedBy, String note,
+                                 boolean revive) {
         paymentService.confirmSuccess(payment.getId(), credit.getBankTxnId(),
                 "{\"type\":\"bank_credit\",\"creditId\":\"" + credit.getId() + "\"}",
-                PaymentRecord.PaymentMethod.BANK);
+                PaymentRecord.PaymentMethod.BANK, revive);
         credit.setStatus(BankCredit.CreditStatus.MATCHED);
         credit.setPayment(payment);
         credit.setResolvedBy(resolvedBy);

@@ -199,6 +199,14 @@ class LatePaymentAndExpiryIntegrationTest {
                 .content("{\"reference\":\"" + code + "\",\"method\":\"MPESA\"}"));
     }
 
+    /** "The customer did pay" on an order whose payment was marked failed: the one request allowed to bring it back. */
+    private MvcResult confirmRevive(Placed placed) throws Exception {
+        return staff(post("/api/v1/payments/" + placed.paymentId() + "/confirm-manual")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reference\":\"REV" + UUID.randomUUID().toString().substring(0, 8).toUpperCase()
+                        + "\",\"method\":\"MPESA\",\"revive\":true}"));
+    }
+
     private void markFailed(Placed placed) throws Exception {
         okStaff(post("/api/v1/payments/" + placed.paymentId() + "/fail-manual")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"no payment seen\"}"));
@@ -222,7 +230,14 @@ class LatePaymentAndExpiryIntegrationTest {
         assertThat(orderStatus(placed)).isEqualTo("PAYMENT_FAILED");
         assertThat(reserved(item)).isEqualByComparingTo("0");
 
-        assertThat(confirm(placed).getResponse().getStatus()).isEqualTo(200);
+        // An ordinary Confirm (a stale click on the Payments tab) does NOT bring it back: only the deliberate request does.
+        MvcResult stale = confirm(placed);
+        assertThat(stale.getResponse().getStatus()).isEqualTo(422);
+        assertThat(stale.getResponse().getContentAsString()).contains("marked failed").contains("Customer did pay");
+        assertThat(orderStatus(placed)).isEqualTo("PAYMENT_FAILED");
+        assertThat(reserved(item)).isEqualByComparingTo("0");
+
+        assertThat(confirmRevive(placed).getResponse().getStatus()).isEqualTo(200);
 
         assertThat(orderStatus(placed)).isEqualTo("PAID");
         assertThat(reserved(item)).isEqualByComparingTo("2");
@@ -241,15 +256,35 @@ class LatePaymentAndExpiryIntegrationTest {
                 {"lines":[{"variantId":"%s","qty":"5"}],"reasonCode":"DAMAGED","notes":"gone"}
                 """.formatted(item.variantId())));
 
-        MvcResult refused = confirm(placed);
+        MvcResult refused = confirmRevive(placed);
 
         assertThat(refused.getResponse().getStatus()).isEqualTo(409);
         assertThat(refused.getResponse().getContentAsString()).contains("stock has since gone").contains("refund the customer");
         assertThat(orderStatus(placed)).isEqualTo("PAYMENT_FAILED");
 
         setStock(item, 5);
-        assertThat(confirm(placed).getResponse().getStatus()).isEqualTo(200);
+        assertThat(confirmRevive(placed).getResponse().getStatus()).isEqualTo(200);
         assertThat(orderStatus(placed)).isEqualTo("PAID");
+    }
+
+    /**
+     * Found by the pre-push audit: a stale "Payment failed" click after someone else cancelled the order wrote
+     * PAYMENT_FAILED over CANCELLED, which the revive button would then have turned into PAID.
+     */
+    @Test
+    void aCancelledOrderStaysCancelledWhenAStaleFailedClickArrives() throws Exception {
+        Item item = newPublishedVariantWithStock(5);
+        Placed placed = place(item, 1);
+        okStaff(post("/api/v1/orders/" + placed.orderId() + "/cancel")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"customer changed mind\"}"));
+
+        MvcResult stale = staff(post("/api/v1/payments/" + placed.paymentId() + "/fail-manual")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"stale click\"}"));
+
+        assertThat(stale.getResponse().getStatus()).isEqualTo(409);
+        assertThat(stale.getResponse().getContentAsString()).contains("cancelled");
+        assertThat(orderStatus(placed)).isEqualTo("CANCELLED");
+        assertThat(confirmRevive(placed).getResponse().getStatus()).as("and it cannot be revived either").isEqualTo(409);
     }
 
     /**
