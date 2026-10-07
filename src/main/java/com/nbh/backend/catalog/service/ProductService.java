@@ -183,6 +183,7 @@ public class ProductService {
         List<ProductVariant> existing = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(product.getId());
         Map<UUID, ProductVariant> byId = existing.stream().collect(Collectors.toMap(ProductVariant::getId, v -> v));
         Set<UUID> keep = new HashSet<>();
+        List<ProductVariant> kept = new ArrayList<>();
 
         int order = 0;
         for (SaveProductRequest.VariantInput in : inputs) {
@@ -202,6 +203,7 @@ public class ProductService {
             variant.setSortOrder(order++);
             variant = variantRepository.save(variant);
             keep.add(variant.getId());
+            kept.add(variant);
         }
 
         for (ProductVariant v : existing) {
@@ -212,6 +214,32 @@ public class ProductService {
                 removePhotosOf(v);
             }
         }
+
+        if (kept.size() == 1) {
+            fileLoosePhotosUnder(product, kept.get(0));
+        }
+    }
+
+    /**
+     * A product that is down to one option: the photos that were not given to any option while there were several
+     * belong to that one now. The shop already shows them on it (see {@link PhotoOwnership}), but the editor lists an
+     * option's own photos only, so left at product level staff could not reorder or remove them. They are filed under
+     * the option, keeping one main photo (the option's own if it has one, else the first of these).
+     */
+    private void fileLoosePhotosUnder(Product product, ProductVariant sole) {
+        List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(product.getId());
+        List<ProductImage> loose = PhotoOwnership.sameOwner(images, null);
+        if (loose.isEmpty()) {
+            return;
+        }
+        boolean hasMain = PhotoOwnership.sameOwner(images, sole.getId()).stream().anyMatch(ProductImage::isPrimary);
+        UUID newMain = hasMain ? null
+                : loose.stream().filter(ProductImage::isPrimary).findFirst().orElse(loose.get(0)).getId();
+        for (ProductImage photo : loose) {
+            photo.setVariant(sole);
+            photo.setPrimary(photo.getId().equals(newMain));
+        }
+        imageRepository.saveAll(loose);
     }
 
     private BigDecimal parsePriceOrNull(String raw) {

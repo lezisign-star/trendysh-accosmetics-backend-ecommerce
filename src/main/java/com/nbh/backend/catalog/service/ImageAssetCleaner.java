@@ -66,16 +66,51 @@ public class ImageAssetCleaner {
         if (candidates.isEmpty()) {
             return;
         }
-        Runnable job = () -> candidates.forEach(this::deleteIfUnused);
+        runAfterCommit(() -> candidates.forEach(this::deleteIfUnused));
+    }
+
+    /**
+     * Like {@link #releaseAfterCommit}, for a file whose Cloudinary id was stored when it was made (an AI shot): the
+     * stored id is deleted, but still only when no other photo row or waiting draft shows the same file. A null url
+     * (the photo's row was already gone) skips that check, since nothing can be using it.
+     */
+    public void releaseKnown(String url, String publicId) {
+        if (publicId == null || publicId.isBlank()) {
+            return;
+        }
+        runAfterCommit(() -> {
+            try {
+                if (url != null && (images.existsByUrl(url) || drafts.existsByUrl(url))) {
+                    log.debug("Keeping Cloudinary asset {}: a photo or a draft still uses it", publicId);
+                    return;
+                }
+                cloudinary.delete(publicId);
+                log.info("Deleted Cloudinary asset {}", publicId);
+            } catch (RuntimeException e) {
+                log.warn("Couldn't release the photo {}: {}", publicId, e.getMessage());
+            }
+        });
+    }
+
+    private void runAfterCommit(Runnable job) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    executor.execute(job);
+                    submit(job);
                 }
             });
         } else {
+            submit(job);
+        }
+    }
+
+    /** A full queue only means a file stays on Cloudinary a while longer; it must never fail the save that got us here. */
+    private void submit(Runnable job) {
+        try {
             executor.execute(job);
+        } catch (RuntimeException e) {
+            log.warn("Couldn't queue a Cloudinary clean-up ({}); the file stays where it is", e.getMessage());
         }
     }
 

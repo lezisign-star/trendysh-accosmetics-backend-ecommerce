@@ -320,6 +320,44 @@ class ProductPhotosIntegrationTest extends PhotoStudioTestContext {
         verify(cloudinary).delete("trendysh/products/" + blueFile);
     }
 
+    @Test
+    void whenSeveralOptionsBecomeOneThePhotosNobodyOwnedBelongToIt() throws Exception {
+        JsonNode product = productWithOptions(unique("Photo Rule Down To One"), "Red", "Blue");
+        String productId = product.get("id").asText();
+        String red = optionId(product, 0);
+        attach(productId, red, "https://photos.test/red-1.jpg", true);
+        // Photos nobody owned while there were two options (the old "whole product" kind).
+        for (int i = 0; i < 2; i++) {
+            ProductImage stray = new ProductImage();
+            stray.setProduct(products.getReferenceById(UUID.fromString(productId)));
+            stray.setUrl("https://photos.test/stray-" + i + ".jpg");
+            stray.setPrimary(i == 0);
+            stray.setSortOrder(50 + i);
+            images.save(stray);
+        }
+
+        staff(put("/api/v1/products/" + productId + "/full"), "{\"expectedUpdatedAt\":\"" + product.get("updatedAt").asText()
+                + "\",\"name\":\"" + product.get("name").asText() + "\",\"categoryIds\":[],\"published\":true,"
+                + "\"variants\":[{\"id\":\"" + red + "\",\"variantName\":\"Red\",\"sellingPrice\":\"400\",\"isActive\":true}]}");
+
+        List<JsonNode> photos = staffPhotos(productId);
+        assertThat(photos).hasSize(3);
+        assertThat(photos).as("staff can now see, reorder and remove every photo the shop shows")
+                .allSatisfy(i -> assertThat(i.get("variantId").asText()).isEqualTo(red));
+        assertThat(photos.stream().filter(i -> i.get("isPrimary").asBoolean()).map(i -> i.get("url").asText()))
+                .as("still exactly one main photo, the option's own").containsExactly("https://photos.test/red-1.jpg");
+        assertThat(shopPhotos(red)).hasSize(3).startsWith("https://photos.test/red-1.jpg");
+    }
+
+    @Test
+    void aVeryLongNameDoesNotBreakAPhotosAltText() throws Exception {
+        ProductImage photo = new ProductImage();
+        photo.setAltText("x".repeat(400));
+        assertThat(photo.getAltText()).hasSize(250);
+        photo.setAltText(null);
+        assertThat(photo.getAltText()).isNull();
+    }
+
     // ---- copies ----
 
     @Test

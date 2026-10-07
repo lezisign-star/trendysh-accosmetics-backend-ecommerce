@@ -4,6 +4,7 @@ import com.nbh.backend.catalog.entity.ProductImage;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductImageRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.catalog.service.ImageAssetCleaner;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
@@ -65,11 +66,14 @@ public class ImageCleanupService {
     private final CloudinaryUploader cloudinary;
     private final ImageCleanupConfig config;
     private final ImageDraftService draftService;
+    private final ImageAssetCleaner assetCleaner;
 
     public ImageCleanupService(ImageCleanupBatchRepository batches, ProductImageRepository images,
                                ProductVariantRepository variants, ImageDraftRepository drafts,
                                ImageCleanupWriter writer, ImageCleanupRunner runner, CloudinaryUploader cloudinary,
-                               ImageCleanupConfig config, ImageDraftService draftService) {
+                               ImageCleanupConfig config, ImageDraftService draftService,
+                               ImageAssetCleaner assetCleaner) {
+        this.assetCleaner = assetCleaner;
         this.batches = batches;
         this.images = images;
         this.variants = variants;
@@ -218,7 +222,8 @@ public class ImageCleanupService {
         if (batch.getStatus() == ImageCleanupBatch.Status.DELETED) {
             throw new ConflictException("This batch was already undone.");
         }
-        writer.undo(id).forEach(cloudinary::delete);
+        // Through the asset cleaner, not straight to Cloudinary: a duplicated product's photo may point at the same file.
+        writer.undo(id).forEach(r -> assetCleaner.releaseKnown(r.url(), r.publicId()));
         return get(id);
     }
 }

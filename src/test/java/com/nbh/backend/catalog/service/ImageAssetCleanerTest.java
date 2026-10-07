@@ -159,4 +159,43 @@ class ImageAssetCleanerTest {
         verify(cloudinary, never()).delete(anyString());
         assertThat(Optional.ofNullable(cloudinary)).isPresent();
     }
+
+    // ---- a file whose Cloudinary id was stored when it was made (an AI shot) ----
+
+    @Test
+    void aStoredIdIsDeletedWhenNothingStillShowsTheFile() {
+        cleaner.releaseKnown(UPLOAD, "products/stored-id");
+
+        verify(cloudinary).delete("products/stored-id");
+    }
+
+    @Test
+    void aStoredIdIsKeptWhileADuplicatedProductsPhotoStillShowsTheFile() {
+        when(images.existsByUrl(UPLOAD)).thenReturn(true);
+
+        cleaner.releaseKnown(UPLOAD, "products/stored-id");
+
+        verify(cloudinary, never()).delete(anyString());
+    }
+
+    @Test
+    void aStoredIdWhoseRowIsAlreadyGoneIsDeletedWithoutTheUsageCheck() {
+        cleaner.releaseKnown(null, "products/stored-id");
+
+        verify(cloudinary).delete("products/stored-id");
+        verify(images, never()).existsByUrl(anyString());
+    }
+
+    @Test
+    void aFullDeletionQueueNeverFailsTheSaveThatCausedIt() {
+        Executor full = job -> {
+            throw new java.util.concurrent.RejectedExecutionException("queue is full");
+        };
+        ImageAssetCleaner overloaded = new ImageAssetCleaner(cloudinary, images, drafts, full);
+
+        overloaded.releaseAfterCommit(List.of(UPLOAD)); // does not throw
+        overloaded.releaseKnown(UPLOAD, "products/stored-id"); // nor this
+
+        verify(cloudinary, never()).delete(anyString());
+    }
 }

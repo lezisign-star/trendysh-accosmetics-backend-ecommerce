@@ -44,5 +44,12 @@ public class ProductImage extends BaseEntity {
     private Integer height;
     private Integer byteSize;
 
+    /** Cut to the column's length: a very long product plus option name must not make the save fail. */
+    public void setAltText(String altText) {
+        this.altText = altText != null && altText.length() > ALT_TEXT_MAX ? altText.substring(0, ALT_TEXT_MAX) : altText;
+    }
+
+    private static final int ALT_TEXT_MAX = 250;
+
     public enum ImageSource { UPLOAD, CAMERA_CAPTURE, AI_CLEANED }
 }

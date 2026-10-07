@@ -38,6 +38,9 @@ public class ImageCleanupWriter {
     public record Target(UUID productId, UUID variantId, String displayName, UUID referenceImageId, String referenceUrl,
                          boolean referenceWasMain) {}
 
+    /** A Cloudinary file an undone batch no longer needs: its stored id, and the link photos showed it under. */
+    public record Released(String url, String publicId) {}
+
     public record Generated(String url, String publicId, String prompt, PhotoView view) {}
 
     private final ProductRepository products;
@@ -185,16 +188,20 @@ public class ImageCleanupWriter {
 
     /**
      * Undo: remove what the batch published (and make each original photo its owner's main photo again) and discard
-     * the drafts of it that are still waiting. Returns the Cloudinary ids to delete.
+     * the drafts of it that are still waiting. Returns the Cloudinary files to delete, each with the link it was shown
+     * under, so the caller can leave alone one that a duplicated product's photo still points at.
      */
     @Transactional
-    public List<String> undo(UUID batchId) {
+    public List<Released> undo(UUID batchId) {
         List<ImageCleanupItem> made = items.findByBatchId(batchId);
-        List<String> publicIds = new ArrayList<>();
+        List<Released> publicIds = new ArrayList<>();
         for (ImageCleanupItem item : made) {
-            images.findById(item.getProductImageId()).ifPresent(images::delete);
+            String url = images.findById(item.getProductImageId()).map(image -> {
+                images.delete(image);
+                return image.getUrl();
+            }).orElse(null);
             if (item.getCloudinaryPublicId() != null) {
-                publicIds.add(item.getCloudinaryPublicId());
+                publicIds.add(new Released(url, item.getCloudinaryPublicId()));
             }
         }
         images.flush();
@@ -217,7 +224,7 @@ public class ImageCleanupWriter {
         List<ImageDraft> waiting = drafts.findByBatchId(batchId);
         for (ImageDraft draft : waiting) {
             if (draft.getCloudinaryPublicId() != null) {
-                publicIds.add(draft.getCloudinaryPublicId());
+                publicIds.add(new Released(draft.getUrl(), draft.getCloudinaryPublicId()));
             }
         }
         drafts.deleteAll(waiting);
