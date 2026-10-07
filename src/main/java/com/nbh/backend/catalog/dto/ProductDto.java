@@ -32,8 +32,30 @@ public record ProductDto(
         String primaryImageUrl,
         Instant updatedAt,
         List<String> warnings,
-        List<ProductVariantDto> variants
+        List<ProductVariantDto> variants,
+        // Only filled in the staff product LIST (empty/zero elsewhere): the product's photos at a glance.
+        PhotoStats photoStats
 ) {
+    /**
+     * A product's photos for the staff list. {@code photos} is every live photo (capped at {@link #MAX_LISTED}), grouped by
+     * option in the product's own order with each option's main photo first; unassigned ones (no option) come last.
+     * The counts are exact even when the list is capped. {@code pendingDrafts} are AI photos waiting for approval.
+     */
+    public record PhotoStats(List<PhotoSummary> photos, int photoCount, int aiPhotoCount, int unassignedCount,
+                             int pendingDrafts) {
+        public static final int MAX_LISTED = 24;
+        public static final PhotoStats NONE = new PhotoStats(List.of(), 0, 0, 0, 0);
+    }
+
+    public record PhotoSummary(UUID id, String url, String thumbnailUrl, UUID variantId, boolean isPrimary,
+                               boolean aiMade) {}
+
+    public ProductDto withPhotoStats(PhotoStats stats) {
+        return new ProductDto(id, slug, name, brandId, brandName, categories, categoryId, categoryName, subcategoryId,
+                subcategoryName, shortDescription, description, ingredients, howToUse, isPublished, deleted, isPopular,
+                isNewArrival, primaryImageUrl, updatedAt, warnings, variants, stats);
+    }
+
     public record CategoryRef(UUID id, String name, UUID parentId, String parentName) {
         static CategoryRef from(Category c) {
             Category parent = c.getParent();
@@ -65,6 +87,6 @@ public record ProductDto(
                 categories, categoryId, categoryName, subcategoryId, subcategoryName,
                 p.getShortDescription(), p.getDescription(), p.getIngredients(), p.getHowToUse(),
                 p.isPublished(), p.isDeleted(), p.isPopular(), p.isNewArrival(), primaryImageUrl,
-                p.getUpdatedAt(), warnings, variants);
+                p.getUpdatedAt(), warnings, variants, PhotoStats.NONE);
     }
 }

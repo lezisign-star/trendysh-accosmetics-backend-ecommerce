@@ -141,6 +141,21 @@ class CartServiceUnitTest {
     }
 
     @Test
+    void aProductWhoseOnlyOptionHasNoRealNameIsNamedWithoutEmptyBrackets() {
+        stockAvailable("5", "3");
+
+        // The product editor saves a blank option name for a product with one option; older products carry "Default".
+        // Neither says anything, so the shopper reads the product's name alone, not "Gel polish ()".
+        for (String placeholder : new String[]{"", "   ", "Default", "default"}) {
+            variant.setVariantName(placeholder);
+            assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), new BigDecimal("3")))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .as("option named \"" + placeholder + "\"")
+                    .hasMessage("Only 2 of Gel polish left");
+        }
+    }
+
+    @Test
     void theRefusalDoesNotRevealHowMuchStockThereReallyIsWhenItIsNotLow() {
         stockAvailable("40", "0");
 

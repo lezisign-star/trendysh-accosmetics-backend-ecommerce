@@ -25,7 +25,8 @@ public class ImageCleanupConfig {
     private String cloudinaryUploadBaseUrl = "https://api.cloudinary.com";
     /** Cleaned shots' studio backdrop. */
     private String backgroundHex = "#F3EBDD";
-    private int maxImagesPerProduct = 6;
+    /** The most photos one run may ask for per option: one per view staff can tick. */
+    private int maxImagesPerProduct = PhotoView.values().length;
 
     private IntegrationSettingsService settings;
 

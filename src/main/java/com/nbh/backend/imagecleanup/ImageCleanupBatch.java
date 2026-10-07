@@ -12,7 +12,7 @@ import lombok.Setter;
 import java.time.Instant;
 import java.util.UUID;
 
-/** One run of the AI photo-cleanup job. Its {@link ImageCleanupItem}s let the whole run be undone at once. */
+/** One run of the AI photo job. Its {@link ImageCleanupItem}s let everything it published be undone at once. */
 @Getter
 @Setter
 @Entity
@@ -31,9 +31,29 @@ public class ImageCleanupBatch extends BaseEntity {
         DELETED
     }
 
+    /** What happens to the photos a run makes. */
+    public enum PublishMode {
+        /** Straight into the shop, placed first (how every run worked before staff could review). */
+        IMMEDIATE,
+        /** Held as drafts nobody in the shop can see until a person approves each one. The default. */
+        REVIEW
+    }
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private Status status = Status.IN_PROGRESS;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "publish_mode", nullable = false, length = 10)
+    private PublishMode publishMode = PublishMode.IMMEDIATE;
+
+    /** Comma-separated {@link PhotoView} keys that were asked for; null on runs from before views could be chosen. */
+    @Column(name = "views", length = 300)
+    private String views;
+
+    /** The staff note added to every photo of the run, if any. */
+    @Column(name = "note", length = 600)
+    private String note;
 
     @Column(name = "images_per_product", nullable = false)
     private int imagesPerProduct;

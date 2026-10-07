@@ -279,8 +279,7 @@ public class CartService {
         if (available.compareTo(requestedQty) >= 0) {
             return;
         }
-        String name = variant.getProduct().getName()
-                + (variant.getVariantName().equalsIgnoreCase("Default") ? "" : " (" + variant.getVariantName() + ")");
+        String name = variant.displayLabel();
         if (available.signum() <= 0) {
             throw new IllegalArgumentException(name + " is out of stock");
         }

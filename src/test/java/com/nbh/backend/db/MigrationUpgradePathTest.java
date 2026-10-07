@@ -49,6 +49,16 @@ class MigrationUpgradePathTest {
     private final UUID legacyVariant = UUID.randomUUID();
     private final UUID legacyUploadedImage = UUID.randomUUID();
     private final UUID legacyCameraImage = UUID.randomUUID();
+    // A product with SEVERAL options, shaped like the live "Sun yc-57c" (V56).
+    private final UUID multiProduct = UUID.randomUUID();
+    private final UUID multiRed = UUID.randomUUID();
+    private final UUID multiBlue = UUID.randomUUID();
+    private final UUID sharedMain = UUID.randomUUID();
+    private final UUID sharedExtra = UUID.randomUUID();
+    private final UUID redFirst = UUID.randomUUID();
+    private final UUID redSecond = UUID.randomUUID();
+    private final UUID blueFirst = UUID.randomUUID();
+    private final UUID blueSecond = UUID.randomUUID();
     private final UUID legacyCart = UUID.randomUUID();
     private final UUID legacyCartItem = UUID.randomUUID();
     private final UUID legacyOrderItem = UUID.randomUUID();
@@ -113,6 +123,7 @@ class MigrationUpgradePathTest {
                 + "', '" + legacyProduct + "', 'https://res.cloudinary.com/demo/image/upload/legacy-upload.jpg', 'UPLOAD', true)");
         s.execute("INSERT INTO product_image (id, product_id, url, source, is_primary) VALUES ('" + legacyCameraImage
                 + "', '" + legacyProduct + "', 'https://res.cloudinary.com/demo/image/upload/legacy-camera.jpg', 'CAMERA_CAPTURE', false)");
+        seedProductWithSeveralOptionsAndItsPhotos(s);
         s.execute("INSERT INTO cart (id, session_id) VALUES ('" + legacyCart + "', 'legacy-session')");
         s.execute("INSERT INTO cart_item (id, cart_id, variant_id, qty, unit_price_snapshot, product_name_snapshot, variant_name_snapshot)"
                 + " VALUES ('" + legacyCartItem + "', '" + legacyCart + "', '" + legacyVariant + "', 2, 500, 'Legacy Gel Polish', '15ml')");
@@ -121,6 +132,30 @@ class MigrationUpgradePathTest {
         // The owner's payment details, with the support number V53 replaces.
         s.execute("INSERT INTO payment_settings (id, bank_name, paybill_number, account_name, support_whatsapp)"
                 + " VALUES ('" + legacySettings + "', 'Co-operative Bank', '400200', 'Trendysh Accosmetic', '0724808526')");
+    }
+
+    /**
+     * What V56 meets on a shop that has a product with two options: photos filed at product level (shared by both, one
+     * of them the product's single main photo), one option whose photos have no main one, and one that somehow holds two.
+     */
+    private void seedProductWithSeveralOptionsAndItsPhotos(Statement s) throws SQLException {
+        s.execute("INSERT INTO product (id, slug, name) VALUES ('" + multiProduct + "', 'legacy-two-shades', 'Legacy Two Shades')");
+        s.execute("INSERT INTO product_variant (id, product_id, sku, variant_name, selling_price, is_active)"
+                + " VALUES ('" + multiRed + "', '" + multiProduct + "', 'LEGACY-002', 'Red', 500, true)");
+        s.execute("INSERT INTO product_variant (id, product_id, sku, variant_name, selling_price, is_active)"
+                + " VALUES ('" + multiBlue + "', '" + multiProduct + "', 'LEGACY-003', 'Blue', 520, true)");
+        insertPhoto(s, sharedMain, null, "shared-main", true, 0);
+        insertPhoto(s, sharedExtra, null, "shared-extra", false, 1);
+        insertPhoto(s, redFirst, multiRed, "red-first", false, 2);
+        insertPhoto(s, redSecond, multiRed, "red-second", false, 3);
+        insertPhoto(s, blueFirst, multiBlue, "blue-first", true, 4);
+        insertPhoto(s, blueSecond, multiBlue, "blue-second", true, 5);
+    }
+
+    private void insertPhoto(Statement s, UUID id, UUID variant, String name, boolean main, int sortOrder) throws SQLException {
+        s.execute("INSERT INTO product_image (id, product_id, variant_id, url, source, is_primary, sort_order) VALUES ('" + id
+                + "', '" + multiProduct + "', " + (variant == null ? "NULL" : "'" + variant + "'")
+                + ", 'https://res.cloudinary.com/demo/image/upload/" + name + ".jpg', 'UPLOAD', " + main + ", " + sortOrder + ")");
     }
 
     @AfterAll
@@ -247,6 +282,89 @@ class MigrationUpgradePathTest {
         try (ResultSet rs = s.executeQuery(sql)) {
             assertThat(rs.next()).as(sql).isTrue();
             return rs.getString(1);
+        }
+    }
+
+    private UUID uuidOrNull(Statement s, String sql) throws SQLException {
+        try (ResultSet rs = s.executeQuery(sql)) {
+            assertThat(rs.next()).as(sql).isTrue();
+            return rs.getObject(1, UUID.class);
+        }
+    }
+
+    private boolean isMainPhoto(Statement s, UUID image) throws SQLException {
+        try (ResultSet rs = s.executeQuery("SELECT is_primary FROM product_image WHERE id = '" + image + "'")) {
+            assertThat(rs.next()).isTrue();
+            return rs.getBoolean(1);
+        }
+    }
+
+    private UUID ownerOfPhoto(Statement s, UUID image) throws SQLException {
+        return uuidOrNull(s, "SELECT variant_id FROM product_image WHERE id = '" + image + "'");
+    }
+
+    @Test
+    void v57_batchesThatAlreadyExistedCountAsPublishedImmediatelyAndADraftNeedsARealBatchProductAndOption() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            UUID batch = UUID.randomUUID();
+            UUID draft = UUID.randomUUID();
+            // A batch exactly as V51 created them: no publish mode, views or note were ever stored.
+            s.execute("INSERT INTO image_cleanup_batch (id, status, images_per_product) VALUES ('" + batch + "', 'COMPLETED', 3)");
+            try {
+                assertThat(text(s, "SELECT publish_mode FROM image_cleanup_batch WHERE id = '" + batch + "'"))
+                        .as("how every run worked before staff could review").isEqualTo("IMMEDIATE");
+                assertThat(text(s, "SELECT coalesce(views, '-') || coalesce(note, '-') FROM image_cleanup_batch WHERE id = '" + batch + "'"))
+                        .isEqualTo("--");
+                s.execute("UPDATE image_cleanup_batch SET publish_mode = 'REVIEW' WHERE id = '" + batch + "'");
+                assertThatThrownBy(() -> s.execute("UPDATE image_cleanup_batch SET publish_mode = 'BOGUS' WHERE id = '" + batch + "'"))
+                        .hasMessageContaining("image_cleanup_batch_publish_mode_check");
+
+                String draftColumns = "INSERT INTO image_draft (id, batch_id, product_id, variant_id, reference_image_id, view_key, url) VALUES ('";
+                s.execute(draftColumns + draft + "', '" + batch + "', '" + legacyProduct + "', '" + legacyVariant + "', '"
+                        + legacyUploadedImage + "', 'CLEAN', 'https://res.cloudinary.com/demo/image/upload/v1/products/x.png')");
+                assertThatThrownBy(() -> s.execute(draftColumns + UUID.randomUUID() + "', '" + UUID.randomUUID() + "', '" + legacyProduct
+                        + "', '" + legacyVariant + "', '" + legacyUploadedImage + "', 'CLEAN', 'u')"))
+                        .as("a draft belongs to a real batch").hasMessageContaining("batch_id");
+                assertThatThrownBy(() -> s.execute(draftColumns + UUID.randomUUID() + "', '" + batch + "', '" + UUID.randomUUID()
+                        + "', '" + legacyVariant + "', '" + legacyUploadedImage + "', 'CLEAN', 'u')"))
+                        .as("and a real product").hasMessageContaining("product_id");
+                assertThatThrownBy(() -> s.execute(draftColumns + UUID.randomUUID() + "', '" + batch + "', '" + legacyProduct
+                        + "', '" + UUID.randomUUID() + "', '" + legacyUploadedImage + "', 'CLEAN', 'u')"))
+                        .as("and a real option").hasMessageContaining("variant_id");
+            } finally {
+                s.execute("DELETE FROM image_draft WHERE batch_id = '" + batch + "'");
+                s.execute("DELETE FROM image_cleanup_batch WHERE id = '" + batch + "'");
+            }
+        }
+    }
+
+    @Test
+    void v56_aPhotoBelongsToOneOptionAndEveryOwnerHasExactlyOneMainPhoto() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            // A product with ONE option: its old "whole product" photos can only mean that option's, so they now belong to it.
+            assertThat(ownerOfPhoto(s, legacyUploadedImage)).isEqualTo(legacyVariant);
+            assertThat(ownerOfPhoto(s, legacyCameraImage)).isEqualTo(legacyVariant);
+            assertThat(isMainPhoto(s, legacyUploadedImage)).as("the main photo stays the main photo").isTrue();
+            assertThat(isMainPhoto(s, legacyCameraImage)).isFalse();
+
+            // A product with SEVERAL options: nobody can say which option a shared photo is, so it stays unassigned for
+            // staff to place, and the options' own photos are left where they were.
+            assertThat(ownerOfPhoto(s, sharedMain)).isNull();
+            assertThat(ownerOfPhoto(s, sharedExtra)).isNull();
+            assertThat(ownerOfPhoto(s, redFirst)).isEqualTo(multiRed);
+            assertThat(ownerOfPhoto(s, blueFirst)).isEqualTo(multiBlue);
+
+            // The old single main photo per PRODUCT is now one per OWNER: red had none and gets its first, blue held two and
+            // keeps the earlier, and the unassigned group keeps the one it had.
+            assertThat(isMainPhoto(s, redFirst)).isTrue();
+            assertThat(isMainPhoto(s, redSecond)).isFalse();
+            assertThat(isMainPhoto(s, blueFirst)).isTrue();
+            assertThat(isMainPhoto(s, blueSecond)).isFalse();
+            assertThat(isMainPhoto(s, sharedMain)).isTrue();
+            assertThat(isMainPhoto(s, sharedExtra)).isFalse();
+            assertThat(count(s, "SELECT count(*) FROM (SELECT 1 FROM product_image WHERE product_id IN ('" + legacyProduct
+                    + "', '" + multiProduct + "') GROUP BY product_id, variant_id HAVING count(*) FILTER (WHERE is_primary) <> 1) t"))
+                    .as("no owner is left with zero or several main photos").isZero();
         }
     }
 

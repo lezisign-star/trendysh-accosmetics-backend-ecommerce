@@ -63,6 +63,25 @@ public class VariantStockService {
         this.documentNoGenerator = documentNoGenerator;
     }
 
+    /**
+     * "N more came in" (2026-10-08): adds {@code received} to what is on the shelf at the moment of the save, instead
+     * of to a total the screen worked out earlier. A shop that sells while a delivery is being counted in must not lose
+     * a sale, or the delivery, to a sum made minutes before — so the balance is locked here and the new total is built
+     * from the locked figure. Everything else (kits refused, whole-number rules, cost fallback) is
+     * {@link #setOnHand}'s, which this finishes with.
+     */
+    @Transactional
+    public Result addOnHand(UUID productId, UUID variantId, BigDecimal received, BigDecimal unitCost,
+                             String reason, boolean allowUnknownCost, StaffUser staff) {
+        if (received == null || received.signum() <= 0) {
+            throw new IllegalArgumentException("The number received must be more than zero");
+        }
+        StockBalance locked = balanceRepository.lockByVariantIdAndAccount(variantId, StockAccount.SHOP).orElse(null);
+        BigDecimal currentOnHand = locked != null ? locked.getOnHandQty() : BigDecimal.ZERO;
+        String note = reason != null && !reason.isBlank() ? reason : "Stock received";
+        return setOnHand(productId, variantId, currentOnHand.add(received), unitCost, note, allowUnknownCost, staff);
+    }
+
     /** {@link #setOnHand(UUID, UUID, BigDecimal, BigDecimal, String, boolean, StaffUser)} that refuses a gain whose cost is unknown. */
     @Transactional
     public Result setOnHand(UUID productId, UUID variantId, BigDecimal targetOnHand, BigDecimal unitCost,

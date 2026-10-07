@@ -75,17 +75,53 @@ class ImageCleanupUnitTest {
     // ---- prompts ----
 
     @Test
-    void sixShotsAreEachDifferentAndEveryPromptProtectsTheProduct() {
+    void everyViewIsDifferentAndEveryPromptProtectsTheProduct() {
         ImageCleanupPromptBuilder builder = new ImageCleanupPromptBuilder();
-        assertThat(builder.maxShots()).isEqualTo(6);
+        assertThat(PhotoView.values()).as("the views staff can tick").hasSize(8);
         Set<String> distinct = new HashSet<>();
-        for (int i = 0; i < 6; i++) {
-            String p = builder.build("Acrylic Powder 100g", i, "#F3EBDD");
+        for (PhotoView view : PhotoView.values()) {
+            String p = builder.build("Acrylic Powder 100g", view, null, "#F3EBDD");
             distinct.add(p);
             assertThat(p).contains("Acrylic Powder 100g").contains("#F3EBDD").contains("creamy studio backdrop")
-                    .contains("Do not add any watermark").contains("Do not add a lid");
+                    .contains("Do not add any watermark").contains("Do not add a lid").contains(view.instruction());
         }
-        assertThat(distinct).hasSize(6);
+        assertThat(distinct).hasSize(8);
+    }
+
+    @Test
+    void theFirstSixViewsAreTheOriginalShotsInTheirOldOrderAndTheDefaultsAreTheFirstThree() {
+        assertThat(PhotoView.firstOf(6)).containsExactly(PhotoView.CLEAN, PhotoView.DETAIL, PhotoView.WIDE,
+                PhotoView.FRONT, PhotoView.ELEVATED, PhotoView.SIDE);
+        assertThat(PhotoView.firstOf(3)).containsExactly(PhotoView.CLEAN, PhotoView.DETAIL, PhotoView.WIDE);
+        assertThat(PhotoView.firstOf(0)).as("never fewer than one").hasSize(1);
+        assertThat(PhotoView.firstOf(99)).as("never more than exist").hasSize(8);
+    }
+
+    @Test
+    void viewKeysAreReadBackWhateverTheirCase() {
+        assertThat(PhotoView.parse("top_down")).contains(PhotoView.TOP_DOWN);
+        assertThat(PhotoView.parse(" Back ")).contains(PhotoView.BACK);
+        assertThat(PhotoView.parse("sideways")).isEmpty();
+        assertThat(PhotoView.parse(null)).isEmpty();
+    }
+
+    @Test
+    void aStaffNoteIsPassedOnButTheRulesThatProtectTheProductStayAndWinOverIt() {
+        ImageCleanupPromptBuilder builder = new ImageCleanupPromptBuilder();
+        String p = builder.build("Nail Lamp", PhotoView.FRONT, "  on a pink marble surface,\n lid OFF  ", "#F3EBDD");
+
+        assertThat(p).contains("on a pink marble surface, lid OFF").contains("The shop's own notes")
+                .contains("NEVER change the product itself").contains("STRICT RULES above always win");
+        assertThat(p.indexOf("STRICT RULES:")).as("the rules come before the note").isLessThan(p.indexOf("The shop's own notes"));
+    }
+
+    @Test
+    void noNoteMeansNoNotesBlockAndALongOneIsCutToTheLimit() {
+        ImageCleanupPromptBuilder builder = new ImageCleanupPromptBuilder();
+        assertThat(builder.build("Lamp", PhotoView.CLEAN, null, "#F3EBDD")).doesNotContain("The shop's own notes");
+        assertThat(builder.build("Lamp", PhotoView.CLEAN, "   \n ", "#F3EBDD")).doesNotContain("The shop's own notes");
+        assertThat(ImageCleanupPromptBuilder.cleanNote("x".repeat(900))).hasSize(ImageCleanupPromptBuilder.MAX_NOTE_LENGTH);
+        assertThat(ImageCleanupPromptBuilder.cleanNote(null)).isNull();
     }
 
     // ---- credentials at rest ----

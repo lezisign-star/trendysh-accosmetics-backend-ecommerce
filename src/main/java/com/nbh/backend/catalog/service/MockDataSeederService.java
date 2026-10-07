@@ -305,7 +305,8 @@ public class MockDataSeederService {
             if (url == null) continue;
             ProductImage image = new ProductImage();
             image.setProduct(product);
-            image.setVariant(i == 0 ? null : variant);
+            // Every demo product has one option, and a photo belongs to exactly one option (see PhotoOwnership).
+            image.setVariant(variant);
             image.setUrl(url);
             image.setAltText(product.getName());
             image.setSortOrder(i);

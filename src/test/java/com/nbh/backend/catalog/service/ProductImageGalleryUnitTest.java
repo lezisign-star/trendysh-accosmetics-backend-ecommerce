@@ -1,7 +1,7 @@
 package com.nbh.backend.catalog.service;
 
 import com.nbh.backend.catalog.dto.AttachImageRequest;
-import com.nbh.backend.catalog.dto.CatalogImageDto;
+import com.nbh.backend.catalog.dto.AdminImageDto;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductImage;
 import com.nbh.backend.catalog.repository.*;
@@ -70,7 +70,7 @@ class ProductImageGalleryUnitTest {
                 .when(imageRepository).delete(any());
     }
 
-    private CatalogImageDto attach(String url, boolean primary) {
+    private AdminImageDto attach(String url, boolean primary) {
         return service.attachImage(product.getId(),
                 new AttachImageRequest(url, null, null, null, primary, null, null, null));
     }
@@ -92,7 +92,7 @@ class ProductImageGalleryUnitTest {
         attach("b.jpg", false);
         attach("c.jpg", false);
 
-        assertThat(service.listImages(product.getId())).extracting(CatalogImageDto::url)
+        assertThat(service.listImages(product.getId())).extracting(AdminImageDto::url)
                 .containsExactly("a.jpg", "b.jpg", "c.jpg");
         assertThat(primaries()).containsExactly("a.jpg");
     }
@@ -109,16 +109,16 @@ class ProductImageGalleryUnitTest {
     void listImagesPutsThePrimaryFirst() {
         attach("a.jpg", false);
         attach("b.jpg", false);
-        CatalogImageDto c = attach("c.jpg", false);
+        AdminImageDto c = attach("c.jpg", false);
         service.setPrimaryImage(product.getId(), c.id());
 
-        assertThat(service.listImages(product.getId())).extracting(CatalogImageDto::url)
+        assertThat(service.listImages(product.getId())).extracting(AdminImageDto::url)
                 .containsExactly("c.jpg", "a.jpg", "b.jpg");
     }
 
     @Test
     void removingThePrimaryPromotesTheNextImageSoTheGalleryNeverHasNoPrimary() {
-        CatalogImageDto a = attach("a.jpg", false);
+        AdminImageDto a = attach("a.jpg", false);
         attach("b.jpg", false);
 
         service.removeImage(product.getId(), a.id());
@@ -130,7 +130,7 @@ class ProductImageGalleryUnitTest {
     @Test
     void removingANonPrimaryImageLeavesThePrimaryAlone() {
         attach("a.jpg", false);
-        CatalogImageDto b = attach("b.jpg", false);
+        AdminImageDto b = attach("b.jpg", false);
 
         service.removeImage(product.getId(), b.id());
 

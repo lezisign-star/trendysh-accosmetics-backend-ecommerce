@@ -1,9 +1,10 @@
 package com.nbh.backend.catalog.controller;
 
+import com.nbh.backend.catalog.dto.AdminImageDto;
+import com.nbh.backend.catalog.dto.AssignImageRequest;
 import com.nbh.backend.catalog.dto.AttachImageRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionResult;
-import com.nbh.backend.catalog.dto.CatalogImageDto;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
 import com.nbh.backend.catalog.dto.SaveProductRequest;
@@ -108,19 +109,27 @@ public class ProductController {
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
     @GetMapping("/{id}/images")
-    public List<CatalogImageDto> listImages(@PathVariable UUID id) {
+    public List<AdminImageDto> listImages(@PathVariable UUID id) {
         return productService.listImages(id);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
     @PutMapping("/{id}/images/{imageId}/primary")
-    public CatalogImageDto setPrimaryImage(@PathVariable UUID id, @PathVariable UUID imageId) {
+    public AdminImageDto setPrimaryImage(@PathVariable UUID id, @PathVariable UUID imageId) {
         return productService.setPrimaryImage(id, imageId);
+    }
+
+    /** Gives a photo to one option (a photo belongs to exactly one): how an unassigned or misplaced photo gets its owner. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PutMapping("/{id}/images/{imageId}/option")
+    public AdminImageDto assignImage(@PathVariable UUID id, @PathVariable UUID imageId,
+                                     @Valid @RequestBody AssignImageRequest request) {
+        return productService.assignImage(id, imageId, request.variantId());
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
     @PostMapping("/{id}/images")
-    public CatalogImageDto attachImage(@PathVariable UUID id, @Valid @RequestBody AttachImageRequest request) {
+    public AdminImageDto attachImage(@PathVariable UUID id, @Valid @RequestBody AttachImageRequest request) {
         return productService.attachImage(id, request);
     }
 
@@ -144,22 +153,37 @@ public class ProductController {
     }
 
     /**
-     * Sets a variant's physical on-hand stock to {@code quantity} — "we counted N on the shelf";
-     * the difference is posted to the stock ledger (see {@link VariantStockService}).
+     * Sets a variant's physical on-hand stock to {@code quantity} — "we counted N on the shelf" — or, when
+     * {@code receivedQty} is sent instead, adds that many to what is on the shelf right now ("12 more came in").
+     * The difference is posted to the stock ledger (see {@link VariantStockService}).
      */
     @PreAuthorize("hasAuthority('PERM_STOCK_ADJUST')")
     @PutMapping("/{id}/variants/{variantId}/stock")
     public VariantStockService.Result setStock(@PathVariable UUID id, @PathVariable UUID variantId,
                                                 @Valid @RequestBody SetStockRequest request,
                                                 @AuthenticationPrincipal StaffUser staff) {
+        boolean allowUnknownCost = Boolean.TRUE.equals(request.allowUnknownCost());
+        if (request.receivedQty() != null) {
+            if (request.quantity() != null) {
+                throw new IllegalArgumentException("Send either the new count or the number received, not both");
+            }
+            return variantStockService.addOnHand(id, variantId, request.receivedQty(), request.unitCost(),
+                    request.reason(), allowUnknownCost, staff);
+        }
+        if (request.quantity() == null) {
+            throw new IllegalArgumentException("Send the new count (quantity) or the number received (receivedQty)");
+        }
         return variantStockService.setOnHand(id, variantId, request.quantity(), request.unitCost(), request.reason(),
-                Boolean.TRUE.equals(request.allowUnknownCost()), staff);
+                allowUnknownCost, staff);
     }
 
-    /** {@code allowUnknownCost}: see {@link VariantStockService#setOnHand(UUID, UUID, BigDecimal, BigDecimal, String, boolean, StaffUser)}. */
+    /**
+     * Exactly one of {@code quantity} (the count) and {@code receivedQty} (how many came in). {@code allowUnknownCost}:
+     * see {@link VariantStockService#setOnHand(UUID, UUID, BigDecimal, BigDecimal, String, boolean, StaffUser)}.
+     */
     public record SetStockRequest(
-            @jakarta.validation.constraints.NotNull BigDecimal quantity, BigDecimal unitCost, String reason,
-            Boolean allowUnknownCost) {}
+            BigDecimal quantity, BigDecimal unitCost, String reason, Boolean allowUnknownCost,
+            BigDecimal receivedQty) {}
 
     /** Sets a variant's flash-deal price + deadline. See {@link VariantDealService}'s javadoc for the validation rules. */
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")

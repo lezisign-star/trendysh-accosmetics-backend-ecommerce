@@ -120,6 +120,49 @@ class SimpleStockEditingIntegrationTest {
     }
 
     @Test
+    void stockThatCameInIsAddedToWhatIsOnTheShelfAtTheMomentOfTheSave() throws Exception {
+        JsonNode product = newProduct(unique("Received stock"));
+        String url = stockUrl(product);
+
+        // Nothing on the shelf yet: 12 came in.
+        JsonNode first = ok(put(url), "{\"receivedQty\":12,\"allowUnknownCost\":true,\"reason\":\"Received (Quick edit)\"}");
+        assertThat(first.get("previousOnHand").asInt()).isZero();
+        assertThat(first.get("newOnHand").asInt()).isEqualTo(12);
+        assertThat(first.get("documentNo").asText()).isNotBlank();
+
+        // Between the screen loading and the save the shelf dropped to 9 (a sale). The delivery of 5 goes on top of the
+        // real figure, not on top of the 12 the screen still believes.
+        setStock(product, 9);
+        JsonNode second = ok(put(url), "{\"receivedQty\":5,\"allowUnknownCost\":true}");
+        assertThat(second.get("previousOnHand").asInt()).isEqualTo(9);
+        assertThat(second.get("newOnHand").asInt()).isEqualTo(14);
+
+        JsonNode row = ok(get("/api/v1/stock/inventory").param("productId", product.get("id").asText()), null)
+                .get("content").get(0);
+        assertThat(row.get("onHandQty").asInt()).isEqualTo(14);
+    }
+
+    @Test
+    void aReceivedNumberMustBePositiveAndWholeAndNeverComesWithACount() throws Exception {
+        JsonNode product = newProduct(unique("Bad received"));
+        String url = stockUrl(product);
+
+        for (String bad : new String[]{"0", "-3", "2.5", "1000001"}) {
+            assertThat(status(put(url), "{\"receivedQty\":" + bad + ",\"allowUnknownCost\":true}"))
+                    .as("received " + bad).isEqualTo(400);
+        }
+        assertThat(status(put(url), "{\"quantity\":5,\"receivedQty\":2,\"allowUnknownCost\":true}"))
+                .as("a count and a received number together").isEqualTo(400);
+        assertThat(status(put(url), "{\"allowUnknownCost\":true}")).as("neither").isEqualTo(400);
+        // Like a typed count, a gain whose cost nobody knows needs the opt-in.
+        assertThat(status(put(url), "{\"receivedQty\":4}")).isEqualTo(422);
+
+        JsonNode row = ok(get("/api/v1/stock/inventory").param("productId", product.get("id").asText()), null)
+                .get("content").get(0);
+        assertThat(row.get("onHandQty").asInt()).as("none of those posted anything").isZero();
+    }
+
+    @Test
     void aKitHoldsNoStockOfItsOwn() throws Exception {
         JsonNode product = newProduct(unique("Kit stock"));
         UUID variantId = UUID.fromString(product.get("variants").get(0).get("id").asText());
@@ -128,6 +171,8 @@ class SimpleStockEditingIntegrationTest {
         variantRepository.save(variant);
 
         assertThat(status(put(stockUrl(product)), "{\"quantity\":5,\"allowUnknownCost\":true}")).isEqualTo(422);
+        assertThat(status(put(stockUrl(product)), "{\"receivedQty\":5,\"allowUnknownCost\":true}"))
+                .as("received stock is stock too").isEqualTo(422);
 
         JsonNode row = ok(get("/api/v1/stock/inventory").param("productId", product.get("id").asText()), null)
                 .get("content").get(0);

@@ -8,6 +8,7 @@ import com.nbh.backend.catalog.repository.CategoryRepository;
 import com.nbh.backend.catalog.repository.ProductImageRepository;
 import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.catalog.service.PhotoOwnership;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.kits.dto.KitDtos;
@@ -231,16 +232,18 @@ public class KitService {
                 .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
                 .collect(Collectors.groupingBy(c -> c.getKit().getId()));
 
-        Set<UUID> productIds = new LinkedHashSet<>();
+        // Each tile and each component line shows the cover photo of ITS OWN variant: a photo belongs to exactly
+        // one option, so a kit never shows a component's sibling's photo.
+        Map<UUID, ProductVariant> shown = new LinkedHashMap<>();
         for (Kit k : active) {
-            productIds.add(k.getVariant().getProduct().getId());
+            shown.put(k.getVariant().getId(), k.getVariant());
         }
         for (List<KitComponent> comps : componentsByKit.values()) {
             for (KitComponent c : comps) {
-                productIds.add(c.getComponentVariant().getProduct().getId());
+                shown.put(c.getComponentVariant().getId(), c.getComponentVariant());
             }
         }
-        Map<UUID, String> imageByProduct = coverImageByProduct(productIds);
+        Map<UUID, String> imageByVariant = coverImageByVariant(shown.values());
         Map<UUID, BigDecimal> wholeKits = kitAvailability.wholeKitsAvailable(active, componentsByKit);
 
         return active.stream()
@@ -249,7 +252,7 @@ public class KitService {
                 // A kit can never legitimately have zero components (creation requires at least
                 // one), so an absent map entry here means every one of them is unavailable right now.
                 .filter(k -> componentsByKit.containsKey(k.getId()))
-                .map(k -> toPublicDto(k, componentsByKit.get(k.getId()), imageByProduct,
+                .map(k -> toPublicDto(k, componentsByKit.get(k.getId()), imageByVariant,
                         wholeKits.getOrDefault(k.getVariant().getId(), BigDecimal.ZERO).signum() > 0))
                 .toList();
     }
@@ -268,7 +271,7 @@ public class KitService {
 
     public record KitComponentLine(ProductVariant variant, BigDecimal qtyPerKit) {}
 
-    private KitPublicDto toPublicDto(Kit k, List<KitComponent> comps, Map<UUID, String> imageByProduct,
+    private KitPublicDto toPublicDto(Kit k, List<KitComponent> comps, Map<UUID, String> imageByVariant,
                                       boolean inStock) {
         ProductVariant variant = k.getVariant();
         Product product = variant.getProduct();
@@ -276,7 +279,7 @@ public class KitService {
             ProductVariant cv = c.getComponentVariant();
             BigDecimal price = cv.getSellingPrice() == null ? BigDecimal.ZERO : cv.getSellingPrice();
             return new KitPublicDto.Item(cv.getId(), cv.getProduct().getName(),
-                    imageByProduct.get(cv.getProduct().getId()), c.getQty(), price, price.multiply(c.getQty()));
+                    imageByVariant.get(cv.getId()), c.getQty(), price, price.multiply(c.getQty()));
         }).toList();
         BigDecimal sum = items.stream().map(KitPublicDto.Item::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal packagePrice = variant.getSellingPrice() == null ? BigDecimal.ZERO : variant.getSellingPrice();
@@ -286,7 +289,7 @@ public class KitService {
         // authority (it reserves each component), this only keeps the shop from offering what is gone.
         return new KitPublicDto(variant.getId(), product.getId(), product.getSlug(), product.getName(),
                 profession.getId(), profession.getLabel(), profession.getSlug(), k.getDescription(),
-                imageByProduct.get(product.getId()),
+                imageByVariant.get(variant.getId()),
                 packagePrice, sum, sum.subtract(packagePrice).max(BigDecimal.ZERO), inStock, items);
     }
 
@@ -309,20 +312,16 @@ public class KitService {
         return ProfessionDto.from(professions.save(profession));
     }
 
-    /** Product-level cover only (no per-variant override) — simpler than CatalogService's own
-     *  image resolution, and enough for a kit tile/contents list. */
-    private Map<UUID, String> coverImageByProduct(Collection<UUID> productIds) {
-        if (productIds.isEmpty()) {
+    /** Each variant's own cover photo (see PhotoOwnership) — the same rule the shop's cards use. */
+    private Map<UUID, String> coverImageByVariant(Collection<ProductVariant> variants) {
+        if (variants.isEmpty()) {
             return Map.of();
         }
-        Map<UUID, String> result = new HashMap<>();
-        for (ProductImage image : imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)) {
-            UUID pid = image.getProduct().getId();
-            if (!result.containsKey(pid) || image.isPrimary()) {
-                result.put(pid, image.getUrl());
-            }
-        }
-        return result;
+        List<UUID> productIds = variants.stream().map(v -> v.getProduct().getId()).distinct().toList();
+        List<ProductImage> images = imageRepository.findByProductIdInOrderBySortOrderAsc(productIds);
+        Map<UUID, Long> optionCounts = PhotoOwnership.optionCounts(
+                variantRepository.findByProductIdInAndDeletedFalse(productIds));
+        return PhotoOwnership.coverUrlByVariant(variants, images, optionCounts);
     }
 
     private Kit findOrThrow(UUID id) {

@@ -246,8 +246,7 @@ public class StockReservationService {
             return reserve(variant, lapsed.getQty(), StockReservation.ReservationSource.ONLINE_ORDER,
                     lapsed.getReferenceType(), lapsed.getReferenceId(), null);
         } catch (InsufficientAvailabilityException e) {
-            String product = variant.getProduct().getName()
-                    + (variant.getVariantName().equalsIgnoreCase("Default") ? "" : " (" + variant.getVariantName() + ")");
+            String product = variant.displayLabel();
             throw new InsufficientAvailabilityException(
                     "This payment can't be applied: the hold on " + product + " " + why + " and the stock has since"
                             + " gone. Restock it and confirm again, or refund the customer and mark the payment failed.");

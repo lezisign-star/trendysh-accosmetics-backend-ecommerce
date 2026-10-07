@@ -1,15 +1,16 @@
 package com.nbh.backend.catalog.service;
 
+import com.nbh.backend.catalog.dto.AdminImageDto;
 import com.nbh.backend.catalog.dto.AttachImageRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionResult;
-import com.nbh.backend.catalog.dto.CatalogImageDto;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
 import com.nbh.backend.catalog.dto.SaveProductRequest;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
 import com.nbh.backend.common.exception.ConflictException;
+import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
@@ -51,6 +52,14 @@ public class ProductService {
     /** Field-injected (optional) so the many hand-built test instances keep working; null just means "no live push". */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.context.ApplicationEventPublisher events;
+
+    /** Takes deleted photos off Cloudinary after the removal commits; same optional injection, null = nothing to clean. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ImageAssetCleaner assetCleaner;
+
+    /** The AI photos waiting for approval, so a removed option can take its own with it; same optional injection. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.imagecleanup.ImageDraftRepository drafts;
 
     private final ProductRepository productRepository;
     private final ProductVariantRepository variantRepository;
@@ -200,6 +209,7 @@ public class ProductService {
                 v.setDeleted(true);
                 v.setActive(false);
                 variantRepository.save(v);
+                removePhotosOf(v);
             }
         }
     }
@@ -266,6 +276,7 @@ public class ProductService {
         copy.setCreatedBy(staff != null ? staff.getId() : null);
         copy = productRepository.save(copy);
 
+        Map<UUID, ProductVariant> copiedOption = new HashMap<>();
         for (ProductVariant sv : variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId)) {
             ProductVariant nv = new ProductVariant();
             nv.setProduct(copy);
@@ -282,11 +293,21 @@ public class ProductService {
             nv.setSortOrder(sv.getSortOrder());
             nv.setActive(sv.isActive());
             variantRepository.save(nv);
+            copiedOption.put(sv.getId(), nv);
         }
 
         for (ProductImage si : imageRepository.findByProductIdOrderBySortOrderAsc(productId)) {
+            // A photo stays with the same option in the copy; the copy shares the Cloudinary file until either is
+            // removed (a file is only deleted from Cloudinary once no photo row uses it any more).
+            UUID ownerId = PhotoOwnership.ownerOf(si);
+            ProductVariant copiedOwner = ownerId == null ? null : copiedOption.get(ownerId);
+            if (ownerId != null && copiedOwner == null) {
+                continue; // it belonged to an option that has since been removed
+            }
             ProductImage ni = new ProductImage();
             ni.setProduct(copy);
+            ni.setVariant(copiedOwner);
+            ni.setSource(si.getSource());
             ni.setUrl(si.getUrl());
             ni.setThumbnailUrl(si.getThumbnailUrl());
             ni.setAltText(si.getAltText());
@@ -432,10 +453,11 @@ public class ProductService {
         return ProductDto.from(product, variantDtos(id), primaryImageUrl(id));
     }
 
+    /** The photo that stands for the product in a staff list: see {@link PhotoOwnership#productCover}. */
     private String primaryImageUrl(UUID productId) {
+        List<ProductVariant> options = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
         List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
-        return images.stream().filter(ProductImage::isPrimary).findFirst()
-                .or(images.stream()::findFirst)
+        return PhotoOwnership.productCover(options.stream().map(ProductVariant::getId).toList(), options.size() <= 1, images)
                 .map(ProductImage::getUrl)
                 .orElse(null);
     }
@@ -468,16 +490,51 @@ public class ProductService {
                                 v -> ProductVariantDto.from(v, available.getOrDefault(v.getId(), BigDecimal.ZERO)),
                                 java.util.stream.Collectors.toList())));
 
-        Map<UUID, String> primaryImageByProduct = new HashMap<>();
-        for (ProductImage image : imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)) {
-            UUID pid = image.getProduct().getId();
-            if (!primaryImageByProduct.containsKey(pid) || image.isPrimary()) {
-                primaryImageByProduct.put(pid, image.getUrl());
-            }
-        }
+        Map<UUID, List<ProductImage>> imagesByProduct = imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)
+                .stream().collect(java.util.stream.Collectors.groupingBy(i -> i.getProduct().getId()));
+        Map<UUID, List<UUID>> optionIdsByProduct = allVariants.stream()
+                .sorted(java.util.Comparator.comparingInt(ProductVariant::getSortOrder))
+                .collect(java.util.stream.Collectors.groupingBy(v -> v.getProduct().getId(),
+                        java.util.stream.Collectors.mapping(ProductVariant::getId, java.util.stream.Collectors.toList())));
 
-        return page.map(p -> ProductDto.from(p, variantsByProduct.getOrDefault(p.getId(), List.of()),
-                primaryImageByProduct.get(p.getId())));
+        Map<UUID, Long> pendingDrafts = drafts == null || productIds.isEmpty() ? Map.of()
+                : drafts.countByProducts(productIds).stream().collect(java.util.stream.Collectors.toMap(
+                        com.nbh.backend.imagecleanup.ImageDraftRepository.DraftCount::getProductId,
+                        com.nbh.backend.imagecleanup.ImageDraftRepository.DraftCount::getDrafts));
+
+        return page.map(p -> {
+            List<UUID> optionIds = optionIdsByProduct.getOrDefault(p.getId(), List.of());
+            List<ProductImage> photos = imagesByProduct.getOrDefault(p.getId(), List.of());
+            String cover = PhotoOwnership.productCover(optionIds, optionIds.size() <= 1, photos)
+                    .map(ProductImage::getUrl).orElse(null);
+            return ProductDto.from(p, variantsByProduct.getOrDefault(p.getId(), List.of()), cover)
+                    .withPhotoStats(photoStats(optionIds, photos, pendingDrafts.getOrDefault(p.getId(), 0L)));
+        });
+    }
+
+    /**
+     * A product's photos for the staff list, grouped by option in the product's own order (each option's main photo
+     * first, photos with no option last). A removed option's photos are not counted.
+     */
+    private static ProductDto.PhotoStats photoStats(List<UUID> optionIds, List<ProductImage> photos, long pendingDrafts) {
+        java.util.function.ToIntFunction<ProductImage> optionRank = i -> {
+            UUID owner = PhotoOwnership.ownerOf(i);
+            return owner == null ? Integer.MAX_VALUE : optionIds.indexOf(owner);
+        };
+        List<ProductImage> live = photos.stream()
+                .filter(i -> PhotoOwnership.ownerOf(i) == null || optionIds.contains(PhotoOwnership.ownerOf(i)))
+                .sorted(java.util.Comparator.comparingInt(optionRank)
+                        .thenComparing(java.util.Comparator.comparing(ProductImage::isPrimary).reversed())
+                        .thenComparingInt(ProductImage::getSortOrder))
+                .toList();
+        int ai = (int) live.stream().filter(i -> i.getSource() == ProductImage.ImageSource.AI_CLEANED).count();
+        // On a product with one option a photo still filed at product level is that option's own, not "unassigned".
+        int unassigned = optionIds.size() > 1 ? (int) live.stream().filter(i -> PhotoOwnership.ownerOf(i) == null).count() : 0;
+        List<ProductDto.PhotoSummary> listed = live.stream().limit(ProductDto.PhotoStats.MAX_LISTED)
+                .map(i -> new ProductDto.PhotoSummary(i.getId(), i.getUrl(), i.getThumbnailUrl(), PhotoOwnership.ownerOf(i),
+                        i.isPrimary(), i.getSource() == ProductImage.ImageSource.AI_CLEANED))
+                .toList();
+        return new ProductDto.PhotoStats(listed, live.size(), ai, unassigned, (int) pendingDrafts);
     }
 
     /**
@@ -536,30 +593,41 @@ public class ProductService {
         return ProductDto.from(product, variantDtos(productId), primaryImageUrl(productId));
     }
 
-    /** A product's gallery as staff see it: the primary image first, the rest in the order they were added. */
+    /**
+     * A product's photos as staff see them: every live option's, each carrying its owner ({@code variantId}; null =
+     * not assigned to an option), main photos first. A removed option's photos are gone with it.
+     */
     @Transactional(readOnly = true)
-    public List<CatalogImageDto> listImages(UUID productId) {
+    public List<AdminImageDto> listImages(UUID productId) {
         if (!productRepository.existsById(productId)) {
             throw new EntityNotFoundException("No product: " + productId);
         }
+        Set<UUID> liveOptions = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId).stream()
+                .map(ProductVariant::getId).collect(Collectors.toSet());
         return imageRepository.findByProductIdOrderBySortOrderAsc(productId).stream()
+                .filter(i -> PhotoOwnership.ownerOf(i) == null || liveOptions.contains(PhotoOwnership.ownerOf(i)))
                 .sorted(java.util.Comparator.comparing((ProductImage i) -> !i.isPrimary()))
-                .map(CatalogImageDto::from)
+                .map(AdminImageDto::from)
                 .toList();
     }
 
+    /**
+     * Files a new photo under one option. A product with a single option files it under that option without being
+     * told; with several, the caller must say which (owner, 2026-10-07: a photo belongs to exactly one option, there
+     * are no shared "whole product" photos). An option's first photo is always its main one, whatever the request says;
+     * otherwise its card would show no photo although it has some.
+     */
     @Transactional
-    public CatalogImageDto attachImage(UUID productId, AttachImageRequest request) {
+    public AdminImageDto attachImage(UUID productId, AttachImageRequest request) {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+        ProductVariant owner = ownerForNewPhoto(productId, request.variantId());
         List<ProductImage> existing = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        List<ProductImage> mine = PhotoOwnership.sameOwner(existing, owner == null ? null : owner.getId());
 
         ProductImage image = new ProductImage();
         image.setProduct(product);
-        if (request.variantId() != null) {
-            image.setVariant(variantRepository.findById(request.variantId())
-                    .orElseThrow(() -> new EntityNotFoundException("No variant: " + request.variantId())));
-        }
+        image.setVariant(owner);
         image.setUrl(request.url());
         image.setThumbnailUrl(request.thumbnailUrl());
         image.setAltText(request.altText());
@@ -569,30 +637,48 @@ public class ProductService {
         // Append after the current last image (max + 1, not size: removals leave gaps).
         image.setSortOrder(existing.stream().mapToInt(ProductImage::getSortOrder).max().orElse(-1) + 1);
 
-        // A product's first image is always its primary one, whatever the request says;
-        // otherwise the storefront list would show no photo although the gallery has one.
-        boolean makePrimary = request.isPrimary() || existing.isEmpty();
-        if (makePrimary) {
-            demoteAll(existing);
+        boolean makeMain = request.isPrimary() || mine.isEmpty();
+        if (makeMain) {
+            demoteMain(mine);
         }
-        image.setPrimary(makePrimary);
+        image.setPrimary(makeMain);
 
-        return CatalogImageDto.from(imageRepository.save(image));
+        return AdminImageDto.from(imageRepository.save(image));
     }
 
-    /** Makes an existing image the product's primary one; the previous primary is demoted. */
+    /** The option a new photo goes to; see {@link #attachImage}. Null only for a bare product that has no option yet. */
+    private ProductVariant ownerForNewPhoto(UUID productId, UUID requestedVariantId) {
+        List<ProductVariant> options = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
+        if (requestedVariantId != null) {
+            return options.stream().filter(v -> v.getId().equals(requestedVariantId)).findFirst()
+                    .orElseThrow(() -> new UnprocessableException("That option doesn't belong to this product."));
+        }
+        if (options.size() == 1) {
+            return options.get(0);
+        }
+        if (options.size() > 1) {
+            throw new UnprocessableException("This product has several options, so say which option the photo is for.");
+        }
+        return null;
+    }
+
+    /** Makes a photo its option's main one. That option's previous main photo is demoted; other options are untouched. */
     @Transactional
-    public CatalogImageDto setPrimaryImage(UUID productId, UUID imageId) {
+    public AdminImageDto setPrimaryImage(UUID productId, UUID imageId) {
         List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
         ProductImage target = images.stream()
                 .filter(i -> i.getId().equals(imageId))
                 .findFirst()
                 .orElseThrow(() -> new EntityNotFoundException("No image " + imageId + " on product " + productId));
-        demoteAll(images);
+        demoteMain(PhotoOwnership.sameOwner(images, PhotoOwnership.ownerOf(target)));
         target.setPrimary(true);
-        return CatalogImageDto.from(imageRepository.save(target));
+        return AdminImageDto.from(imageRepository.save(target));
     }
 
+    /**
+     * Removes a photo from its option and, once that has committed, from Cloudinary too (unless another photo row
+     * still uses the same file). If it was the option's main photo the option's next one takes over.
+     */
     @Transactional
     public void removeImage(UUID productId, UUID imageId) {
         List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
@@ -602,9 +688,9 @@ public class ProductService {
                 .orElseThrow(() -> new EntityNotFoundException("No image " + imageId + " on product " + productId));
         imageRepository.delete(removed);
 
-        // Removing the primary must not leave a gallery with no primary: promote the next one.
+        // Removing the main photo must not leave an option with photos but no main one: promote its next.
         if (removed.isPrimary()) {
-            images.stream()
+            PhotoOwnership.sameOwner(images, PhotoOwnership.ownerOf(removed)).stream()
                     .filter(i -> !i.getId().equals(imageId))
                     .findFirst()
                     .ifPresent(next -> {
@@ -612,13 +698,80 @@ public class ProductService {
                         imageRepository.save(next);
                     });
         }
+        releaseFromCloudinary(List.of(removed.getUrl()));
     }
 
-    private void demoteAll(List<ProductImage> images) {
-        images.stream().filter(ProductImage::isPrimary).forEach(i -> {
+    /**
+     * Gives a photo to one option: how a photo that was filed at product level (before the one-owner rule) gets an
+     * owner, and how a photo put on the wrong option is moved. Lands at the end of that option's gallery; it is the
+     * option's main photo only if the option had none. If it was main where it was, its old owner's next photo takes over.
+     */
+    @Transactional
+    public AdminImageDto assignImage(UUID productId, UUID imageId, UUID variantId) {
+        List<ProductImage> images = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        ProductImage image = images.stream()
+                .filter(i -> i.getId().equals(imageId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException("No image " + imageId + " on product " + productId));
+        ProductVariant target = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId).stream()
+                .filter(v -> v.getId().equals(variantId))
+                .findFirst()
+                .orElseThrow(() -> new UnprocessableException("That option doesn't belong to this product."));
+        UUID oldOwner = PhotoOwnership.ownerOf(image);
+        if (target.getId().equals(oldOwner)) {
+            return AdminImageDto.from(image);
+        }
+
+        List<ProductImage> oldNeighbours = PhotoOwnership.sameOwner(images, oldOwner).stream()
+                .filter(i -> !i.getId().equals(imageId)).toList();
+        boolean wasMain = image.isPrimary();
+        boolean optionHadPhotos = !PhotoOwnership.sameOwner(images, target.getId()).isEmpty();
+
+        image.setVariant(target);
+        image.setSortOrder(images.stream().mapToInt(ProductImage::getSortOrder).max().orElse(-1) + 1);
+        image.setPrimary(!optionHadPhotos);
+        imageRepository.save(image);
+
+        if (wasMain && !oldNeighbours.isEmpty() && oldNeighbours.stream().noneMatch(ProductImage::isPrimary)) {
+            ProductImage next = oldNeighbours.get(0);
+            next.setPrimary(true);
+            imageRepository.save(next);
+        }
+        return AdminImageDto.from(image);
+    }
+
+    private void demoteMain(List<ProductImage> sameOwnerPhotos) {
+        sameOwnerPhotos.stream().filter(ProductImage::isPrimary).forEach(i -> {
             i.setPrimary(false);
             imageRepository.save(i);
         });
+    }
+
+    private void releaseFromCloudinary(List<String> urls) {
+        if (assetCleaner != null) {
+            assetCleaner.releaseAfterCommit(urls);
+        }
+    }
+
+    /**
+     * A removed option takes its photos with it, and the AI photos waiting for approval for it: they belong to nothing
+     * else, and left behind they would sit on Cloudinary for good.
+     */
+    private void removePhotosOf(ProductVariant option) {
+        List<ProductImage> own = imageRepository.findByVariantIdOrderBySortOrderAsc(option.getId());
+        List<com.nbh.backend.imagecleanup.ImageDraft> waiting =
+                drafts == null ? List.of() : drafts.findByVariantIdOrderByCreatedAtDesc(option.getId());
+        if (own.isEmpty() && waiting.isEmpty()) {
+            return;
+        }
+        List<String> urls = new ArrayList<>();
+        own.forEach(i -> urls.add(i.getUrl()));
+        waiting.forEach(d -> urls.add(d.getUrl()));
+        imageRepository.deleteAll(own);
+        if (!waiting.isEmpty()) {
+            drafts.deleteAll(waiting);
+        }
+        releaseFromCloudinary(urls);
     }
 
     private String generateUniqueSlug(String name) {

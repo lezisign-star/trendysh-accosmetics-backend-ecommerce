@@ -124,10 +124,11 @@ public class CatalogService {
                 .findFirst()
                 .orElseThrow(() -> new EntityNotFoundException("No sellable variant: " + variantId));
 
-        List<CatalogImageDto> images = imageRepository.findByProductIdOrderBySortOrderAsc(product.getId()).stream()
-                // This variant's own photos first, then the product's shared ones.
-                .sorted(Comparator.comparing((ProductImage i) ->
-                        !(i.getVariant() != null && i.getVariant().getId().equals(variantId))))
+        // Only this option's own photos: never a sibling's, never a shared "whole product" one (owner, 2026-10-07).
+        // The way to see a sibling's photos is to open the sibling. See PhotoOwnership.
+        boolean singleOption = variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(product.getId()).size() <= 1;
+        List<CatalogImageDto> images = PhotoOwnership.galleryFor(variantId, singleOption,
+                        imageRepository.findByProductIdOrderBySortOrderAsc(product.getId())).stream()
                 .map(CatalogImageDto::from)
                 .toList();
 
@@ -194,30 +195,16 @@ public class CatalogService {
                 .collect(Collectors.groupingBy(v -> v.getProduct().getId(), Collectors.counting()));
     }
 
-    /** Keyed by variant id: that variant's own first photo, else its product's cover photo, else null. */
+    /**
+     * Keyed by variant id: that option's own cover photo, or absent when it has none. A card never borrows a
+     * sibling's photo or the product's: a photo belongs to exactly one option (see {@link PhotoOwnership}).
+     */
     private Map<UUID, String> imageByVariant(List<ProductVariant> variants) {
         List<UUID> productIds = variants.stream().map(v -> v.getProduct().getId()).distinct().toList();
         List<ProductImage> images = imageRepository.findByProductIdInOrderBySortOrderAsc(productIds);
-
-        Map<UUID, String> coverByProduct = new HashMap<>();
-        Map<UUID, String> ownByVariant = new HashMap<>();
-        for (ProductImage image : images) {
-            if (image.getVariant() != null) {
-                ownByVariant.putIfAbsent(image.getVariant().getId(), image.getUrl());
-            } else {
-                UUID pid = image.getProduct().getId();
-                if (!coverByProduct.containsKey(pid) || image.isPrimary()) {
-                    coverByProduct.put(pid, image.getUrl());
-                }
-            }
-        }
-
-        Map<UUID, String> result = new HashMap<>();
-        for (ProductVariant v : variants) {
-            String own = ownByVariant.get(v.getId());
-            result.put(v.getId(), own != null ? own : coverByProduct.get(v.getProduct().getId()));
-        }
-        return result;
+        Map<UUID, Long> optionCounts = PhotoOwnership.optionCounts(
+                variantRepository.findByProductIdInAndDeletedFalse(productIds));
+        return PhotoOwnership.coverUrlByVariant(variants, images, optionCounts);
     }
 
     @Transactional(readOnly = true)

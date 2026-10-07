@@ -119,4 +119,17 @@ public class ProductVariant extends BaseEntity {
     public boolean isSellable() {
         return !deleted && isActive && sellingPrice != null;
     }
+
+    /**
+     * How a message to a shopper or to staff names this item: the product's name, with the option's name in brackets
+     * after it — unless that name says nothing (blank, which is what the product editor saves for a product with one
+     * option, or the placeholder "Default"), in which case it is just the product's name. Messages used to compare
+     * with "Default" alone, so a product made in the editor was announced as "Gel polish ()".
+     */
+    public String displayLabel() {
+        String productName = product.getName();
+        return com.nbh.backend.catalog.dto.CatalogVariantCardDto.isMeaninglessName(variantName)
+                ? productName
+                : productName + " (" + variantName + ")";
+    }
 }

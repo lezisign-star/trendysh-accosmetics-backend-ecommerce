@@ -163,7 +163,9 @@ class AccessAndIntegrationsIntegrationTest {
         String admin = tokenFor("SUPER_ADMIN");
         JsonNode before = ok(get("/api/v1/admin/image-cleanup/status"), admin, null);
         assertThat(before.get("geminiConfigured").asBoolean()).isFalse();
-        assertThat(before.get("maxImagesPerProduct").asInt()).isEqualTo(6);
+        // One photo per view staff can tick (owner, 2026-10-07: they choose the angles), so the limit is the number of views.
+        assertThat(before.get("maxImagesPerProduct").asInt()).isEqualTo(8);
+        assertThat(before.get("views")).hasSize(8);
         assertThat(status(post("/api/v1/admin/image-cleanup/run"), admin, "{\"limit\":1,\"imagesPerProduct\":3}")).isEqualTo(422);
 
         ok(put("/api/v1/admin/settings/integrations/GEMINI_API_KEY"), admin, "{\"value\":\"AIzaTestKey\"}");
@@ -178,7 +180,7 @@ class AccessAndIntegrationsIntegrationTest {
     void imagesPerProductIsBoundedAndCleanupNeedsProductManagement() throws Exception {
         String admin = tokenFor("SUPER_ADMIN");
         assertThat(status(post("/api/v1/admin/image-cleanup/run"), admin, "{\"limit\":1,\"imagesPerProduct\":0}")).isEqualTo(400);
-        assertThat(status(post("/api/v1/admin/image-cleanup/run"), admin, "{\"limit\":1,\"imagesPerProduct\":7}")).isEqualTo(400);
+        assertThat(status(post("/api/v1/admin/image-cleanup/run"), admin, "{\"limit\":1,\"imagesPerProduct\":9}")).isEqualTo(400);
         assertThat(status(post("/api/v1/admin/image-cleanup/run"), tokenFor("CASHIER"), "{\"limit\":1,\"imagesPerProduct\":3}")).isEqualTo(403);
         assertThat(status(get("/api/v1/admin/image-cleanup/status"), tokenFor("VIEWER"), null)).isEqualTo(403);
     }

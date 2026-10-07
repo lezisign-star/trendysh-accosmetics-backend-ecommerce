@@ -37,6 +37,9 @@ app:
   # code out of it) as soon as the request returns.
   email:
     sync-send: true
+  # A deleted photo is removed from Cloudinary on the calling thread, so a test can assert on it as soon as the request returns.
+  image-assets:
+    sync-delete: true
   tumaboda:
     # A rider is booked on the calling thread, so a test can assert on the booking without polling; the
     # retry and reconciliation jobs are held off for an hour like the other sweepers (tests call them directly).

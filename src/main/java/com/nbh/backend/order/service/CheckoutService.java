@@ -255,10 +255,7 @@ public class CheckoutService {
                 // and shouldn't need to know it exists.
                 CartItem cartItem = target.cartItem();
                 throw new InsufficientAvailabilityException(
-                        cartItem.getVariant().getProduct().getName()
-                                + (cartItem.getVariant().getVariantName().equalsIgnoreCase("Default")
-                                        ? "" : " (" + cartItem.getVariant().getVariantName() + ")")
-                                + " just went out of stock — please update your cart");
+                        cartItem.getVariant().displayLabel() + " just went out of stock — please update your cart");
             }
             if (target.isKitComponent()) {
                 componentsByCartItem.computeIfAbsent(target.cartItem(), k -> new java.util.ArrayList<>())

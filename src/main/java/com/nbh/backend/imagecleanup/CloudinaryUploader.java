@@ -43,7 +43,8 @@ public class CloudinaryUploader {
         this.settings = settings;
     }
 
-    private String cloudName() {
+    /** The account's cloud name, or blank when Cloudinary isn't set up. Photos on any other host are not ours to delete. */
+    public String cloudName() {
         return settings.get(IntegrationKey.CLOUDINARY_CLOUD_NAME);
     }
 
@@ -93,6 +94,8 @@ public class CloudinaryUploader {
             Map<String, String> signed = new TreeMap<>();
             signed.put("public_id", publicId);
             signed.put("timestamp", String.valueOf(timestamp));
+            // Without this the photo keeps being served from Cloudinary's CDN cache for a while after it is "deleted".
+            signed.put("invalidate", "true");
             MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
             form.add("api_key", apiKey());
             signed.forEach(form::add);
