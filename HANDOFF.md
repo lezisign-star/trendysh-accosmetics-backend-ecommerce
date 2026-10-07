@@ -1,5 +1,116 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-08 (later) — staff sign-ins are renewed while the person works (`POST /auth/renew`); `/auth/me` stops minting tokens (UNCOMMITTED, no migration)
+
+Owner: staff should not have to sign in again after going from the dashboard to the shop (frontend HANDOFF, same date, has the screens and the
+cause). A staff token is the only credential (no stored refresh token, deliberately: that would be a long-lived secret on shared shop
+computers) and it ran out 8 hours after sign-in, mid-work or not. Owner's choice: renew it while they work, up to 7 days since the real sign-in.
+
+- **`POST /api/v1/auth/renew`** (staff token in, fresh token + the person's CURRENT role and permissions out; same shape as login). Limits: the
+  token must still be valid (expired, a switched-off or deleted account, a shopper's token: refused as always, 403); the sign-in it descends from
+  must be under `app.jwt.staff-session-max-days` old (`STAFF_SESSION_MAX_DAYS`, default 7), counted from the NEW `authTime` claim that the fresh
+  token carries forward, so renewing never moves the limit (past it: 401); and the password must not have changed since the token was issued
+  (new claim `pwv`: the first 16 hex characters of a SHA-256 of the stored password hash, which reveals nothing usable; changed → 401), so a
+  reset or changed password ends the ability to renew every older token. A 401 does not end the token in hand, which works until it runs out.
+  Tokens issued before this deploy have neither claim: `authTime` falls back to their issue time, `pwv` is simply not checked, and the renewed
+  token gets both. `JwtService`: `generateAccessToken(user, signedInAt)`, `extractSignedInAt`, `extractPasswordVersion`, `passwordVersion`.
+- **`GET /api/v1/auth/me` used to mint a brand-new 8-hour token on every call.** Anyone holding a token could keep it alive for ever by asking who
+  they were, which would have made the limits above meaningless (the frontend only used the status code). It now answers with the token it was
+  called with. Login and change-password still mint (a new password is a new sign-in: new `authTime`, new `pwv`).
+- Not covered, on purpose: nothing revokes a token the instant a password changes or an account is switched off mid-token (switching off is
+  caught on the next request, as before; a changed password only stops the renewals, so an old token still runs out within 8 hours).
+  Per-request fingerprint checking would end that, at the cost of changing every staff request path; say if you want it.
+- Tests: `StaffSessionRenewalIntegrationTest` (9, same shared Spring context as the other auth tests): same person and the original sign-in time
+  kept (one second apart so the new token is visibly newer), a role change shows up in the renewal, 8-day-old refused vs 6-day-old accepted (and
+  the refused token still works), a token from before this feature still works and renews into one that remembers its sign-in, a changed
+  password stops renewals but not the old token, a switched-off account, a shopper's token (403), no token, and `/auth/me` returning the token
+  it was given. With `StaffLoginThrottleIntegrationTest`, `StaffPasswordResetIntegrationTest`, `CustomerAccountsIntegrationTest`: 31/31. The
+  full suite is listed below once it has run.
+- Push order: backend first. An old frontend against the new backend is fine (it never calls renew; its `/auth/me` probe only reads the status).
+  A new frontend against the old backend gets 404 from `/auth/renew`, which it treats as "no answer" (one wasted request a minute while someone is
+  tapping about) until the backend is up.
+
+## 2026-10-08 — "received" stock that adds to what is there; shopper messages no longer say "Gel polish ()" (UNCOMMITTED)
+
+Owner asked for the easiest possible way for non-technical staff to add and manage products (frontend HANDOFF, same date has the screens and
+the live findings). Two backend pieces came out of it; no migration.
+
+- **`PUT /products/{id}/variants/{vid}/stock` now takes `receivedQty` instead of `quantity`.** "12 more came in" is added to whatever the
+  shelf holds at the moment of the save: `VariantStockService.addOnHand` locks the SHOP balance first, builds the new total from the locked
+  figure, then finishes through `setOnHand` (so kits are still refused with 422, whole-number and size limits still apply as 400, a gain whose
+  cost nobody knows still needs `allowUnknownCost`). Why not just let the screen add up a total: a sale made between the stock page loading and
+  the Save would silently be undone, because `quantity` is an absolute count. Exactly one of the two fields must be sent (both, or neither,
+  → 400; `received` of 0, a negative, a fraction or over 1,000,000 → 400). The reply is the same (`previousOnHand`, `newOnHand`,
+  `documentNo`); the document note defaults to "Stock received". `SetStockRequest.quantity` lost `@NotNull` (the controller checks).
+  **Old frontend + new backend works** (it only sends `quantity`); a NEW frontend against the OLD backend would 400 on "Received +", so
+  push this first. Tests (`SimpleStockEditingIntegrationTest`, +2): a delivery after the shelf moved is added to the real number (12 → shelf
+  set to 9 behind the screen's back → +5 = 14), every bad shape is refused and posts nothing, and a kit refuses received stock too.
+- **A product with a blank option name was announced as "Gel polish ()".** The editor saves a blank option name for a one-option product
+  (the catalog cards already treated blank like the old placeholder "Default" via `CatalogVariantCardDto.isMeaninglessName`), but three
+  messages compared with "Default" alone: the shopper's "Only 3 of … left" / "… is out of stock" (`CartService`), "… just went out of stock —
+  please update your cart" at checkout (`CheckoutService`), and staff's "This payment can't be applied: the hold on …"
+  (`StockReservationService`). One method now (`ProductVariant.displayLabel()`: the product's name, plus " (Option)" only when the option's name
+  says something), used by all three. Tests: `ProductVariantLabelTest` (new), `CartServiceUnitTest` (+1: blank, spaces, "Default", "default").
+- Ran: `SimpleStockEditingIntegrationTest`, `ProductEditorIntegrationTest`, `QuantityEnforcementIntegrationTest` (18/18) and
+  `CartServiceUnitTest`, `ProductVariantLabelTest`, `LatePaymentAndExpiryIntegrationTest`, `CheckoutDeliveryMethodIntegrationTest` (31/31),
+  then the **full suite on a fresh scratch database: 844/844** (112 classes; the QA backend stopped first so the Postgres connection budget
+  held). That is the 10-07 night photo work plus this entry, run together.
+
+## 2026-10-07 (night) — a photo belongs to exactly one option; the AI photo studio (UNCOMMITTED, migrations V56 + V57)
+
+Owner (they paused the ODPC "to be added" build for this): "we must never have shared photos among the related products"; staff pick per
+run whether AI photos "go live directly or first be previewed" (preview is the default); staff tick the angles and add a note; deleting a
+photo must also delete it on Cloudinary; the admin/staff product list must make the photos per product easy to list; the product page
+autoscrolls the option's photos and a click enlarges one (frontend HANDOFF). **Live evidence** (public API, 10-07): "Sun yc-57c" has two
+options and five photos filed at product level (three AI shots from batch e93f4446, two uploads) plus one own photo per option, and each
+option's page showed all seven, the other option's included.
+
+- **The rule** (`catalog/service/PhotoOwnership`, the one place it lives). A photo belongs to exactly ONE option (variant). A shopper
+  opening an option sees that option's photos and nothing else (`CatalogService.variantDetail`; cards via `coverUrlByVariant`; kit tiles
+  and components in `KitService`; the staff list's cover in `ProductService`). A photo still filed at product level (`variant_id` null)
+  counts only when the product has ONE option (then it can only mean that option's); on a product with several it is "unassigned": the shop
+  shows it nowhere until staff assign it. Each owner has its OWN main photo (`isPrimary`): `setPrimaryImage`/`attachImage`/`removeImage`
+  demote and promote inside one owner only (before, one flag per product meant an option's "main photo" replaced the product cover).
+- **V56** (data): single-option products' product-level photos move to the sole option; multi-option ones stay unassigned; an owner holding
+  two mains keeps the earliest; an owner with photos and no main gets its first. `MigrationUpgradePathTest` seeds a live-shaped product
+  (shared photos, an option with no main, one with two) and the new test FAILS without V56 (checked). No unique index on the main flag on
+  purpose (Hibernate's flush order would race a demote against a promote).
+- **Staff image API** (`ProductController`): `GET /products/{id}/images` now returns `AdminImageDto` (adds `source`, `createdAt`;
+  `variantId` null = unassigned; photos of a removed option are left out); `POST .../images` files the photo under the one option
+  (a single-option product needs no `variantId`; several options and none given = 422 "...say which option"; another product's option =
+  422); `PUT .../images/{imageId}/option` (`{variantId}`) assigns or moves a photo; `PUT .../primary` is per owner. `duplicate` keeps each
+  photo with the matching option of the copy. Removing an option (editor save without it) deletes its photos and waiting AI drafts.
+- **Deleting also deletes on Cloudinary** (`ImageAssetCleaner`, `common/config/ImageAssetExecutorConfig`): after the removal COMMITS, on a
+  background executor (`app.image-assets.sync-delete=true` in tests), and only when (a) no other photo row or waiting draft uses the same
+  URL (a duplicated product shares URLs), (b) the URL is on our Cloudinary cloud, and (c) its id sits under `trendysh/products/` or
+  `products/` (a photo added "by link" pointing at the logo can never take the logo with it); the destroy call now sends `invalidate=true`.
+  Failures are logged, never thrown. `CloudinaryUploaderTest` checks the signed request against a local stand-in.
+- **AI photo studio** (V57 `image_draft`; `image_cleanup_batch` gains `publish_mode` (existing rows IMMEDIATE), `views`, `note`). The unit
+  of work is now an OPTION, not a product: a run from a photo of option X files the results under X only. Every run says `publishNow`
+  (default false = REVIEW: the photos wait as drafts nothing in the shop reads), the `views` to make (`PhotoView`: CLEAN, DETAIL, WIDE, FRONT,
+  ELEVATED, SIDE, TOP_DOWN, BACK; none given = the first `imagesPerProduct`, default 3) and an optional `note` (collapsed, 500 chars,
+  placed AFTER the locked "never change the real product" rules and stated to lose to them). `POST /admin/image-cleanup/options/{variantId}/run`
+  (one option, optional `sourceImageId` = one of its real photos; works even if it already has AI photos), `/run` (bulk: options with a real
+  main photo and no AI photo yet, `cleanupCandidates` is per option now), `/run/{productId}` (all that product's options).
+  Review: `GET /drafts?productId=`, `POST /drafts/{id}/approve` (`{makeMain}`: end of the gallery, or first and main), `DELETE /drafts/{id}`
+  (reject: row and Cloudinary file), `POST /drafts/{id}/redo` (`{note}`: one more draft, same view and source; the old one stays to compare).
+  Approving records an `image_cleanup_item` so "undo run" still works; undo also discards the run's waiting drafts and deletes their files.
+  Drafts nobody decided on are deleted after `app.image-cleanup.draft-days` (14) by a 03:40 job. `ImageCleanupRunner.run(Plan)`; Cloudinary ids
+  are `<optionId>-<view>-<batch8>` so options and views never overwrite each other.
+- **Staff product list**: `ProductDto.photoStats` (only the list fills it): up to 24 photos per product grouped by option in the product's own
+  order, exact `photoCount`/`aiPhotoCount`/`unassignedCount`, and `pendingDrafts`.
+- **Rollout / what changes live.** Push backend first (Railway holds it for the owner's approval click), frontend after. On deploy "Sun yc-57c"'s
+  five shared photos disappear from both option pages (each shows its own single photo) until staff give them to an option in the editor
+  ("N photos aren't given to an option yet"). Until the new frontend is up, the OLD "Photo cleanup" page would start runs that now wait as
+  drafts it cannot review (they expire after 14 days), and the old editor's whole-product upload on a multi-option product gets the 422 above;
+  the new frontend tolerates an old backend (it fills in the missing fields).
+- Tests: `PhotoOwnershipTest` (8), `ProductPhotoOwnershipUnitTest` (13), `ImageAssetCleanerTest` (11), `CloudinaryUploaderTest` (3),
+  `ProductPhotosIntegrationTest` (13), `PhotoStudioIntegrationTest` (11: drafts invisible to the shop, note and view reach the model, approve
+  and make-main, reject deletes the file, redo, go-live-now plus undo, expiry, removing an option), `ImageCleanupUnitTest` (+4 prompt/view),
+  `MigrationUpgradePathTest` (+2: V56, V57). Tried live on a scratch copy of the dev DB with a stand-in for Gemini/Cloudinary (QA scripts in the
+  session scratchpad: `fake-studio.mjs`, `qa-photos-seed.mjs`).
+- Not done: a nav badge for waiting drafts; a "photos" filter on the staff list; per-photo AI prompts for the bulk run; the ODPC build (paused).
+
 ## 2026-10-07 (later) — the go-live QA's open defects, fixed (committed d4d671a + audit follow-ups)
 
 Owner: "if the gaps are still there, fix them", after the full live-click QA of the shop (customers, all six staff roles, TumaBoda on
