@@ -159,6 +159,14 @@ public class BankCreditService {
                 creditRepository.save(credit);
                 return;
             }
+            if (payment.getStatus() == PaymentRecord.PaymentStatus.FAILED) {
+                // Staff can revive a payment they marked failed, but putting stock back under an order is a
+                // person's decision (the stock may have been sold since), never an automatic one.
+                credit.setResolutionNote("Reference " + reference + " belongs to order " + payment.getOrder().getOrderNo()
+                        + ", whose payment was marked failed: needs a person to look at it.");
+                creditRepository.save(credit);
+                return;
+            }
             if (payment.getAmount().compareTo(credit.getAmount()) != 0) {
                 credit.setResolutionNote("Reference " + reference + " matches order " + payment.getOrder().getOrderNo()
                         + " but the amount differs (expected " + payment.getAmount() + ", received "

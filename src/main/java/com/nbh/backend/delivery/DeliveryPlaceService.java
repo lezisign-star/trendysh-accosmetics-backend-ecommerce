@@ -117,6 +117,11 @@ public class DeliveryPlaceService {
     @Transactional
     public void suggest(SuggestRequest request, String clientKey) {
         throttle(clientKey);
+        // Several shoppers asking for the same place is one thing to decide, not a list of copies: the
+        // customer is told "thanks" either way, and staff see the place once.
+        if (suggestions.existsByStatusAndNameIgnoreCase(DeliveryPlaceSuggestion.Status.PENDING, request.name().trim())) {
+            return;
+        }
         DeliveryPlaceSuggestion s = new DeliveryPlaceSuggestion();
         s.setName(request.name().trim());
         s.setDetails(blankToNull(request.details()));

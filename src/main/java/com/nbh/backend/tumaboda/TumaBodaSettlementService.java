@@ -1,5 +1,6 @@
 package com.nbh.backend.tumaboda;
 
+import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.tumaboda.TumaBodaSettlementDtos.OutstandingSummary;
 import com.nbh.backend.tumaboda.TumaBodaSettlementDtos.RecordSettlementRequest;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.text.DecimalFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,6 +62,17 @@ public class TumaBodaSettlementService {
      */
     @Transactional
     public SettlementDto record(RecordSettlementRequest request, UUID staffUserId) {
+        BigDecimal owed = orderRepository.totalOutstandingTumabodaCost();
+        if (!request.confirmDifference() && request.amount().compareTo(owed) != 0) {
+            // Every settlement clears all that is owed, so a different amount (a typo, or an extra zero) would
+            // make the difference vanish from the books. Say so, and let a real difference through on purpose.
+            throw new UnprocessableException(owed.signum() == 0
+                    ? "Nothing is owed to TumaBoda right now, so there is nothing for this payment to settle."
+                            + " Record it anyway only if it is an advance or a fee that is not on an order."
+                    : "You owe TumaBoda " + ksh(owed) + " but this payment is " + ksh(request.amount())
+                            + ". A settlement clears everything owed, so check the amount, or record it anyway if the"
+                            + " difference is real.");
+        }
         TumaBodaSettlement settlement = new TumaBodaSettlement();
         settlement.setSettledAt(request.settledAt());
         settlement.setAmount(request.amount());
@@ -70,5 +83,11 @@ public class TumaBodaSettlementService {
 
         int swept = orderRepository.sweepOutstandingTumabodaDeliveries(settlement.getId());
         return SettlementDto.from(settlement, swept);
+    }
+
+    /** "KSh 2,400", or "KSh 2,400.50" when there are cents. */
+    private static String ksh(BigDecimal amount) {
+        boolean whole = amount.stripTrailingZeros().scale() <= 0;
+        return "KSh " + new DecimalFormat(whole ? "#,##0" : "#,##0.00").format(amount);
     }
 }

@@ -71,7 +71,11 @@ public class PaymentService {
         if (payment.getStatus() == PaymentRecord.PaymentStatus.SUCCESS) {
             return payment; // already confirmed — idempotent
         }
-        if (payment.getStatus() != PaymentRecord.PaymentStatus.INITIATED
+        // A payment staff marked failed can still be confirmed: it is the way back from a mistaken "failed" when
+        // the customer then shows the M-PESA message. Anything else that is not waiting for money is refused.
+        boolean reviving = payment.getStatus() == PaymentRecord.PaymentStatus.FAILED;
+        if (!reviving
+                && payment.getStatus() != PaymentRecord.PaymentStatus.INITIATED
                 && payment.getStatus() != PaymentRecord.PaymentStatus.PENDING) {
             throw new IllegalStateException("Payment " + paymentRecordId + " is " + payment.getStatus()
                     + " — cannot confirm success from this state");
@@ -85,6 +89,12 @@ public class PaymentService {
             throw new ConflictException("Order " + order.getOrderNo() + " was cancelled, so it can't be marked paid."
                     + " If the customer paid, refund them.");
         }
+        if (reviving && order.getStatus() != OrderStatus.PAYMENT_FAILED) {
+            throw new ConflictException("Order " + order.getOrderNo() + " has moved on since this payment was marked"
+                    + " failed, so the payment can't be confirmed now.");
+        }
+
+        providerReference = checkCodeNotUsedElsewhere(payment, providerReference);
 
         payment.setStatus(PaymentRecord.PaymentStatus.SUCCESS);
         if (actualMethod != null) {
@@ -104,7 +114,10 @@ public class PaymentService {
                 .sorted(Comparator.comparing(item -> item.getVariant().getId()))
                 .toList();
         for (CustomerOrderItem item : heldItems) {
-            item.setReservation(reservationService.confirmForOrder(item.getReservation().getId()));
+            UUID holdId = item.getReservation().getId();
+            item.setReservation(reviving
+                    ? reservationService.confirmForOrder(holdId, true)
+                    : reservationService.confirmForOrder(holdId));
         }
         order.setStatus(OrderStatus.PAID);
         order.setPlacedAt(Instant.now(clock));
@@ -119,6 +132,27 @@ public class PaymentService {
                 payment.getMethod(), providerReference));
 
         return payment;
+    }
+
+    /**
+     * A payment code (M-PESA or bank reference) can pay for one order only, and the database enforces that with a
+     * unique index. Left to the index, a staff member who typed a code already used elsewhere (or approved a claim
+     * carrying one) got "A conflicting record already exists — please retry", which is not true and not helpful.
+     * Compared without regard to case or surrounding spaces, as codes are typed by hand. Returns the code to store.
+     */
+    private String checkCodeNotUsedElsewhere(PaymentRecord payment, String code) {
+        if (code == null || code.isBlank()) {
+            return code;
+        }
+        String trimmed = code.trim();
+        paymentRecordRepository.findFirstByProviderReferenceIgnoreCase(trimmed)
+                .filter(other -> !other.getId().equals(payment.getId()))
+                .ifPresent(other -> {
+                    throw new ConflictException("The code " + trimmed + " is already recorded as the payment for order "
+                            + other.getOrder().getOrderNo() + ", and one code can only pay for one order. Check it against"
+                            + " the M-PESA or bank statement.");
+                });
+        return trimmed;
     }
 
     /** The payment's order, locked. Its id comes from a scalar query so the lock is the first real load of that order. */

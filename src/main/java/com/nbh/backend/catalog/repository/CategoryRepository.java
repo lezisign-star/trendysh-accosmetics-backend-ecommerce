@@ -21,6 +21,11 @@ public interface CategoryRepository extends JpaRepository<Category, UUID> {
 
     long countByParentId(UUID parentId);
 
+    /** Same-named categories next to each other (same parent, or both top-level), ignoring case. */
+    List<Category> findByParentIdAndNameIgnoreCase(UUID parentId, String name);
+
+    List<Category> findByParentIsNullAndNameIgnoreCase(String name);
+
     /**
      * Live products directly in a category (however many categories each belongs to — Phase 3,
      * 2026-09-24). Rows: [categoryId, count]. A caller that wants a top-level category's count to

@@ -193,6 +193,105 @@ class LatePaymentAndExpiryIntegrationTest {
         assertThat(orderStatus(placed)).isEqualTo("PAID");
     }
 
+    private MvcResult confirmWith(Placed placed, String code) throws Exception {
+        return staff(post("/api/v1/payments/" + placed.paymentId() + "/confirm-manual")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reference\":\"" + code + "\",\"method\":\"MPESA\"}"));
+    }
+
+    private void markFailed(Placed placed) throws Exception {
+        okStaff(post("/api/v1/payments/" + placed.paymentId() + "/fail-manual")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"no payment seen\"}"));
+    }
+
+    private java.math.BigDecimal reserved(Item item) {
+        return balanceRepository.findByVariantIdAndAccount(UUID.fromString(item.variantId()), StockAccount.SHOP)
+                .orElseThrow().getReservedQty();
+    }
+
+    /**
+     * Found in the 2026-10-06 live QA: staff who marked a payment failed by mistake could not put it right when the
+     * customer then showed the M-PESA message ("cannot confirm success from this state"), so money was received for an
+     * order that was dead. Confirming it now brings the order back and holds the stock again.
+     */
+    @Test
+    void aPaymentMarkedFailedByMistakeCanBeConfirmedAndTheStockIsHeldAgain() throws Exception {
+        Item item = newPublishedVariantWithStock(10);
+        Placed placed = place(item, 2);
+        markFailed(placed);
+        assertThat(orderStatus(placed)).isEqualTo("PAYMENT_FAILED");
+        assertThat(reserved(item)).isEqualByComparingTo("0");
+
+        assertThat(confirm(placed).getResponse().getStatus()).isEqualTo(200);
+
+        assertThat(orderStatus(placed)).isEqualTo("PAID");
+        assertThat(reserved(item)).isEqualByComparingTo("2");
+        List<StockReservation> active = holdsOf(placed).stream()
+                .filter(r -> r.getStatus() == StockReservation.ReservationStatus.ACTIVE).toList();
+        assertThat(active).hasSize(1);
+        assertThat(active.get(0).getExpiresAt()).as("a paid order's hold is permanent").isNull();
+    }
+
+    @Test
+    void revivingAFailedPaymentIsRefusedClearlyWhenTheStockHasGoneAndWorksOnceItIsRestocked() throws Exception {
+        Item item = newPublishedVariantWithStock(5);
+        Placed placed = place(item, 2);
+        markFailed(placed);
+        okStaff(post("/api/v1/stock/write-offs").contentType(MediaType.APPLICATION_JSON).content("""
+                {"lines":[{"variantId":"%s","qty":"5"}],"reasonCode":"DAMAGED","notes":"gone"}
+                """.formatted(item.variantId())));
+
+        MvcResult refused = confirm(placed);
+
+        assertThat(refused.getResponse().getStatus()).isEqualTo(409);
+        assertThat(refused.getResponse().getContentAsString()).contains("stock has since gone").contains("refund the customer");
+        assertThat(orderStatus(placed)).isEqualTo("PAYMENT_FAILED");
+
+        setStock(item, 5);
+        assertThat(confirm(placed).getResponse().getStatus()).isEqualTo(200);
+        assertThat(orderStatus(placed)).isEqualTo("PAID");
+    }
+
+    /**
+     * An M-PESA code can pay for one order. Typed twice, the unique index used to answer with the generic
+     * "A conflicting record already exists — please retry", which is untrue (retrying never helps) and does not say
+     * which order already has the code.
+     */
+    @Test
+    void aCodeAlreadyUsedOnAnotherOrderIsRefusedBySayingWhichOrderHasIt() throws Exception {
+        Item item = newPublishedVariantWithStock(10);
+        Placed first = place(item, 1);
+        Placed second = place(item, 1);
+        String code = "DUP" + UUID.randomUUID().toString().substring(0, 7).toUpperCase();
+
+        assertThat(confirmWith(first, code).getResponse().getStatus()).isEqualTo(200);
+        MvcResult refused = confirmWith(second, " " + code.toLowerCase() + " ");
+
+        assertThat(refused.getResponse().getStatus()).isEqualTo(409);
+        assertThat(refused.getResponse().getContentAsString())
+                .contains(first.orderNo()).contains("only pay for one order").doesNotContain("please retry");
+        assertThat(orderStatus(second)).isEqualTo("PENDING_PAYMENT");
+
+        assertThat(confirmWith(second, "OK" + code).getResponse().getStatus()).isEqualTo(200);
+        assertThat(orderStatus(second)).isEqualTo("PAID");
+    }
+
+    /** Found in the 2026-10-06 live QA: "Cannot post: variant GELP-001001 would leave on_hand 1.000 below 2.000 still reserved by other holds". */
+    @Test
+    void settingTheCountBelowWhatOrdersHoldIsRefusedInPlainWords() throws Exception {
+        Item item = newPublishedVariantWithStock(10);
+        place(item, 3);
+
+        MvcResult refused = staff(put("/api/v1/products/" + item.productId() + "/variants/" + item.variantId() + "/stock")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":1,\"unitCost\":100}"));
+
+        assertThat(refused.getResponse().getStatus()).isIn(409, 422);
+        String message = refused.getResponse().getContentAsString();
+        assertThat(message).contains("3 of this item are held for customers' orders")
+                .contains("the count can't go below 3").contains("it would go to 1")
+                .doesNotContain("on_hand").doesNotContain("3.000");
+    }
+
     @Test
     void aCancelledOrderCannotBeMarkedPaid() throws Exception {
         Item item = newPublishedVariantWithStock(5);

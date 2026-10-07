@@ -64,17 +64,19 @@ public class CategoryController {
     @Transactional
     public CategoryDto create(@RequestBody CreateCategoryRequest request) {
         String name = cleanName(request.name());
-        Category category = new Category();
-        category.setName(name);
-        category.setSlug(uniqueSlug(name, null));
+        Category parent = null;
         if (request.parentId() != null) {
-            Category parent = categoryRepository.findById(request.parentId())
+            parent = categoryRepository.findById(request.parentId())
                     .orElseThrow(() -> new EntityNotFoundException("No category: " + request.parentId()));
             if (parent.getParent() != null) {
                 throw new IllegalArgumentException("Subcategories can't have their own subcategories — pick a top-level category as the parent");
             }
-            category.setParent(parent);
         }
+        refuseSameNameBeside(name, parent, null);
+        Category category = new Category();
+        category.setName(name);
+        category.setSlug(uniqueSlug(name, null));
+        category.setParent(parent);
         return CategoryDto.from(categoryRepository.save(category));
     }
 
@@ -88,6 +90,7 @@ public class CategoryController {
         if (request.name() != null) {
             String name = cleanName(request.name());
             if (!name.equals(category.getName())) {
+                refuseSameNameBeside(name, category.getParent(), category.getId());
                 category.setName(name);
                 category.setSlug(uniqueSlug(name, category.getId()));
             }
@@ -116,6 +119,21 @@ public class CategoryController {
                     + (products == 1 ? " product" : " products") + " — move them to another category first");
         }
         categoryRepository.delete(category);
+    }
+
+    /**
+     * Two categories with the same name side by side look identical in the shop's menu and in the product
+     * form, and nobody can tell which to use. The same name under a different parent is fine ("Accessories"
+     * under Nails and under Lashes).
+     */
+    private void refuseSameNameBeside(String name, Category parent, UUID selfId) {
+        List<Category> same = parent == null
+                ? categoryRepository.findByParentIsNullAndNameIgnoreCase(name)
+                : categoryRepository.findByParentIdAndNameIgnoreCase(parent.getId(), name);
+        if (same.stream().anyMatch(c -> !c.getId().equals(selfId))) {
+            throw new ConflictException("There is already a category called \"" + name + "\""
+                    + (parent == null ? "" : " under " + parent.getName()) + ".");
+        }
     }
 
     private static String cleanName(String raw) {

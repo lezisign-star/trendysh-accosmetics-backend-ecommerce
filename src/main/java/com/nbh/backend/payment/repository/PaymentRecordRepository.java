@@ -24,6 +24,9 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
      */
     Optional<PaymentRecord> findByProviderReference(String providerReference);
 
+    /** The same lookup without regard to case, for the "this code is already used" check on a hand-typed code. */
+    Optional<PaymentRecord> findFirstByProviderReferenceIgnoreCase(String providerReference);
+
     /**
      * Staff "awaiting payment" queue: bank orders not yet paid, oldest first (order fetched, no N+1).
      * Includes orders that EXPIRED within the last window ({@code expiredSince}) — a customer can still

@@ -188,6 +188,28 @@ class TodaysOrderFeaturesIntegrationTest {
                 "{\"lines\":[{\"itemId\":\"" + itemId + "\",\"qty\":\"0\",\"restock\":true}]}"))).isEqualTo(422);
     }
 
+    /** Found in the 2026-10-06 live QA: the refusal read "only 1.000 of 1.000 sold is still returnable (0.000 already returned)". */
+    @Test
+    void anOverReturnIsRefusedInPlainWordsWithTheProductNameAndWholeNumbers() throws Exception {
+        Placed p = paidOrder("PICKUP", null);
+        ok(post("/api/v1/orders/" + p.orderId() + "/fulfil"));
+        String itemId = firstItem(p.orderId()).get("itemId").asText();
+        String path = "/api/v1/orders/" + p.orderId() + "/returns";
+
+        MvcResult tooMany = mvc.perform(jsonBody(post(path),
+                "{\"lines\":[{\"itemId\":\"" + itemId + "\",\"qty\":\"5\",\"restock\":true}]}")
+                .header("Authorization", "Bearer " + token)).andReturn();
+        String message = tooMany.getResponse().getContentAsString();
+        assertThat(message).contains("Today Test").contains("only 1 can still be returned")
+                .contains("1 were sold, 0 already came back").doesNotContain("1.000").doesNotContain("0.000");
+
+        ok(jsonBody(post(path), "{\"lines\":[{\"itemId\":\"" + itemId + "\",\"qty\":\"1\",\"restock\":true}]}"));
+        MvcResult none = mvc.perform(jsonBody(post(path),
+                "{\"lines\":[{\"itemId\":\"" + itemId + "\",\"qty\":\"1\",\"restock\":true}]}")
+                .header("Authorization", "Bearer " + token)).andReturn();
+        assertThat(none.getResponse().getContentAsString()).contains("all 1 sold on this order have already been returned");
+    }
+
     // ---- delivery contact phone ----
 
     @Test
@@ -252,8 +274,10 @@ class TodaysOrderFeaturesIntegrationTest {
         assertThat(contains(outstanding.get("lines"), "orderNo", uncosted.orderNo())).isFalse();
         assertThat(outstanding.get("totalOwed").asDouble()).isGreaterThanOrEqualTo(450.0);
 
+        // The amount is what the bank shows, and it is what is owed: anything else is refused unless confirmed.
+        String owed = outstanding.get("totalOwed").asText();
         JsonNode settlement = ok(jsonBody(post("/api/v1/admin/tumaboda-settlement"),
-                "{\"settledAt\":\"2026-10-02\",\"amount\":450,\"reference\":\"BANK-TEST\"}"));
+                "{\"settledAt\":\"2026-10-02\",\"amount\":" + owed + ",\"reference\":\"BANK-TEST\"}"));
         assertThat(settlement.get("orderCount").asLong()).isGreaterThanOrEqualTo(1);
 
         JsonNode after = ok(get("/api/v1/admin/tumaboda-settlement/outstanding"));
@@ -262,9 +286,38 @@ class TodaysOrderFeaturesIntegrationTest {
         JsonNode history = ok(get("/api/v1/admin/tumaboda-settlement/history"));
         assertThat(contains(history, "reference", "BANK-TEST")).isTrue();
 
-        // A second settlement has nothing left to cover.
+        // A second settlement has nothing left to cover: refused, unless it is confirmed as an advance.
+        assertThat(status(jsonBody(post("/api/v1/admin/tumaboda-settlement"),
+                "{\"settledAt\":\"2026-10-02\",\"amount\":10}"))).isEqualTo(422);
         assertThat(ok(jsonBody(post("/api/v1/admin/tumaboda-settlement"),
-                "{\"settledAt\":\"2026-10-02\",\"amount\":10}")).get("orderCount").asLong()).isZero();
+                "{\"settledAt\":\"2026-10-02\",\"amount\":10,\"confirmDifference\":true}")).get("orderCount").asLong()).isZero();
+    }
+
+    /**
+     * Found in the 2026-10-06 live QA: KSh 5,000 was accepted against KSh 900 owed and the difference vanished, because a
+     * settlement clears everything owed whatever its amount. A different amount now needs an explicit confirmation.
+     */
+    @Test
+    void aSettlementThatIsNotWhatIsOwedIsRefusedWithBothFiguresUnlessConfirmed() throws Exception {
+        Placed costed = paidOrder("PICKUP", null);
+        CustomerOrder order = orders.findById(UUID.fromString(costed.orderId())).orElseThrow();
+        order.setTumabodaCost(new BigDecimal("450.00"));
+        orders.save(order);
+        String owed = ok(get("/api/v1/admin/tumaboda-settlement/outstanding")).get("totalOwed").asText();
+        BigDecimal tooMuch = new BigDecimal(owed).add(new BigDecimal("4100"));
+
+        MvcResult refused = mvc.perform(jsonBody(post("/api/v1/admin/tumaboda-settlement"),
+                "{\"settledAt\":\"2026-10-02\",\"amount\":" + tooMuch + "}")
+                .header("Authorization", "Bearer " + token)).andReturn();
+
+        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+        assertThat(refused.getResponse().getContentAsString()).contains("You owe TumaBoda KSh").contains("record it anyway");
+        assertThat(ok(get("/api/v1/admin/tumaboda-settlement/outstanding")).get("totalOwed").asText())
+                .as("a refused settlement clears nothing").isEqualTo(owed);
+
+        assertThat(ok(jsonBody(post("/api/v1/admin/tumaboda-settlement"),
+                "{\"settledAt\":\"2026-10-02\",\"amount\":" + tooMuch + ",\"confirmDifference\":true}"))
+                .get("orderCount").asLong()).isGreaterThanOrEqualTo(1);
     }
 
     @Test

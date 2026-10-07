@@ -149,7 +149,9 @@ class ProductEditorIntegrationTest {
     void renamingKeepsSlugsUniqueAndUpdatesTheOrder() throws Exception {
         String name = unique("Spa");
         String a = newCategory(name, null);
-        String b = newCategory(name, null); // same name twice must not collide on the slug
+        // A different name that makes the SAME slug ("Spa x" and "Spa-x" are both spa-x) must not collide on it.
+        // The same name twice is refused outright instead (see CategoryNamesIntegrationTest).
+        String b = newCategory(name.replace(' ', '-'), null);
         assertThat(a).isNotEqualTo(b);
 
         JsonNode renamed = ok(patch("/api/v1/categories/" + b), "{\"name\":\"" + unique("Salon") + "\",\"sortOrder\":7}");

@@ -198,6 +198,17 @@ public class StockReservationService {
      */
     @Transactional
     public StockReservation confirmForOrder(UUID reservationId) {
+        return confirmForOrder(reservationId, false);
+    }
+
+    /**
+     * {@code reviving} is for a payment staff had marked failed (which released the hold) that the customer
+     * has since proved they made: the released hold is re-taken from current availability exactly like a
+     * lapsed one, and refused with a message staff can act on if the stock has gone. Without it a released
+     * hold still means the order was cancelled, and stays refused.
+     */
+    @Transactional
+    public StockReservation confirmForOrder(UUID reservationId, boolean reviving) {
         // §4 C7: a referenced entity missing is a 404, not a 400.
         UUID variantId = reservationRepository.findVariantIdById(reservationId)
                 .orElseThrow(() -> new NotFoundException("No such reservation: " + reservationId));
@@ -213,7 +224,15 @@ public class StockReservationService {
                 reservation.setExpiresAt(null);
                 yield reservationRepository.save(reservation);
             }
-            case EXPIRED -> retakeLapsedHold(reservation);
+            case EXPIRED -> retakeLapsedHold(reservation, "expired");
+            case RELEASED -> {
+                if (reviving) {
+                    yield retakeLapsedHold(reservation, "was released when the payment was marked failed");
+                }
+                throw new ConflictException(
+                        "This order's stock hold was released (the order was cancelled or already dispatched), so it"
+                                + " can't be marked paid. If the customer paid, refund them.");
+            }
             default -> throw new ConflictException(
                     "This order's stock hold was " + reservation.getStatus().name().toLowerCase()
                             + " (the order was cancelled or already dispatched), so it can't be marked paid."
@@ -221,7 +240,7 @@ public class StockReservationService {
         };
     }
 
-    private StockReservation retakeLapsedHold(StockReservation lapsed) {
+    private StockReservation retakeLapsedHold(StockReservation lapsed, String why) {
         ProductVariant variant = lapsed.getVariant();
         try {
             return reserve(variant, lapsed.getQty(), StockReservation.ReservationSource.ONLINE_ORDER,
@@ -230,7 +249,7 @@ public class StockReservationService {
             String product = variant.getProduct().getName()
                     + (variant.getVariantName().equalsIgnoreCase("Default") ? "" : " (" + variant.getVariantName() + ")");
             throw new InsufficientAvailabilityException(
-                    "This payment can't be applied: the hold on " + product + " expired and the stock has since"
+                    "This payment can't be applied: the hold on " + product + " " + why + " and the stock has since"
                             + " gone. Restock it and confirm again, or refund the customer and mark the payment failed.");
         }
     }

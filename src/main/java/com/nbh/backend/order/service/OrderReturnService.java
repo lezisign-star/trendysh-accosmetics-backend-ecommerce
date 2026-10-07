@@ -90,9 +90,11 @@ public class OrderReturnService {
             QuantityRules.requireSensible(item.getVariant().getSku(), item.getVariant(), qty);
             BigDecimal outstanding = item.getQty().subtract(item.getReturnedQty());
             if (qty.compareTo(outstanding) > 0) {
-                throw new UnprocessableException(
-                        item.getVariant().getSku() + ": only " + outstanding + " of " + item.getQty()
-                                + " sold is still returnable (" + item.getReturnedQty() + " already returned)");
+                String name = item.getVariant().getProduct().getName();
+                throw new UnprocessableException(outstanding.signum() <= 0
+                        ? name + ": all " + plain(item.getQty()) + " sold on this order have already been returned."
+                        : name + ": only " + plain(outstanding) + " can still be returned (" + plain(item.getQty())
+                                + " were sold, " + plain(item.getReturnedQty()) + " already came back).");
             }
 
             StockDocumentLine docLine = new StockDocumentLine();
@@ -112,5 +114,11 @@ public class OrderReturnService {
 
         postingService.post(document);
         return orderRepository.save(order);
+    }
+
+    /** A quantity as a person writes it: "2", not "2.000". */
+    private static String plain(BigDecimal qty) {
+        BigDecimal v = qty.stripTrailingZeros();
+        return (v.scale() < 0 ? v.setScale(0) : v).toPlainString();
     }
 }

@@ -10,4 +10,6 @@ public interface DeliveryPlaceSuggestionRepository extends JpaRepository<Deliver
     List<DeliveryPlaceSuggestion> findByStatusOrderByCreatedAtAsc(DeliveryPlaceSuggestion.Status status);
 
     long countByStatus(DeliveryPlaceSuggestion.Status status);
+
+    boolean existsByStatusAndNameIgnoreCase(DeliveryPlaceSuggestion.Status status, String name);
 }

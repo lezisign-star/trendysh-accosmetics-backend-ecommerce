@@ -205,9 +205,9 @@ class PaymentServiceUnitTest {
     }
 
     @Test
-    void confirmSuccessFromATerminalFailedStateThrowsAndTouchesNothing() {
+    void aPaymentOutsideTheStatesThatCanBeConfirmedStillThrowsAndTouchesNothing() {
         CustomerOrder order = orderWithItems(reservation());
-        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.FAILED, order);
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.REVERSED, order);
         when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
 
         assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}"))
@@ -216,6 +216,74 @@ class PaymentServiceUnitTest {
 
         verifyNoInteractions(reservationService);
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
+    }
+
+    @Test
+    void aPaymentStaffMarkedFailedCanBeConfirmedAndItsReleasedStockIsTakenAgain() {
+        StockReservation released = reservation();
+        StockReservation retaken = reservation();
+        when(reservationService.confirmForOrder(released.getId(), true)).thenReturn(retaken);
+        CustomerOrder order = orderWithItems(released);
+        order.setStatus(OrderStatus.PAYMENT_FAILED);
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.FAILED, order);
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        PaymentRecord result = paymentService.confirmSuccess(payment.getId(), "QWE123RTY4", "{}");
+
+        assertThat(result.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.SUCCESS);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+        assertThat(order.getItems().get(0).getReservation()).isSameAs(retaken);
+    }
+
+    @Test
+    void aFailedPaymentWhoseOrderHasMovedOnCannotBeConfirmedAndNothingIsTouched() {
+        CustomerOrder order = orderWithItems(reservation());
+        order.setOrderNo("SO-MOVED-ON");
+        order.setStatus(OrderStatus.EXPIRED);
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.FAILED, order);
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), "REF", "{}"))
+                .isInstanceOf(com.nbh.backend.common.exception.ConflictException.class)
+                .hasMessageContaining("SO-MOVED-ON")
+                .hasMessageContaining("moved on");
+
+        verifyNoInteractions(reservationService);
+        assertThat(payment.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.FAILED);
+    }
+
+    @Test
+    void aCodeAlreadyRecordedOnAnotherOrderIsRefusedWithAMessageThatSaysSoAndNothingIsTouched() {
+        CustomerOrder otherOrder = orderWithItems();
+        otherOrder.setOrderNo("SO-OTHER-1");
+        PaymentRecord other = paymentWith(PaymentRecord.PaymentStatus.SUCCESS, otherOrder);
+        other.setProviderReference("QWE123RTY4");
+        when(paymentRecordRepository.findFirstByProviderReferenceIgnoreCase("QWE123RTY4")).thenReturn(Optional.of(other));
+        CustomerOrder order = orderWithItems(reservation());
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.INITIATED, order);
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> paymentService.confirmSuccess(payment.getId(), " qwe123rty4 ".toUpperCase(), "{}"))
+                .isInstanceOf(com.nbh.backend.common.exception.ConflictException.class)
+                .hasMessageContaining("QWE123RTY4")
+                .hasMessageContaining("SO-OTHER-1")
+                .hasMessageContaining("only pay for one order");
+
+        verifyNoInteractions(reservationService);
+        assertThat(payment.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.INITIATED);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
+    }
+
+    @Test
+    void theSameCodeOnTheSamePaymentIsNotACollisionWithItself() {
+        PaymentRecord payment = paymentWith(PaymentRecord.PaymentStatus.PENDING, orderWithItems());
+        payment.setProviderReference("QWE123RTY4");
+        when(paymentRecordRepository.findFirstByProviderReferenceIgnoreCase("QWE123RTY4")).thenReturn(Optional.of(payment));
+        when(paymentRecordRepository.lockById(payment.getId())).thenReturn(Optional.of(payment));
+
+        PaymentRecord result = paymentService.confirmSuccess(payment.getId(), "QWE123RTY4", "{}");
+
+        assertThat(result.getStatus()).isEqualTo(PaymentRecord.PaymentStatus.SUCCESS);
     }
 
     @Test

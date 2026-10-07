@@ -203,7 +203,8 @@ class StockPostingServiceUnitTest {
 
         assertThatThrownBy(() -> postingService.post(outboundDoc(BigDecimal.ONE, null)))
                 .isInstanceOf(InsufficientStockException.class)
-                .hasMessageContaining("reserved");
+                .hasMessageContaining("held for customers' orders")
+                .hasMessageContaining("the count can't go below 1");
     }
 
     @Test

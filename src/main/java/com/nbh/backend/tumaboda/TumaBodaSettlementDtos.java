@@ -26,7 +26,11 @@ public final class TumaBodaSettlementDtos {
         }
     }
 
-    /** {@code amount} is what the bank statement shows — the source of truth, not a figure the server re-derives. */
+    /**
+     * {@code amount} is what the bank statement shows — the source of truth, not a figure the server re-derives.
+     * A settlement always clears everything owed, so an amount that is not what is owed would lose the
+     * difference without a trace; it is refused unless {@code confirmDifference} says the difference is real.
+     */
     public record RecordSettlementRequest(@NotNull LocalDate settledAt, @NotNull @Positive BigDecimal amount,
-                                           String reference, String notes) {}
+                                           String reference, String notes, boolean confirmDifference) {}
 }

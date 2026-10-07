@@ -353,6 +353,12 @@ public class StockPostingService {
         return byKey;
     }
 
+    /** A quantity as a person writes it: "2", not "2.000". */
+    private static String plain(BigDecimal qty) {
+        BigDecimal v = qty.stripTrailingZeros();
+        return (v.scale() < 0 ? v.setScale(0) : v).toPlainString();
+    }
+
     private StockBalance lockOrCreateBalance(VariantAccountKey key) {
         Optional<StockBalance> locked = balanceRepository.lockByVariantIdAndAccount(key.variantId(), key.account());
         if (locked.isPresent()) {
@@ -399,8 +405,9 @@ public class StockPostingService {
         boolean negativeAllowed = !account.isPhysical();
         if (newOnHand.signum() < 0 && !negativeAllowed) {
             throw new InsufficientStockException(
-                    "Insufficient stock for variant " + line.getVariant().getSku()
-                            + ": on hand " + balance.getOnHandQty() + ", requested change " + signedQty);
+                    "Not enough on the shelf: there " + (balance.getOnHandQty().compareTo(BigDecimal.ONE) == 0 ? "is " : "are ")
+                            + plain(balance.getOnHandQty()) + " and " + plain(signedQty.negate()) + " would have to come off ("
+                            + line.getVariant().getSku() + ").");
         }
 
         // Audit finding F3 (session 3): on_hand >= 0 is not enough — an
@@ -419,10 +426,10 @@ public class StockPostingService {
                     : balance.getReservedQty();
             if (newOnHand.compareTo(reservedFloor) < 0) {
                 throw new InsufficientStockException(
-                        "Cannot post: variant " + line.getVariant().getSku()
-                                + " would leave on_hand " + newOnHand + " below " + reservedFloor
-                                + " still reserved by other holds (on hand " + balance.getOnHandQty()
-                                + ", requested change " + signedQty + ")");
+                        plain(reservedFloor) + " of this item " + (reservedFloor.compareTo(BigDecimal.ONE) == 0 ? "is" : "are")
+                                + " held for customers' orders, so the count can't go below " + plain(reservedFloor)
+                                + " (it would go to " + plain(newOnHand) + "). Finish or cancel those orders first ("
+                                + line.getVariant().getSku() + ").");
             }
         }
 

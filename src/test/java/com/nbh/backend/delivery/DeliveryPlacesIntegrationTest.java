@@ -159,6 +159,23 @@ class DeliveryPlacesIntegrationTest {
     }
 
     @Test
+    void theSamePlaceAskedForTwiceIsOneItemInTheQueueNoMatterTheCapitals() throws Exception {
+        String name = unique("Ruiru Kimbo");
+        for (String typed : new String[]{name, name.toUpperCase(), "  " + name.toLowerCase() + "  "}) {
+            assertThat(status(body(post("/api/v1/public/delivery/suggestions").with(r -> {
+                r.setRemoteAddr("203.0.113." + (10 + Math.abs(typed.hashCode() % 200)));
+                return r;
+            }), "{\"name\":\"" + typed + "\"}"), false)).isEqualTo(202);
+        }
+
+        long copies = 0;
+        for (JsonNode s : ok(get("/api/v1/admin/delivery/suggestions"), true)) {
+            if (name.equalsIgnoreCase(s.get("name").asText())) copies++;
+        }
+        assertThat(copies).isEqualTo(1);
+    }
+
+    @Test
     void anEmptySuggestionIsRejectedAndAnyoneAbuseIsThrottled() throws Exception {
         assertThat(status(body(post("/api/v1/public/delivery/suggestions"), "{\"name\":\"  \"}"), false)).isEqualTo(400);
 
