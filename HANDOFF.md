@@ -1,5 +1,53 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-07 (later) — the go-live QA's open defects, fixed (UNCOMMITTED, not pushed)
+
+Owner: "if the gaps are still there, fix them", after the full live-click QA of the shop (customers, all six staff roles, TumaBoda on
+and off; report in the session). Against HEAD 45e1beb most of that QA's findings were already fixed by the 10-06/07 batch (the duplicate
+order race, the staff-lockout locking shoppers out, a mistyped password signing a shopper out, the missing order emails): re-checked
+live (six parallel checkouts of one cart: one order, five 409s). What was still open, and is fixed here, in a scratch worktree on a
+scratch DB and then copied into this tree; **nothing committed or pushed**. Full suite on a fresh DB: see the last line of this entry.
+
+- **A payment staff marked failed can be confirmed again** (`PaymentService.confirmSuccess`, `StockReservationService.confirmForOrder(id,
+  reviving)`). It used to answer 422 "cannot confirm success from this state", so money could sit received against an order nobody could
+  bring back. A FAILED payment whose order is still PAYMENT_FAILED is now confirmed like any other: its released holds are re-taken from
+  current stock exactly like a lapsed one (and refused with the usual "stock has since gone ... restock or refund" if it has been sold);
+  an order that has since moved on (cancelled, expired) refuses with a clear 409. **A bank credit never revives one by itself**: the
+  auto-match now flags a credit whose payment was marked failed "needs a person" (`BankCreditService.tryAutoMatch`; before it would have
+  thrown on the failed state).
+- **A payment code already used on another order says so** (`PaymentService.checkCodeNotUsedElsewhere`, case- and space-insensitive via
+  `PaymentRecordRepository.findFirstByProviderReferenceIgnoreCase`): 409 "The code X is already recorded as the payment for order SO-..,
+  and one code can only pay for one order". It used to fall through to the unique index and read "A conflicting record already exists —
+  please retry", which is untrue. Also covers approving a claim whose code is on another order. The stored reference is trimmed.
+- **TumaBoda settlement refuses an amount that is not what is owed** (`TumaBodaSettlementService.record`, `RecordSettlementRequest.
+  confirmDifference`): a settlement clears everything owed whatever the amount, so KSh 5,000 against KSh 900 lost the difference without a
+  trace. Any other amount (including one when nothing is owed) is a 422 with both figures unless `confirmDifference` is true.
+- **Category names**: the same name beside another (same parent, or both top-level; case-insensitive) is a 409 on create and rename
+  (`CategoryController.refuseSameNameBeside`); the same name under a different parent is fine. Delivery suggestions: the same place asked
+  for twice (case-insensitive) is one pending item (`DeliveryPlaceService.suggest`; the shopper still sees "thanks").
+- **Refusals in plain words**: a stock count below what orders hold ("3 of this item are held for customers' orders, so the count can't go
+  below 3 (it would go to 1). Finish or cancel those orders first"), too little on the shelf, and a return larger than what is left
+  ("Product: only 1 can still be returned (1 were sold, 0 already came back)", "all 1 sold on this order have already been returned"):
+  whole numbers, product names, no `on_hand` / "variant SKU" / "1.000".
+- Tests: `PaymentServiceUnitTest` (+4, one rewritten), `LatePaymentAndExpiryIntegrationTest` (+4: revive, revive refused when the stock is
+  gone then works once restocked, duplicate code, plain-words stock message), `TodaysOrderFeaturesIntegrationTest` (settlement amounts, return
+  message), `CategoryNamesIntegrationTest` (new, 3), `DeliveryPlacesIntegrationTest` (+1); `ProductEditorIntegrationTest` (a slug-collision
+  test used two same-named categories on purpose: now two names that make the same slug) and `StockPostingServiceUnitTest` (message) adjusted.
+  **`ConcurrentPaymentConfirmationRaceTest` changed meaning, on purpose**: it pinned "a confirmation that runs after a concurrent failure is
+  refused", which is exactly what reviving a failed payment replaces. It now (12 repetitions, so both orders are seen) asserts the invariant
+  that matters: a confirmation is never lost, and either order ends with the payment SUCCESS, the order PAID and exactly ONE live hold
+  (confirm first: the failure is refused; failure first: the confirmation revives the order and re-takes the hold). A real Daraja success
+  callback arriving after a staff "failed" would now bring the order back too (the STK path is not in use).
+- **Full suite 780/780 on a fresh DB** (769 tests + 11 extra repetitions of the race test; 755 before this batch, +14 new). The first
+  full run failed twice, both from these changes and both fixed above (`ProductEditorIntegrationTest`, `StockPostingServiceUnitTest`), the
+  second run once more (the race test); the third is clean. Checked live against a scratch backend with the fake TumaBoda: revive, the
+  duplicate-code message, the settlement guard, the category refusal, and the earlier race script (6 parallel submits, 1 order).
+- **Checked and left alone**: the `%` typed in a search matches everything (every `LIKE` query; no data is exposed, staff or public);
+  product pages are addressed by variant id, so a slug URL 404s (needs a slug endpoint and an SEO decision, not a fix); password minimums are 8
+  for shoppers and 10 for staff (fine). **Still open, by design or for the owner**: no refund tracking (cancelling or returning a paid order
+  says the refund is manual and records nothing), no per-IP limit on the public checkout, the staff JWT lives 8 h and a password change does
+  not end it, returns do not reduce analytics revenue.
+
 ## 2026-10-07 — optional delivery details (where exactly, how to find it, who receives it, when)
 
 Committed 2026-10-07 in ONE code commit together with the 2026-10-06 entries below (they share files), rebased onto the other
