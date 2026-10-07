@@ -39,6 +39,9 @@ app:
     # any non-local deployment. Must be >= 256 bits for HS256.
     secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-before-any-real-deployment-32bytes}
     access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:28800000} # 8h (staff)
+    # A staff sign-in is renewed (POST /auth/renew) while the person keeps working, but never for longer than this
+    # since they really signed in with their password; after that they sign in again.
+    staff-session-max-days: ${STAFF_SESSION_MAX_DAYS:7}
     customer-access-token-expiration-ms: ${JWT_CUSTOMER_ACCESS_TOKEN_EXPIRATION_MS:900000} # 15 min (shoppers)
   auth:
     # Shopper sign-in = the short access token above + a rotating refresh token in an httpOnly cookie.

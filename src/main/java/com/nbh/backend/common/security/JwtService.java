@@ -84,7 +84,20 @@ public class JwtService {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
+    /** Epoch seconds of the password sign-in a staff session began with; kept through renewals. */
+    public static final String CLAIM_SIGNED_IN_AT = "authTime";
+    /** A short fingerprint of the staff password the token was issued under (see {@link #passwordVersion}). */
+    public static final String CLAIM_PASSWORD_VERSION = "pwv";
+
     public String generateAccessToken(UserDetails userDetails) {
+        return generateAccessToken(userDetails, Instant.now());
+    }
+
+    /**
+     * {@code signedInAt} is when the person really signed in with their password. A renewed staff token carries the
+     * ORIGINAL moment forward, so a session has an absolute limit however often it is renewed (AuthController#renew).
+     */
+    public String generateAccessToken(UserDetails userDetails, Instant signedInAt) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("type", "access");
         // Which kind of principal this token belongs to. JwtAuthFilter uses it to pick the
@@ -108,6 +121,8 @@ public class JwtService {
             claims.put("permissions", staff.getResolvedPermissions().stream()
                     .map(Enum::name)
                     .collect(Collectors.toList()));
+            claims.put(CLAIM_SIGNED_IN_AT, signedInAt.getEpochSecond());
+            claims.put(CLAIM_PASSWORD_VERSION, passwordVersion(staff.getPassword()));
         }
 
         Instant now = Instant.now();
@@ -119,6 +134,37 @@ public class JwtService {
                 .expiration(Date.from(now.plusMillis(ttlMs)))
                 .signWith(getSigningKey())
                 .compact();
+    }
+
+    /**
+     * What a staff token remembers of the password it was issued under: the first 16 hex characters of a SHA-256 of the
+     * stored password hash. A token's payload is readable by anyone holding it, and this reveals nothing usable; it
+     * only lets a renewal notice that the password has changed since (a changed password must end a session that would
+     * otherwise be renewed for days).
+     */
+    public static String passwordVersion(String passwordHash) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(passwordHash.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is always available", e);
+        }
+    }
+
+    /** When the sign-in began; for a token issued before that was recorded, when the token itself was issued. */
+    public Instant extractSignedInAt(String token) {
+        Number signedIn = extractClaim(token, claims -> claims.get(CLAIM_SIGNED_IN_AT, Number.class));
+        if (signedIn != null) {
+            return Instant.ofEpochSecond(signedIn.longValue());
+        }
+        Date issued = extractClaim(token, Claims::getIssuedAt);
+        return issued != null ? issued.toInstant() : Instant.now();
+    }
+
+    /** The password fingerprint the token was issued under, or null for a token issued before it was recorded. */
+    public String extractPasswordVersion(String token) {
+        return extractClaim(token, claims -> claims.get(CLAIM_PASSWORD_VERSION, String.class));
     }
 
     /** STAFF for tokens with no claim (issued before customer accounts existed). */
