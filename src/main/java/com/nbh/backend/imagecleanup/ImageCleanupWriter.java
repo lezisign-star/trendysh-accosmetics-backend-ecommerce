@@ -178,6 +178,18 @@ public class ImageCleanupWriter {
         });
     }
 
+    /** A description-only run finished one product: a description drafted counts as one done, and as one drafted. */
+    @Transactional
+    public void recordDescriptionOnly(UUID batchId, boolean drafted) {
+        batches.findById(batchId).ifPresent(b -> {
+            if (drafted) {
+                b.setDescriptionsDrafted(b.getDescriptionsDrafted() + 1);
+            }
+            batches.save(b);
+        });
+        bump(batchId, 1, 0, null);
+    }
+
     @Transactional
     public void recordFailure(UUID batchId, String reason) {
         bump(batchId, 0, 1, reason);

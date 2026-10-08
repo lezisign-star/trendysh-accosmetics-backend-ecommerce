@@ -1,5 +1,15 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-08 (descriptions only) — write descriptions without making pictures
+
+Owner: "staff/admin can generate a description without the images, for products that have images but no descriptions".
+
+- `POST /admin/image-cleanup/descriptions/run` { limit 1-200, note? }: a run that makes NO pictures. It works on real (non-demo, non-deleted) products with no description and no draft already waiting (published first, then by name), one description draft each, from the product's own photo when it has one (main, else first real, else any; a photo that can't be fetched just means it is written from the name) or from name + categories alone. Needs only Gemini (not Cloudinary). It is an ordinary batch row (`images_per_product` 0, `write_descriptions` true), so it shows in Runs, has "See what it made", counts progress, stops on a Gemini quota error, and undo discards its unapproved drafts. `note` = the shop's own facts about them (treated as true).
+- `POST /admin/image-cleanup/descriptions/product/{productId}` { note? }: one product, now (synchronous), even one that already has text; returns the draft. Still only a draft: the product's own text changes only if staff approve.
+- Status gained `productsWithoutDescription`. The prompt copes with no photo ("NO photo ... keep it general"; ingredients/how-to-use only from the note). `GeminiTextClient.describe` accepts a null photo.
+- Tests: description unit (11), drafts integration (8, incl. descriptions-only run via the real runner, on-demand forcing, missing product), batch e2e (2). Fixed test hygiene in `OrderEmailsIntegrationTest` (fixed M-PESA codes collided with earlier runs on a reused database: now unique per run). Full suite 880 on a reused DB.
+
+
 ## 2026-10-08 (descriptions in the photo studio) — AI descriptions drafted during a batch, batch results per product (V58)
 
 Owner: "have descriptions generated on the same Gemini", "part of a photo-cleaning batch", "keep them to the capped sizes", "after a batch I should see the images generated per product and click through them".

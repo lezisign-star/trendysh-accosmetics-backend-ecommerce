@@ -3,6 +3,8 @@ package com.nbh.backend.imagecleanup;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.nbh.backend.catalog.entity.Category;
 import com.nbh.backend.catalog.entity.Product;
+import com.nbh.backend.catalog.entity.ProductImage;
+import com.nbh.backend.catalog.repository.ProductImageRepository;
 import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
@@ -40,15 +42,20 @@ public class DescriptionDraftService {
     public record ProductContext(String name, List<String> categories, boolean hasDescription) {}
 
     private final ProductRepository products;
+    private final ProductImageRepository productImages;
+    private final GeminiImageClient photos;
     private final ProductDescriptionDraftRepository drafts;
     private final GeminiTextClient gemini;
     private final DescriptionPromptBuilder prompts;
     /** For the read in {@link #context}: a method called from inside this class is not wrapped by @Transactional. */
     private final TransactionTemplate readOnly;
 
-    public DescriptionDraftService(ProductRepository products, ProductDescriptionDraftRepository drafts,
+    public DescriptionDraftService(ProductRepository products, ProductImageRepository productImages,
+                                   GeminiImageClient photos, ProductDescriptionDraftRepository drafts,
                                    GeminiTextClient gemini, DescriptionPromptBuilder prompts,
                                    PlatformTransactionManager transactions) {
+        this.productImages = productImages;
+        this.photos = photos;
         this.readOnly = new TransactionTemplate(transactions);
         this.readOnly.setReadOnly(true);
         this.products = products;
@@ -75,13 +82,63 @@ public class DescriptionDraftService {
      * {@link GeminiImageClient.GeminiException} when Gemini fails, for the caller to report.
      */
     public boolean draftFor(UUID batchId, UUID productId, GeminiImageClient.Image photo, String note) {
+        return draftFor(batchId, productId, photo, note, false);
+    }
+
+    /**
+     * As above, with a choice: {@code force} drafts even for a product that already has a description (staff asked
+     * for it by name; it is still only a draft, the product's own text changes only if they approve). {@code photo}
+     * null drafts from the name, category and note alone.
+     */
+    public boolean draftFor(UUID batchId, UUID productId, GeminiImageClient.Image photo, String note, boolean force) {
         ProductContext context = context(productId);
-        if (context == null || context.hasDescription()) {
+        if (context == null || (context.hasDescription() && !force)) {
             return false;
         }
-        JsonNode answer = gemini.describe(photo, prompts.build(context.name(), context.categories(), note));
+        JsonNode answer = gemini.describe(photo,
+                prompts.build(context.name(), context.categories(), note, photo != null));
         save(batchId, productId, answer);
         return true;
+    }
+
+    /**
+     * The product's own photo to write from: its main one, else its first real one, else any. Null when it has none or the
+     * photo can't be fetched (the description is then written from the name alone, never failed for want of a picture).
+     */
+    public GeminiImageClient.Image photoFor(UUID productId) {
+        List<ProductImage> all = productImages.findByProductIdOrderBySortOrderAsc(productId);
+        ProductImage chosen = all.stream().filter(ProductImage::isPrimary).findFirst()
+                .or(() -> all.stream().filter(i -> i.getSource() != ProductImage.ImageSource.AI_CLEANED).findFirst())
+                .or(() -> all.stream().findFirst()).orElse(null);
+        if (chosen == null || chosen.getUrl() == null) {
+            return null;
+        }
+        try {
+            return photos.download(chosen.getUrl());
+        } catch (GeminiImageClient.GeminiException e) {
+            return null;
+        }
+    }
+
+    /** Products a "descriptions only" run would work on, up to {@code limit}. */
+    @Transactional(readOnly = true)
+    public List<UUID> withoutDescription(int limit) {
+        return products.idsWithoutDescription(org.springframework.data.domain.PageRequest.of(0, limit));
+    }
+
+    @Transactional(readOnly = true)
+    public long countWithoutDescription() {
+        return products.countWithoutDescription();
+    }
+
+    /** One product, now: drafts its description (from its photo when it has one) and returns the draft. */
+    public DraftDto draftNow(UUID productId, String note) {
+        if (context(productId) == null) {
+            throw new NotFoundException("That product no longer exists.");
+        }
+        draftFor(null, productId, photoFor(productId), note, true);
+        return list().stream().filter(d -> d.productId().equals(productId)).findFirst()
+                .orElseThrow(() -> new UnprocessableException("No description could be written for that product."));
     }
 
     private void save(UUID batchId, UUID productId, JsonNode a) {

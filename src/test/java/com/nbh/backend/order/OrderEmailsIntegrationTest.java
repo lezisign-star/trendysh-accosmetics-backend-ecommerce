@@ -192,7 +192,7 @@ class OrderEmailsIntegrationTest {
     @Test
     void noReminderOnceACodeHasArrivedTheOrderIsClosedOrTheStockHoldHasEnded() throws Exception {
         Placed withCode = placeOrder("Junction — Stalls D5");
-        claimCode(withCode, "QREMIND123");
+        claimCode(withCode, "QR" + UUID.randomUUID().toString().replace("-", "").substring(0, 9).toUpperCase());
         Placed paid = placeOrder("Junction — Stalls D5");
         Placed holdEnded = placeOrder("Junction — Stalls D5");
         for (Placed p : List.of(withCode, paid, holdEnded)) backdate(p.orderNo(), 20);
@@ -211,7 +211,7 @@ class OrderEmailsIntegrationTest {
     @Test
     void confirmingThePaymentSendsAReceiptNamingWhereToCollectIt() throws Exception {
         Placed order = placeOrder("Junction — Stalls <D5>");
-        claimCode(order, "QRECEIPT12");
+        claimCode(order, "QR" + UUID.randomUUID().toString().replace("-", "").substring(0, 9).toUpperCase());
         reset(emailSender);
 
         String claims = mvc.perform(get("/api/v1/admin/payments/claims").header("Authorization", "Bearer " + staffToken))

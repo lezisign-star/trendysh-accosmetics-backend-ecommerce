@@ -133,4 +133,25 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     List<Product> findRelated(@Param("categoryIds") List<UUID> categoryIds,
                                @Param("excludeId") UUID excludeId,
                                Pageable pageable);
+
+    /**
+     * Real products with no description of their own and no AI draft waiting, published ones first: who a
+     * "write descriptions only" run works on. (Demo products are left out; they always have text.)
+     */
+    @Query("""
+            SELECT p.id FROM Product p
+            WHERE p.deleted = false AND p.isMockData = false
+              AND (p.description IS NULL OR TRIM(p.description) = '')
+              AND NOT EXISTS (SELECT 1 FROM ProductDescriptionDraft d WHERE d.productId = p.id)
+            ORDER BY p.isPublished DESC, p.name ASC
+            """)
+    java.util.List<java.util.UUID> idsWithoutDescription(org.springframework.data.domain.Pageable pageable);
+
+    @Query("""
+            SELECT COUNT(p) FROM Product p
+            WHERE p.deleted = false AND p.isMockData = false
+              AND (p.description IS NULL OR TRIM(p.description) = '')
+              AND NOT EXISTS (SELECT 1 FROM ProductDescriptionDraft d WHERE d.productId = p.id)
+            """)
+    long countWithoutDescription();
 }

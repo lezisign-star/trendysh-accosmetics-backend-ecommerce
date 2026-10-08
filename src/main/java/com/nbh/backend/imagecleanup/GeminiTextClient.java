@@ -58,16 +58,22 @@ public class GeminiTextClient {
                         "seoTitle", "seoDescription"));
     }
 
-    /** Asks for the description JSON about {@code photo}; the parsed answer, or a {@link GeminiImageClient.GeminiException}. */
+    /**
+     * Asks for the description JSON about {@code photo} (null: no photo, the prompt alone); the parsed answer, or a
+     * {@link GeminiImageClient.GeminiException}.
+     */
     public JsonNode describe(GeminiImageClient.Image photo, String prompt) {
         if (!config.geminiConfigured()) {
             throw new GeminiImageClient.GeminiException("Gemini isn't configured — set GEMINI_API_KEY.", false);
         }
+        List<Object> parts = new java.util.ArrayList<>();
+        parts.add(Map.of("text", prompt));
+        if (photo != null) {
+            parts.add(Map.of("inlineData", Map.of("mimeType", photo.mimeType(),
+                    "data", Base64.getEncoder().encodeToString(photo.bytes()))));
+        }
         Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of("parts", List.of(
-                        Map.of("text", prompt),
-                        Map.of("inlineData", Map.of("mimeType", photo.mimeType(),
-                                "data", Base64.getEncoder().encodeToString(photo.bytes())))))),
+                "contents", List.of(Map.of("parts", parts)),
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
                         "responseSchema", schema(),

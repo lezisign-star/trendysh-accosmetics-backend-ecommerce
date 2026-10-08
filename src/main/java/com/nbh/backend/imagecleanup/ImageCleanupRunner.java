@@ -74,6 +74,41 @@ public class ImageCleanupRunner {
         }
     }
 
+    /**
+     * A run that makes no pictures: for each product, one description draft from its own photo when it has one (else
+     * from its name), for staff to approve. Stops the whole run on a Gemini quota error like a photo run does.
+     */
+    @Async
+    public void runDescriptions(UUID batchId, List<UUID> productIds, String note) {
+        log.info("Description batch {}: {} product(s)", batchId, productIds.size());
+        boolean anyFailed = false;
+        try {
+            for (UUID productId : productIds) {
+                try {
+                    boolean drafted = descriptions.draftFor(batchId, productId, descriptions.photoFor(productId), note);
+                    writer.recordDescriptionOnly(batchId, drafted);
+                } catch (GeminiImageClient.GeminiException e) {
+                    anyFailed = true;
+                    writer.recordFailure(batchId, "A description wasn't written: " + e.getMessage());
+                    if (e.isQuotaExceeded()) {
+                        writer.finalizeBatch(batchId, ImageCleanupBatch.Status.STOPPED_GEMINI_QUOTA,
+                                "Gemini's quota or rate limit was reached — the rest of the products were not attempted.");
+                        return;
+                    }
+                } catch (RuntimeException e) {
+                    anyFailed = true;
+                    log.error("Description failed for product {}", productId, e);
+                    writer.recordFailure(batchId, "A description wasn't written: " + e.getMessage());
+                }
+            }
+            writer.finalizeBatch(batchId, anyFailed
+                    ? ImageCleanupBatch.Status.COMPLETED_WITH_ERRORS : ImageCleanupBatch.Status.COMPLETED, null);
+        } catch (RuntimeException e) {
+            log.error("Description batch {} crashed", batchId, e);
+            writer.finalizeBatch(batchId, ImageCleanupBatch.Status.FAILED, "Unexpected error: " + e.getMessage());
+        }
+    }
+
     private record OptionOutcome(boolean failed, boolean quotaExceeded) {}
 
     /**

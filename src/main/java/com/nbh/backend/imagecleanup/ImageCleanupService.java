@@ -48,7 +48,8 @@ public class ImageCleanupService {
     public record StatusDto(boolean geminiConfigured, boolean cloudinaryConfigured, long candidates,
                             int maxImagesPerProduct, int defaultImagesPerProduct, String backgroundHex,
                             List<ViewDto> views, int maxNoteLength, int draftDays, long pendingDrafts,
-                            long pendingDescriptions, DescriptionLimits descriptionLimits) {}
+                            long pendingDescriptions, DescriptionLimits descriptionLimits,
+                            long productsWithoutDescription) {}
 
     /** The character limits descriptions are written and approved to, shown beside each field. */
     public record DescriptionLimits(int shortDescription, int description, int highlightsCount, int highlight,
@@ -109,7 +110,8 @@ public class ImageCleanupService {
                 descriptionService.pendingCount(),
                 new DescriptionLimits(DescriptionCaps.SHORT_DESCRIPTION, DescriptionCaps.DESCRIPTION,
                         DescriptionCaps.HIGHLIGHTS_COUNT, DescriptionCaps.HIGHLIGHT, DescriptionCaps.INGREDIENTS,
-                        DescriptionCaps.HOW_TO_USE, DescriptionCaps.SEO_TITLE, DescriptionCaps.SEO_DESCRIPTION));
+                        DescriptionCaps.HOW_TO_USE, DescriptionCaps.SEO_TITLE, DescriptionCaps.SEO_DESCRIPTION),
+                descriptionService.countWithoutDescription());
     }
 
     /** Makes photos for the next {@code limit} options that have a real photo and haven't had any made yet. */
@@ -120,6 +122,34 @@ public class ImageCleanupService {
             throw new UnprocessableException("No products currently need photo cleanup.");
         }
         return start(variantIds, null, true, options, staffId);
+    }
+
+    /**
+     * Drafts descriptions only, for up to {@code limit} products that have none (no pictures are made, so only Gemini
+     * needs to be set up). {@code note} is the shop's own facts about them, treated as true. Like every run the
+     * drafts wait for approval.
+     */
+    public BatchDto startDescriptions(int limit, String note, UUID staffId) {
+        if (!config.geminiConfigured()) {
+            throw new UnprocessableException("Gemini isn't set up yet — add the GEMINI_API_KEY before writing descriptions.");
+        }
+        if (batches.existsByStatus(ImageCleanupBatch.Status.IN_PROGRESS)) {
+            throw new ConflictException("A run is already in progress — wait for it to finish.");
+        }
+        List<UUID> productIds = descriptionService.withoutDescription(limit);
+        if (productIds.isEmpty()) {
+            throw new UnprocessableException("Every product already has a description (or a draft waiting for review).");
+        }
+        ImageCleanupBatch batch = new ImageCleanupBatch();
+        batch.setImagesPerProduct(0);
+        batch.setNote(ImageCleanupPromptBuilder.cleanNote(note));
+        batch.setPublishMode(ImageCleanupBatch.PublishMode.REVIEW);
+        batch.setWriteDescriptions(true);
+        batch.setRequestedCount(productIds.size());
+        batch.setTriggeredByUserId(staffId);
+        batch = batches.saveAndFlush(batch);
+        runner.runDescriptions(batch.getId(), productIds, batch.getNote());
+        return BatchDto.from(batch, 0, 0);
     }
 
     /** Makes photos for one chosen product: each of its options that has a real photo and none made yet. */

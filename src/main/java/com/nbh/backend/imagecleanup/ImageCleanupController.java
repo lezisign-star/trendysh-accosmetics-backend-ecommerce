@@ -64,6 +64,12 @@ public class ImageCleanupController {
     /** {@code note} null keeps the draft's own note; an empty string means no note. */
     public record RedoRequest(@Size(max = 2000) String note) {}
 
+    /** A descriptions-only run: how many products, and the shop's own facts about them (optional). */
+    public record DescriptionRunRequest(@Min(1) @Max(200) int limit, @Size(max = 2000) String note) {}
+
+    /** One product's description now; {@code note} is the shop's own facts about it (optional). */
+    public record ProductDescriptionRequest(@Size(max = 2000) String note) {}
+
     /** What staff may change on a description before approving it; any field left out keeps the draft's text. */
     public record DescriptionEdits(@Size(max = 1000) String shortDescription, @Size(max = 2000) String description,
                                    @Size(max = 10) List<@Size(max = 300) String> highlights,
@@ -154,6 +160,20 @@ public class ImageCleanupController {
     @GetMapping("/descriptions")
     public List<DescriptionDraftService.DraftDto> descriptions() {
         return descriptionService.list();
+    }
+
+    /** Descriptions only, no pictures: drafts for up to {@code limit} products that have none. */
+    @PostMapping("/descriptions/run")
+    public BatchDto runDescriptions(@Valid @RequestBody DescriptionRunRequest request,
+                                    @AuthenticationPrincipal StaffUser staff) {
+        return service.startDescriptions(request.limit(), request.note(), staff.getId());
+    }
+
+    /** One product, right now (even one that already has text): returns the draft to review. */
+    @PostMapping("/descriptions/product/{productId}")
+    public DescriptionDraftService.DraftDto describeProduct(@PathVariable UUID productId,
+                                                           @Valid @RequestBody(required = false) ProductDescriptionRequest request) {
+        return descriptionService.draftNow(productId, request == null ? null : request.note());
     }
 
     @PostMapping("/descriptions/{id}/approve")

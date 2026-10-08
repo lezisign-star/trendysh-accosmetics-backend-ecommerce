@@ -76,12 +76,13 @@ class DescriptionUnitTest {
     private volatile int firstStatus = 200;
     private volatile int laterStatus = 200;
     private volatile String body = "";
+    private volatile String lastRequest = "";
 
     @BeforeEach
     void startStandIn() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
-            exchange.getRequestBody().readAllBytes();
+            lastRequest = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             int n = calls.incrementAndGet();
             byte[] out = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -108,6 +109,18 @@ class DescriptionUnitTest {
 
     private static String answer(String json) {
         return "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"" + json.replace("\"", "\\\"") + "\"}]}}]}";
+    }
+
+    @Test
+    void withNoPhotoThePromptSaysSoAndNothingButTextIsSent() {
+        String p = new DescriptionPromptBuilder().build("Gel Polish Pink", List.of("Nails"), "15ml bottle", false);
+        assertThat(p).contains("NO photo").contains("15ml bottle").doesNotContain("attached image")
+                .doesNotContain("readable on the label");
+        body = answer("{\"shortDescription\":\"Hi\"}");
+        assertThat(client().describe(null, "x").get("shortDescription").asText()).isEqualTo("Hi");
+        assertThat(lastRequest).doesNotContain("inlineData");
+        client().describe(PHOTO, "x");
+        assertThat(lastRequest).contains("inlineData");
     }
 
     @Test

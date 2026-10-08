@@ -49,10 +49,13 @@ class DescriptionDraftsIntegrationTest {
     @Autowired private DescriptionDraftService descriptions;
     @Autowired private ImageCleanupBatchRepository batches;
     @Autowired private ImageDraftRepository imageDrafts;
+    @Autowired private ImageCleanupRunner runner;
+    @Autowired private com.nbh.backend.catalog.repository.ProductRepository productRepository;
 
     private HttpServer gemini;
     private final AtomicInteger geminiCalls = new AtomicInteger();
     private volatile String geminiBody;
+    private volatile String geminiRequest = "";
     private String originalBaseUrl;
     private String token;
 
@@ -67,7 +70,7 @@ class DescriptionDraftsIntegrationTest {
 
         gemini = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         gemini.createContext("/", exchange -> {
-            exchange.getRequestBody().readAllBytes();
+            geminiRequest = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             geminiCalls.incrementAndGet();
             byte[] out = geminiBody.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -268,5 +271,67 @@ class DescriptionDraftsIntegrationTest {
             if (productId.equals(d.get("productId").asText())) return d.get("id").asText();
         }
         return null;
+    }
+
+    // ---- descriptions only (no pictures) ----
+
+    private static final String GOOD_REPLY = "{\"shortDescription\":\"A neat pot.\",\"description\":\"Fine powder for nail work.\","
+            + "\"highlights\":[\"Fine texture\"],\"ingredients\":\"\",\"howToUse\":\"\",\"seoTitle\":\"Powder\","
+            + "\"seoDescription\":\"Powder for nails.\"}";
+
+    @Test
+    void aDescriptionsOnlyRunDraftsForProductsWithoutTextEvenWithNoPhotoAndMakesNoPictures() throws Exception {
+        Made bare = product(null);
+        Made written = product("Already written.");
+        geminiBody = reply(GOOD_REPLY);
+
+        // The candidate list: the bare product is in it, the one with text is not.
+        var candidates = descriptions.withoutDescription(5000);
+        assertThat(candidates).contains(UUID.fromString(bare.productId())).doesNotContain(UUID.fromString(written.productId()));
+        assertThat(descriptions.countWithoutDescription()).isGreaterThanOrEqualTo(1);
+
+        ImageCleanupBatch batch = new ImageCleanupBatch();
+        batch.setImagesPerProduct(0);
+        batch.setWriteDescriptions(true);
+        batch.setPublishMode(ImageCleanupBatch.PublishMode.REVIEW);
+        batch.setRequestedCount(2);
+        batch = batches.saveAndFlush(batch);
+        runner.runDescriptions(batch.getId(), java.util.List.of(UUID.fromString(bare.productId()),
+                UUID.fromString(written.productId())), null);
+
+        JsonNode done = null;
+        for (int i = 0; i < 120; i++) {
+            done = ok(get("/api/v1/admin/image-cleanup/batches/" + batch.getId()));
+            if (!"IN_PROGRESS".equals(done.get("status").asText())) break;
+            Thread.sleep(250);
+        }
+        assertThat(done.get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(done.get("descriptionsDrafted").asInt()).isEqualTo(1);
+        assertThat(done.get("pendingDrafts").asInt()).as("no pictures were made").isZero();
+        assertThat(done.get("succeededCount").asInt()).isEqualTo(2);
+        assertThat(geminiCalls.get()).as("Gemini is not asked about a product that has text").isEqualTo(1);
+        assertThat(draftIdOrNull(bare.productId())).isNotNull();
+        assertThat(draftIdOrNull(written.productId())).isNull();
+    }
+
+    @Test
+    void oneProductCanBeDescribedOnDemandEvenWhenItHasTextAndTheProductItselfIsUnchanged() throws Exception {
+        Made written = product("Written by a person.");
+        geminiBody = reply(GOOD_REPLY);
+
+        JsonNode draft = ok(jsonBody(post("/api/v1/admin/image-cleanup/descriptions/product/" + written.productId()),
+                "{\"note\":\"15ml bottle\"}"));
+        assertThat(draft.get("shortDescription").asText()).isEqualTo("A neat pot.");
+        assertThat(geminiCalls.get()).isEqualTo(1);
+        assertThat(geminiRequest).contains("15ml bottle");
+
+        JsonNode product = ok(get("/api/v1/products/" + written.productId()));
+        assertThat(product.get("description").asText()).isEqualTo("Written by a person.");
+    }
+
+    @Test
+    void aMissingProductIsRefused() throws Exception {
+        assertThat(status(jsonBody(post("/api/v1/admin/image-cleanup/descriptions/product/" + UUID.randomUUID()), "{}")))
+                .isEqualTo(404);
     }
 }
