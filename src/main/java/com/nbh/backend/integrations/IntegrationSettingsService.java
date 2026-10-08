@@ -32,14 +32,16 @@ public class IntegrationSettingsService {
                                       @Value("${app.image-cleanup.gemini-api-key:}") String geminiKey,
                                       @Value("${app.cloudinary.cloud-name:}") String cloudName,
                                       @Value("${app.cloudinary.api-key:}") String cloudKey,
-                                      @Value("${app.cloudinary.api-secret:}") String cloudSecret) {
+                                      @Value("${app.cloudinary.api-secret:}") String cloudSecret,
+                                      @Value("${app.storefront.deploy-hook-url:}") String deployHook) {
         this.repository = repository;
         this.cipher = cipher;
         this.env = Map.of(
                 IntegrationKey.GEMINI_API_KEY, geminiKey,
                 IntegrationKey.CLOUDINARY_CLOUD_NAME, cloudName,
                 IntegrationKey.CLOUDINARY_API_KEY, cloudKey,
-                IntegrationKey.CLOUDINARY_API_SECRET, cloudSecret);
+                IntegrationKey.CLOUDINARY_API_SECRET, cloudSecret,
+                IntegrationKey.STOREFRONT_DEPLOY_HOOK_URL, deployHook);
     }
 
     /** The effective value: dashboard first, environment second; empty when neither is set. */

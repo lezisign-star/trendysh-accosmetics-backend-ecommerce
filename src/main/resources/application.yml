@@ -97,6 +97,9 @@ app:
     account-number: ${BANK_ACCOUNT_NUMBER:}
     account-branch: ${BANK_ACCOUNT_BRANCH:}
     support-whatsapp: ${SUPPORT_WHATSAPP:0793506900}
+  storefront:
+    # Render's deploy hook for the storefront (can also be saved in Settings, Integrations). Blank = no rebuilds.
+    deploy-hook-url: ${STOREFRONT_DEPLOY_HOOK_URL:}
   coop:
     ins:
       # Co-op Bank Instant Notification Service (deposit notifications). NOT tested against the real

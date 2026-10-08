@@ -1,5 +1,13 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-08 (storefront rebuild) — the backend asks Render to rebuild the storefront every midnight
+
+Owner chose the backend over GitHub Actions (the workflow can only run from the repo's default branch, which is `main` = the coming-soon page). The storefront prerenders its public pages from the live catalogue at build time, so it only reflects new products/approved descriptions after a rebuild.
+
+- `StorefrontRebuildService`: `@Scheduled(cron "0 0 0 * * *", zone Africa/Nairobi)` POSTs Render's deploy hook (skipped quietly when none is set). The hook is a new integration key `STOREFRONT_DEPLOY_HOOK_URL` (saved encrypted in Settings, Integrations, or env `STOREFRONT_DEPLOY_HOOK_URL`); never logged or returned. Only addresses starting `https://api.render.com/deploy/` are accepted (`app.storefront.deploy-hook-prefix`, overridable for tests). Last result kept in memory (resets on restart).
+- `GET/POST /admin/storefront/rebuild` (SETTINGS_MANAGE): status {configured, lastRunAt, lastTrigger, lastOk, lastMessage}; POST = rebuild now, throttled to once per 5 minutes after a success (422 when no hook / wrong address, 409 when too soon). A Render refusal or unreachable host is reported in the status, with no secret in the message.
+- Tests: `StorefrontRebuildServiceTest` (6) + an access test (Manager/Cashier forbidden, needs a hook first, secret not echoed). **Owner step:** Render > storefront site > Settings > Deploy Hook > copy; paste it in admin Settings > Integrations > Storefront search pages.
+
 ## 2026-10-08 (descriptions only) — write descriptions without making pictures
 
 Owner: "staff/admin can generate a description without the images, for products that have images but no descriptions".

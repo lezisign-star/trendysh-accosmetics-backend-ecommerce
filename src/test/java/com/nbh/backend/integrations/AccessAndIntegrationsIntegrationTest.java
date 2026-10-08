@@ -184,4 +184,23 @@ class AccessAndIntegrationsIntegrationTest {
         assertThat(status(post("/api/v1/admin/image-cleanup/run"), tokenFor("CASHIER"), "{\"limit\":1,\"imagesPerProduct\":3}")).isEqualTo(403);
         assertThat(status(get("/api/v1/admin/image-cleanup/status"), tokenFor("VIEWER"), null)).isEqualTo(403);
     }
+    // ---- storefront rebuild ----
+
+    @Test
+    void onlySettingsManagersSeeOrPressTheStorefrontRebuildAndItNeedsAHookFirst() throws Exception {
+        assertThat(status(get("/api/v1/admin/storefront/rebuild"), tokenFor("MANAGER"), null)).isEqualTo(403);
+        assertThat(status(post("/api/v1/admin/storefront/rebuild"), tokenFor("CASHIER"), null)).isEqualTo(403);
+
+        String admin = tokenFor("SUPER_ADMIN");
+        assertThat(ok(get("/api/v1/admin/storefront/rebuild"), admin, null).get("configured").asBoolean()).isFalse();
+        // No hook saved yet: pressing the button is refused, not silently ignored.
+        assertThat(status(post("/api/v1/admin/storefront/rebuild"), admin, null)).isEqualTo(422);
+
+        ok(put("/api/v1/admin/settings/integrations/STOREFRONT_DEPLOY_HOOK_URL"), admin,
+                "{\"value\":\"https://api.render.com/deploy/srv-test?key=abcd1234\"}");
+        JsonNode after = ok(get("/api/v1/admin/storefront/rebuild"), admin, null);
+        assertThat(after.get("configured").asBoolean()).isTrue();
+        assertThat(after.toString()).doesNotContain("abcd1234");
+    }
+
 }
