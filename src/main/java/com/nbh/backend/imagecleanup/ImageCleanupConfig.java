@@ -22,6 +22,8 @@ public class ImageCleanupConfig {
     private String geminiApiKey = "";
     private String geminiBaseUrl = "https://generativelanguage.googleapis.com";
     private String geminiModel = "gemini-2.5-flash-image";
+    /** The text model that writes product descriptions (same API key as the photo editing). */
+    private String descriptionModel = "gemini-2.5-flash";
     private String cloudinaryUploadBaseUrl = "https://api.cloudinary.com";
     /** Cleaned shots' studio backdrop. */
     private String backgroundHex = "#F3EBDD";

@@ -63,7 +63,9 @@ public record CatalogVariantCardDto(
         String description,
         int siblingCount,
         Integer wholesaleMinQty,
-        BigDecimal wholesalePrice
+        BigDecimal wholesalePrice,
+        /** The product's one-line summary for listings; null when none was written. */
+        String shortDescription
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */
     public static boolean isMeaninglessName(String variantName) {

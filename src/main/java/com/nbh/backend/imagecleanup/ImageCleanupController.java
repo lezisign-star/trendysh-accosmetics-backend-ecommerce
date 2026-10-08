@@ -37,25 +37,25 @@ public class ImageCleanupController {
     /** A bulk run over the next options that need photos. {@code views} wins over {@code imagesPerProduct}. */
     public record RunRequest(@Min(1) @Max(200) int limit, @Min(1) @Max(8) Integer imagesPerProduct,
                              @Size(max = 8) List<String> views,
-                             @Size(max = 2000) String note, boolean publishNow) {
+                             @Size(max = 2000) String note, boolean publishNow, boolean describe) {
         RunOptions options() {
-            return new RunOptions(views, imagesPerProduct, note, publishNow);
+            return new RunOptions(views, imagesPerProduct, note, publishNow, describe);
         }
     }
 
     /** One product: every option of it that needs photos. */
     public record ProductRunRequest(@Min(1) @Max(8) Integer imagesPerProduct, @Size(max = 8) List<String> views,
-                                    @Size(max = 2000) String note, boolean publishNow) {
+                                    @Size(max = 2000) String note, boolean publishNow, boolean describe) {
         RunOptions options() {
-            return new RunOptions(views, imagesPerProduct, note, publishNow);
+            return new RunOptions(views, imagesPerProduct, note, publishNow, describe);
         }
     }
 
     /** One option, from one of its real photos (null = its main one). */
     public record OptionRunRequest(UUID sourceImageId, @Size(max = 8) List<String> views,
-                                   @Size(max = 2000) String note, boolean publishNow) {
+                                   @Size(max = 2000) String note, boolean publishNow, boolean describe) {
         RunOptions options() {
-            return new RunOptions(views, null, note, publishNow);
+            return new RunOptions(views, null, note, publishNow, describe);
         }
     }
 
@@ -64,12 +64,23 @@ public class ImageCleanupController {
     /** {@code note} null keeps the draft's own note; an empty string means no note. */
     public record RedoRequest(@Size(max = 2000) String note) {}
 
+    /** What staff may change on a description before approving it; any field left out keeps the draft's text. */
+    public record DescriptionEdits(@Size(max = 1000) String shortDescription, @Size(max = 2000) String description,
+                                   @Size(max = 10) List<@Size(max = 300) String> highlights,
+                                   @Size(max = 1000) String ingredients, @Size(max = 1000) String howToUse,
+                                   @Size(max = 300) String seoTitle, @Size(max = 600) String seoDescription) {}
+
     private final ImageCleanupService service;
     private final ImageDraftService draftService;
+    private final DescriptionDraftService descriptionService;
+    private final BatchResultsService resultsService;
 
-    public ImageCleanupController(ImageCleanupService service, ImageDraftService draftService) {
+    public ImageCleanupController(ImageCleanupService service, ImageDraftService draftService,
+                                  DescriptionDraftService descriptionService, BatchResultsService resultsService) {
         this.service = service;
         this.draftService = draftService;
+        this.descriptionService = descriptionService;
+        this.resultsService = resultsService;
     }
 
     @GetMapping("/status")
@@ -85,6 +96,12 @@ public class ImageCleanupController {
     @GetMapping("/batches/{id}")
     public BatchDto batch(@PathVariable UUID id) {
         return service.get(id);
+    }
+
+    /** What the batch made, product by product: the real photo, every photo produced, and the description drafted. */
+    @GetMapping("/batches/{id}/results")
+    public List<BatchResultsService.ProductResult> results(@PathVariable UUID id) {
+        return resultsService.results(id);
     }
 
     @PostMapping("/run")
@@ -130,5 +147,24 @@ public class ImageCleanupController {
     public BatchDto redo(@PathVariable UUID id, @RequestBody(required = false) RedoRequest request,
                          @AuthenticationPrincipal StaffUser staff) {
         return service.redo(id, request == null ? null : request.note(), staff.getId());
+    }
+
+    // ---- descriptions drafted during a batch ----
+
+    @GetMapping("/descriptions")
+    public List<DescriptionDraftService.DraftDto> descriptions() {
+        return descriptionService.list();
+    }
+
+    @PostMapping("/descriptions/{id}/approve")
+    public void approveDescription(@PathVariable UUID id, @Valid @RequestBody(required = false) DescriptionEdits edits) {
+        descriptionService.approve(id, edits == null ? null : new DescriptionDraftService.Edits(edits.shortDescription(),
+                edits.description(), edits.highlights(), edits.ingredients(), edits.howToUse(), edits.seoTitle(),
+                edits.seoDescription()));
+    }
+
+    @DeleteMapping("/descriptions/{id}")
+    public void rejectDescription(@PathVariable UUID id) {
+        descriptionService.reject(id);
     }
 }

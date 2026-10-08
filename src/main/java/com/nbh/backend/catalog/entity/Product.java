@@ -62,6 +62,10 @@ public class Product extends BaseEntity {
     @Column(name = "how_to_use", columnDefinition = "TEXT")
     private String howToUse;
 
+    /** The product page's bullet list, one highlight per line; null when there are none. */
+    @Column(columnDefinition = "TEXT")
+    private String highlights;
+
     @Column(nullable = false)
     private boolean isStockItem = true;
 

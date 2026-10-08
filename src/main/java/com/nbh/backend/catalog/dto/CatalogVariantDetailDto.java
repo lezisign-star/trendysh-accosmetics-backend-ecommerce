@@ -23,5 +23,10 @@ public record CatalogVariantDetailDto(
         String primaryCategorySlug,
         UUID primaryCategoryParentId,
         String primaryCategoryParentName,
-        String primaryCategoryParentSlug
+        String primaryCategoryParentSlug,
+        /** The product page's bullet list, one entry per point; empty when none was written. */
+        List<String> highlights,
+        /** What a search result shows for this product; null when none was written (the page then falls back to its name). */
+        String seoTitle,
+        String seoDescription
 ) {}

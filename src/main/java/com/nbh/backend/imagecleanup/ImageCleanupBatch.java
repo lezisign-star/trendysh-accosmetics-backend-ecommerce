@@ -55,6 +55,13 @@ public class ImageCleanupBatch extends BaseEntity {
     @Column(name = "note", length = 600)
     private String note;
 
+    /** Whether this run also drafted descriptions for products that had none. */
+    @Column(name = "write_descriptions", nullable = false)
+    private boolean writeDescriptions;
+
+    @Column(name = "descriptions_drafted", nullable = false)
+    private int descriptionsDrafted;
+
     @Column(name = "images_per_product", nullable = false)
     private int imagesPerProduct;
 

@@ -169,6 +169,15 @@ public class ImageCleanupWriter {
         bump(batchId, 1, 0, null);
     }
 
+    /** One more description drafted in this batch. */
+    @Transactional
+    public void recordDescription(UUID batchId) {
+        batches.findById(batchId).ifPresent(b -> {
+            b.setDescriptionsDrafted(b.getDescriptionsDrafted() + 1);
+            batches.save(b);
+        });
+    }
+
     @Transactional
     public void recordFailure(UUID batchId, String reason) {
         bump(batchId, 0, 1, reason);

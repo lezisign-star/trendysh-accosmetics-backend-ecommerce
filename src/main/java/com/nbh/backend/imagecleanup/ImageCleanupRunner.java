@@ -5,8 +5,10 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -25,15 +27,18 @@ public class ImageCleanupRunner {
     private final WatermarkService watermark;
     private final CloudinaryUploader cloudinary;
     private final ImageCleanupConfig config;
+    private final DescriptionDraftService descriptions;
 
     public ImageCleanupRunner(ImageCleanupWriter writer, GeminiImageClient gemini, ImageCleanupPromptBuilder prompts,
-                              WatermarkService watermark, CloudinaryUploader cloudinary, ImageCleanupConfig config) {
+                              WatermarkService watermark, CloudinaryUploader cloudinary, ImageCleanupConfig config,
+                              DescriptionDraftService descriptions) {
         this.writer = writer;
         this.gemini = gemini;
         this.prompts = prompts;
         this.watermark = watermark;
         this.cloudinary = cloudinary;
         this.config = config;
+        this.descriptions = descriptions;
     }
 
     /**
@@ -42,16 +47,18 @@ public class ImageCleanupRunner {
      * chosen option does not.
      */
     public record Plan(UUID batchId, List<UUID> variantIds, UUID sourceImageId, List<PhotoView> views, String note,
-                       ImageCleanupBatch.PublishMode mode, boolean skipCleaned) {}
+                       ImageCleanupBatch.PublishMode mode, boolean skipCleaned, boolean describe) {}
 
     @Async
     public void run(Plan plan) {
         log.info("Photo batch {} ({}): {} option(s), {} view(s) each", plan.batchId(), plan.mode(),
                 plan.variantIds().size(), plan.views().size());
         boolean anyFailed = false;
+        // One description per product per run, however many options it has.
+        Set<UUID> described = new HashSet<>();
         try {
             for (UUID variantId : plan.variantIds()) {
-                OptionOutcome outcome = cleanOne(plan, variantId);
+                OptionOutcome outcome = cleanOne(plan, variantId, described);
                 anyFailed |= outcome.failed();
                 if (outcome.quotaExceeded()) {
                     writer.finalizeBatch(plan.batchId(), ImageCleanupBatch.Status.STOPPED_GEMINI_QUOTA,
@@ -69,7 +76,24 @@ public class ImageCleanupRunner {
 
     private record OptionOutcome(boolean failed, boolean quotaExceeded) {}
 
-    private OptionOutcome cleanOne(Plan plan, UUID variantId) {
+    /**
+     * Drafts the product's text from the same real photo. A failure here is reported on the batch but never stops the
+     * photos: the staff note is NOT passed on, because it describes how the photo should look, not the product.
+     */
+    private void draftDescription(Plan plan, ImageCleanupWriter.Target target, GeminiImageClient.Image reference) {
+        try {
+            if (descriptions.draftFor(plan.batchId(), target.productId(), reference, null)) {
+                writer.recordDescription(plan.batchId());
+            }
+        } catch (GeminiImageClient.GeminiException e) {
+            writer.recordFailure(plan.batchId(), target.displayName() + " — description not written: " + e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("Description failed for product {}", target.productId(), e);
+            writer.recordFailure(plan.batchId(), target.displayName() + " — description not written: " + e.getMessage());
+        }
+    }
+
+    private OptionOutcome cleanOne(Plan plan, UUID variantId, Set<UUID> described) {
         var target = writer.targetFor(variantId, plan.sourceImageId(), plan.skipCleaned()).orElse(null);
         if (target == null) {
             writer.recordFailure(plan.batchId(), "A product no longer has a photo to work from (removed, or already cleaned).");
@@ -80,6 +104,9 @@ public class ImageCleanupRunner {
         boolean quota = false;
         try {
             GeminiImageClient.Image reference = gemini.download(target.referenceUrl());
+            if (plan.describe() && described.add(target.productId())) {
+                draftDescription(plan, target, reference);
+            }
             for (PhotoView view : plan.views()) {
                 String prompt = prompts.build(target.displayName(), view, plan.note(), config.getBackgroundHex());
                 GeminiImageClient.Image edited = gemini.edit(reference, prompt);

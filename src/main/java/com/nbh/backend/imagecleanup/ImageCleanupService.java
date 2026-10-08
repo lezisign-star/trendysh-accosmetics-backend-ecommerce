@@ -34,26 +34,33 @@ public class ImageCleanupService {
 
     public record BatchDto(UUID id, ImageCleanupBatch.Status status, ImageCleanupBatch.PublishMode publishMode,
                            int imagesPerProduct, List<String> views, String note, int requestedCount,
-                           int succeededCount, int failedCount, long pendingDrafts, String lastError, Instant createdAt) {
-        static BatchDto from(ImageCleanupBatch b, long pendingDrafts) {
+                           int succeededCount, int failedCount, long pendingDrafts, boolean writeDescriptions,
+                           int descriptionsDrafted, long pendingDescriptions, String lastError, Instant createdAt) {
+        static BatchDto from(ImageCleanupBatch b, long pendingDrafts, long pendingDescriptions) {
             List<String> views = b.getViews() == null || b.getViews().isBlank()
                     ? List.of() : Arrays.asList(b.getViews().split(","));
             return new BatchDto(b.getId(), b.getStatus(), b.getPublishMode(), b.getImagesPerProduct(), views, b.getNote(),
-                    b.getRequestedCount(), b.getSucceededCount(), b.getFailedCount(), pendingDrafts, b.getLastError(),
-                    b.getCreatedAt());
+                    b.getRequestedCount(), b.getSucceededCount(), b.getFailedCount(), pendingDrafts, b.isWriteDescriptions(),
+                    b.getDescriptionsDrafted(), pendingDescriptions, b.getLastError(), b.getCreatedAt());
         }
     }
 
     public record StatusDto(boolean geminiConfigured, boolean cloudinaryConfigured, long candidates,
                             int maxImagesPerProduct, int defaultImagesPerProduct, String backgroundHex,
-                            List<ViewDto> views, int maxNoteLength, int draftDays, long pendingDrafts) {}
+                            List<ViewDto> views, int maxNoteLength, int draftDays, long pendingDrafts,
+                            long pendingDescriptions, DescriptionLimits descriptionLimits) {}
+
+    /** The character limits descriptions are written and approved to, shown beside each field. */
+    public record DescriptionLimits(int shortDescription, int description, int highlightsCount, int highlight,
+                                    int ingredients, int howToUse, int seoTitle, int seoDescription) {}
 
     /**
      * What a run was asked for. {@code views} are {@link PhotoView} keys; when none are given the first
      * {@code imagesPerProduct} views are used (3 if that is missing too). {@code publishNow} false (the default) holds the
      * photos as drafts.
      */
-    public record RunOptions(List<String> views, Integer imagesPerProduct, String note, boolean publishNow) {}
+    public record RunOptions(List<String> views, Integer imagesPerProduct, String note, boolean publishNow,
+                             boolean describe) {}
 
     private static final int DEFAULT_VIEW_COUNT = 3;
 
@@ -67,13 +74,18 @@ public class ImageCleanupService {
     private final ImageCleanupConfig config;
     private final ImageDraftService draftService;
     private final ImageAssetCleaner assetCleaner;
+    private final DescriptionDraftService descriptionService;
+    private final ProductDescriptionDraftRepository descriptionDrafts;
 
     public ImageCleanupService(ImageCleanupBatchRepository batches, ProductImageRepository images,
                                ProductVariantRepository variants, ImageDraftRepository drafts,
                                ImageCleanupWriter writer, ImageCleanupRunner runner, CloudinaryUploader cloudinary,
                                ImageCleanupConfig config, ImageDraftService draftService,
-                               ImageAssetCleaner assetCleaner) {
+                               ImageAssetCleaner assetCleaner, DescriptionDraftService descriptionService,
+                               ProductDescriptionDraftRepository descriptionDrafts) {
         this.assetCleaner = assetCleaner;
+        this.descriptionService = descriptionService;
+        this.descriptionDrafts = descriptionDrafts;
         this.batches = batches;
         this.images = images;
         this.variants = variants;
@@ -93,7 +105,11 @@ public class ImageCleanupService {
         return new StatusDto(config.geminiConfigured(), cloudinary.configured(),
                 images.countCleanupCandidates(ProductImage.ImageSource.AI_CLEANED),
                 config.getMaxImagesPerProduct(), DEFAULT_VIEW_COUNT, config.getBackgroundHex(), views,
-                ImageCleanupPromptBuilder.MAX_NOTE_LENGTH, draftService.draftDays(), draftService.pendingCount());
+                ImageCleanupPromptBuilder.MAX_NOTE_LENGTH, draftService.draftDays(), draftService.pendingCount(),
+                descriptionService.pendingCount(),
+                new DescriptionLimits(DescriptionCaps.SHORT_DESCRIPTION, DescriptionCaps.DESCRIPTION,
+                        DescriptionCaps.HIGHLIGHTS_COUNT, DescriptionCaps.HIGHLIGHT, DescriptionCaps.INGREDIENTS,
+                        DescriptionCaps.HOW_TO_USE, DescriptionCaps.SEO_TITLE, DescriptionCaps.SEO_DESCRIPTION));
     }
 
     /** Makes photos for the next {@code limit} options that have a real photo and haven't had any made yet. */
@@ -143,7 +159,7 @@ public class ImageCleanupService {
         PhotoView view = PhotoView.parse(draft.getViewKey()).orElse(PhotoView.CLEAN);
         String effectiveNote = note == null ? draft.getNote() : note;
         return startForOption(draft.getVariantId(), draft.getReferenceImageId(),
-                new RunOptions(List.of(view.name()), null, effectiveNote, false), staffId);
+                new RunOptions(List.of(view.name()), null, effectiveNote, false, false), staffId);
     }
 
     private BatchDto start(List<UUID> variantIds, UUID sourceImageId, boolean skipCleaned, RunOptions options, UUID staffId) {
@@ -164,12 +180,14 @@ public class ImageCleanupService {
         batch.setImagesPerProduct(views.size());
         batch.setViews(views.stream().map(Enum::name).collect(Collectors.joining(",")));
         batch.setNote(note);
+        batch.setWriteDescriptions(options.describe());
         batch.setPublishMode(mode);
         batch.setRequestedCount(variantIds.size());
         batch.setTriggeredByUserId(staffId);
         batch = batches.saveAndFlush(batch);
-        runner.run(new ImageCleanupRunner.Plan(batch.getId(), variantIds, sourceImageId, views, note, mode, skipCleaned));
-        return BatchDto.from(batch, 0);
+        runner.run(new ImageCleanupRunner.Plan(batch.getId(), variantIds, sourceImageId, views, note, mode, skipCleaned,
+                options.describe()));
+        return BatchDto.from(batch, 0, 0);
     }
 
     /** The views to make: the ticked ones, else the first few; never more than the limit. */
@@ -199,13 +217,18 @@ public class ImageCleanupService {
         Map<UUID, Long> pending = drafts.countByBatch().stream()
                 .collect(Collectors.toMap(ImageDraftRepository.BatchDraftCount::getBatchId,
                         ImageDraftRepository.BatchDraftCount::getDrafts));
+        Map<UUID, Long> pendingText = descriptionDrafts.countByBatch().stream()
+                .collect(Collectors.toMap(ProductDescriptionDraftRepository.BatchCount::getBatchId,
+                        ProductDescriptionDraftRepository.BatchCount::getDrafts));
         return batches.recent(PageRequest.of(0, 50)).stream()
-                .map(b -> BatchDto.from(b, pending.getOrDefault(b.getId(), 0L))).toList();
+                .map(b -> BatchDto.from(b, pending.getOrDefault(b.getId(), 0L), pendingText.getOrDefault(b.getId(), 0L)))
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public BatchDto get(UUID id) {
-        return batches.findById(id).map(b -> BatchDto.from(b, drafts.countByBatchId(b.getId())))
+        return batches.findById(id).map(b -> BatchDto.from(b, drafts.countByBatchId(b.getId()),
+                descriptionDrafts.countByBatchId(b.getId())))
                 .orElseThrow(() -> new NotFoundException("No cleanup batch: " + id));
     }
 
@@ -224,6 +247,7 @@ public class ImageCleanupService {
         }
         // Through the asset cleaner, not straight to Cloudinary: a duplicated product's photo may point at the same file.
         writer.undo(id).forEach(r -> assetCleaner.releaseKnown(r.url(), r.publicId()));
+        descriptionService.discardBatch(id);
         return get(id);
     }
 }

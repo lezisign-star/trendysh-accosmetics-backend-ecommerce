@@ -141,7 +141,9 @@ public class CatalogService {
                 primary != null ? primary.getSlug() : null,
                 primaryParent != null ? primaryParent.getId() : null,
                 primaryParent != null ? primaryParent.getName() : null,
-                primaryParent != null ? primaryParent.getSlug() : null);
+                primaryParent != null ? primaryParent.getSlug() : null,
+                com.nbh.backend.imagecleanup.DescriptionCaps.splitHighlights(product.getHighlights()),
+                product.getSeoTitle(), product.getSeoDescription());
     }
 
     private CatalogVariantCardDto toCard(ProductVariant v, PromoCampaign activeCampaign,
@@ -171,7 +173,8 @@ public class CatalogService {
                 rating != null ? rating.getAvgRating() : 0.0, rating != null ? rating.getReviewCount() : 0L,
                 soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO),
                 availableQty, v.getSku(), p.getDescription(),
-                (int) Math.max(0, sellableCount - 1), v.getWholesaleMinQty(), v.getWholesalePrice());
+                (int) Math.max(0, sellableCount - 1), v.getWholesaleMinQty(), v.getWholesalePrice(),
+                p.getShortDescription());
     }
 
     /**
