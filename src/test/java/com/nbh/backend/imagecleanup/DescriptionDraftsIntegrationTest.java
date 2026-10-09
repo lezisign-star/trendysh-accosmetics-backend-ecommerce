@@ -334,4 +334,27 @@ class DescriptionDraftsIntegrationTest {
         assertThat(status(jsonBody(post("/api/v1/admin/image-cleanup/descriptions/product/" + UUID.randomUUID()), "{}")))
                 .isEqualTo(404);
     }
+    @Test
+    void runsCanBePagedThroughNewestFirstWithATotal() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            ImageCleanupBatch b = new ImageCleanupBatch();
+            b.setStatus(ImageCleanupBatch.Status.COMPLETED);
+            batches.saveAndFlush(b);
+        }
+        JsonNode first = ok(get("/api/v1/admin/image-cleanup/batches/page").param("page", "0").param("size", "2"));
+        assertThat(first.get("content")).hasSize(2);
+        assertThat(first.get("totalElements").asInt()).isGreaterThanOrEqualTo(3);
+        assertThat(first.get("totalPages").asInt()).isGreaterThanOrEqualTo(2);
+
+        JsonNode second = ok(get("/api/v1/admin/image-cleanup/batches/page").param("page", "1").param("size", "2"));
+        assertThat(second.get("content").get(0).get("id").asText()).isNotEqualTo(first.get("content").get(0).get("id").asText());
+        // newest first across the page boundary
+        String a = first.get("content").get(1).get("createdAt").asText();
+        String b = second.get("content").get(0).get("createdAt").asText();
+        assertThat(java.time.Instant.parse(a)).isAfterOrEqualTo(java.time.Instant.parse(b));
+
+        JsonNode beyond = ok(get("/api/v1/admin/image-cleanup/batches/page").param("page", "9999").param("size", "2"));
+        assertThat(beyond.get("content")).isEmpty();
+    }
+
 }

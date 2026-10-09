@@ -1,5 +1,9 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-09 (paging) — runs can be paged
+
+`GET /admin/image-cleanup/batches/page?page=&size=` (default 10, max 50) returns a Spring page of runs newest first with `totalElements`/`totalPages`; `/batches` still returns the latest 50 as a plain list (the studio uses it to know whether a run is going). Test: `runsCanBePagedThroughNewestFirstWithATotal`. Full suite 888.
+
 ## 2026-10-08 (storefront rebuild) — the backend asks Render to rebuild the storefront every midnight
 
 Owner chose the backend over GitHub Actions (the workflow can only run from the repo's default branch, which is `main` = the coming-soon page). The storefront prerenders its public pages from the live catalogue at build time, so it only reflects new products/approved descriptions after a rebuild.

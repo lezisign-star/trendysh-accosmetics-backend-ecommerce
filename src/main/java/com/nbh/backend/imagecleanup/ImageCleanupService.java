@@ -255,6 +255,22 @@ public class ImageCleanupService {
                 .toList();
     }
 
+    /** One page of runs, newest first, with the total so staff can page back through all of them. */
+    @Transactional(readOnly = true)
+    public org.springframework.data.domain.Page<BatchDto> page(int page, int size) {
+        Map<UUID, Long> pending = drafts.countByBatch().stream()
+                .collect(Collectors.toMap(ImageDraftRepository.BatchDraftCount::getBatchId,
+                        ImageDraftRepository.BatchDraftCount::getDrafts));
+        Map<UUID, Long> pendingText = descriptionDrafts.countByBatch().stream()
+                .collect(Collectors.toMap(ProductDescriptionDraftRepository.BatchCount::getBatchId,
+                        ProductDescriptionDraftRepository.BatchCount::getDrafts));
+        PageRequest request = PageRequest.of(Math.max(0, page), Math.min(50, Math.max(1, size)));
+        List<BatchDto> rows = batches.recent(request).stream()
+                .map(b -> BatchDto.from(b, pending.getOrDefault(b.getId(), 0L), pendingText.getOrDefault(b.getId(), 0L)))
+                .toList();
+        return new org.springframework.data.domain.PageImpl<>(rows, request, batches.count());
+    }
+
     @Transactional(readOnly = true)
     public BatchDto get(UUID id) {
         return batches.findById(id).map(b -> BatchDto.from(b, drafts.countByBatchId(b.getId()),

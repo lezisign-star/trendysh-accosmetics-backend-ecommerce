@@ -99,6 +99,13 @@ public class ImageCleanupController {
         return service.recent();
     }
 
+    /** Runs a page at a time (newest first); {@code /batches} keeps returning the latest few for the running-check. */
+    @GetMapping("/batches/page")
+    public org.springframework.data.domain.Page<BatchDto> batchPage(@RequestParam(defaultValue = "0") int page,
+                                                                 @RequestParam(defaultValue = "10") int size) {
+        return service.page(page, size);
+    }
+
     @GetMapping("/batches/{id}")
     public BatchDto batch(@PathVariable UUID id) {
         return service.get(id);
