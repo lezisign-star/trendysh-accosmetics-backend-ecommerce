@@ -1,5 +1,11 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-10 (new-order ring + description model)
+
+- V60: `customer_order.alert_acknowledged_at/_by`; every existing order is marked seen so nothing rings on deploy. `GET /api/v1/order-alerts` (count, `upTo`, up to 20 oldest) and `POST /api/v1/order-alerts/stop` (`upTo` limits it to what the screen saw, so an order arriving meanwhile keeps ringing). Permission: ORDER_VIEW or ORDER_MANAGE_ALL. Stopping publishes the staff-only `ORDER_ALERTS` data topic. Tests: `OrderAlertIntegrationTest`.
+- Description model: Google closed `gemini-2.5-flash` to new users (404, owner's screenshot). Default is now `gemini-3.8-flash`, set by `GEMINI_DESCRIPTION_MODEL` (application.yml) if it moves again. The photo model (`gemini-2.5-flash-image`, `GEMINI_IMAGE_MODEL`) still worked in that run but will be retired the same way: watch for it.
+
+
 ## 2026-10-10 (orders) — parcel hand-off details (V59)
 
 - `customer_order`: `handoff_stage`, `handoff_reference`, `handoff_note`, `customer_informed_at`.
