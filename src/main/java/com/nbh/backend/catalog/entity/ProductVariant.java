@@ -37,6 +37,27 @@ public class ProductVariant extends BaseEntity {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    /** Short option shown by the variant picker ("Emerald Green / Large"); null = show {@link #variantName}. */
+    @Column(name = "option_label", length = 160)
+    private String optionLabel;
+
+    @Column(name = "option_color", length = 80)
+    private String optionColor;
+
+    @Column(name = "option_size", length = 80)
+    private String optionSize;
+
+    /** The picker's colour dot, "#RRGGBB"; null = none known. */
+    @Column(name = "swatch_hex", length = 9)
+    private String swatchHex;
+
+    /** Set on a variant the AI generated: the variant it was made from, and the run that made it. */
+    @Column(name = "generated_from_variant_id")
+    private java.util.UUID generatedFromVariantId;
+
+    @Column(name = "generation_batch_id")
+    private java.util.UUID generationBatchId;
+
     /** Position within its product on the editor page and the storefront's sibling strip. */
     @Column(nullable = false)
     private int sortOrder = 0;
@@ -127,9 +148,29 @@ public class ProductVariant extends BaseEntity {
      * with "Default" alone, so a product made in the editor was announced as "Gel polish ()".
      */
     public String displayLabel() {
-        String productName = product.getName();
-        return com.nbh.backend.catalog.dto.CatalogVariantCardDto.isMeaninglessName(variantName)
-                ? productName
-                : productName + " (" + variantName + ")";
+        String option = shortOption();
+        return option == null ? product.getName() : product.getName() + " (" + option + ")";
+    }
+
+    /**
+     * The option on its own, "Emerald Green" or "Large": the stored {@code optionLabel} when there is one (generated
+     * variants), else the variant's name with a leading product title and dash removed ("Pot Set – Emerald Green"), else
+     * the name as is. Null when the name says nothing (blank or "Default").
+     */
+    public String shortOption() {
+        if (optionLabel != null && !optionLabel.isBlank()) {
+            return optionLabel.trim();
+        }
+        if (com.nbh.backend.catalog.dto.CatalogVariantCardDto.isMeaninglessName(variantName)) {
+            return null;
+        }
+        String name = variantName.trim();
+        String title = product.getName() == null ? "" : product.getName().trim();
+        if (!title.isEmpty() && name.length() > title.length()
+                && name.toLowerCase(java.util.Locale.ROOT).startsWith(title.toLowerCase(java.util.Locale.ROOT))) {
+            String rest = name.substring(title.length()).replaceFirst("^[\\s\\u2013\\u2014:|-]+", "").trim();
+            return rest.isEmpty() ? name : rest;
+        }
+        return name;
     }
 }

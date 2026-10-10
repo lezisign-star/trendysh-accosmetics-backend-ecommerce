@@ -463,6 +463,10 @@ public class ProductService {
      * category so e.g. "Gel polish" under "Nails" gets its own prefix rather than sharing NAIL-
      * with every other nail product.
      */
+    public String nextSku(Product product) {
+        return generateSku(product);
+    }
+
     private String generateSku(Product product) {
         Category prefixSource = product.getCategories().isEmpty() ? null : product.getCategories().get(0);
         String prefix = prefixSource == null ? "SKU" : categoryPrefix(prefixSource.getSlug());

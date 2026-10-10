@@ -29,4 +29,18 @@ class ProductVariantLabelTest {
                     .isEqualTo("Gel polish");
         }
     }
+
+    @Test
+    void aGeneratedVariantNameThatStartsWithTheProductTitleIsNotRepeated() {
+        ProductVariant v = variant("Pot Set J9210", "Pot Set J9210 – Emerald Green");
+        assertThat(v.displayLabel()).isEqualTo("Pot Set J9210 (Emerald Green)");
+        assertThat(v.shortOption()).isEqualTo("Emerald Green");
+    }
+
+    @Test
+    void aStoredOptionLabelWinsOverTheName() {
+        ProductVariant v = variant("Pot Set", "Pot Set – Emerald Green / Large");
+        v.setOptionLabel("Emerald Green / Large");
+        assertThat(v.shortOption()).isEqualTo("Emerald Green / Large");
+    }
 }

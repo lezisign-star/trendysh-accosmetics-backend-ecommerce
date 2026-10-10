@@ -101,4 +101,19 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
 
     /** Batched version for a page of products — same batching reasoning as {@link #findByProductIdIn}. */
     List<ProductVariant> findByProductIdInAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNull(Collection<UUID> productIds);
+
+    /**
+     * Generated variants (see {@code variantgen}) that have no photo of their own and none waiting for review: the
+     * "needs images" list. Newest first.
+     */
+    @Query("""
+            SELECT v FROM ProductVariant v JOIN FETCH v.product p
+            WHERE v.deleted = false AND p.deleted = false AND v.generatedFromVariantId IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM ProductImage i WHERE i.variant = v)
+              AND NOT EXISTS (SELECT 1 FROM com.nbh.backend.imagecleanup.ImageDraft d WHERE d.variantId = v.id)
+            ORDER BY v.createdAt DESC
+            """)
+    List<ProductVariant> findGeneratedNeedingImages();
+
+    List<ProductVariant> findByGenerationBatchId(UUID generationBatchId);
 }

@@ -1,5 +1,20 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+
+## 2026-10-10 (generate variants) — one finished product -> N variants, AI-planned, named, described, photographed (V61)
+
+Owner: "prompt and answer a few questions, the rest automated", "go live by default, option to approve first", "a customer orders a variant only and staff must see which one".
+
+- **Model unchanged**: one `product`, many `product_variant`s (own SKU, price, photos). V61 adds `option_label`, `option_color`, `option_size`, `swatch_hex`, `generated_from_variant_id`, `generation_batch_id` to `product_variant` (all nullable). `ProductVariant.shortOption()` is the option on its own (stored label, else the name minus a leading product title); `displayLabel()` = "Product (Option)" and uses it, so a generated variant named "Pot Set – Emerald Green" is not announced twice.
+- **API** (`variantgen` package, PERM_PRODUCT_MANAGE, base `/api/v1/admin/variant-generation`): `POST /run` {productId, baseVariantId?, colors[], sizes[], prompt, price, baseOption, approveFirst} (everything but productId optional); `GET /runs/{batchId}` (batch + the variants it made); `POST /runs/{batchId}/publish` (approve-first runs); `GET /needs-images`; `POST /needs-images/run` {variantIds[] (empty = all), approveFirst}.
+- **Flow** (`VariantGenerationRunner`, async, rides on an `image_cleanup_batch` row so progress, drafts, review and undo are the photo studio's): colours/sizes given -> every colour x size (max 30); both empty -> Gemini text reads them from the prompt / product description (never invents); options the product already has are skipped (a re-run makes no duplicates). Gemini text then writes each variant's description and picks a swatch hex (invalid hex dropped). Variants are named "<full product title> – <option>", auto SKU, price = the shared one or the base's, stock none (received later through the normal stock flow). Photo per variant: the base variant's main photo recoloured / size-labelled by Gemini (`VariantPhotoPromptBuilder`: only colour, size wording and label text may change; the staff prompt is passed for label text).
+- **Go-live**: default = variants active and photos published at once. `approveFirst` = variants created hidden (`is_active=false`), photos as drafts in the Photo studio, `/publish` makes the variants visible. Descriptions are on the hidden variants (editable in the product editor) rather than a separate draft table.
+- **Photo failure**: the variant stays (live unless approve-first), no photo, and appears in `GET /needs-images` (generated variants with no photo and no waiting draft) with a retry that re-makes it from the base's photo. Gemini quota stops the remaining photos only. A base with no photo creates the variants and lists them all there.
+- **Orders**: `optionLabel` added to `AdminOrderDetailDto.Line` and `OrderItemDto`; card DTO gained `optionLabel` + `swatchHex`; order emails use `displayLabel()`.
+- Frontend (staging branch): "Variants" button on each product -> `GenerateVariantsDialog`; "Needs images" tab in the Photo studio; order screens show a "Variant: X" badge; storefront shows colour dots when every sibling has a swatch.
+- Tests: `VariantGenerationUnitTest`, `VariantGenerationIntegrationTest` (4: prompt-only colours, approve-first + publish, no-photo base + retry, no duplicates), `ProductVariantLabelTest` (+2). Full suite 908/908.
+- Not done / assumptions: one "approve first" switch covers variants + photos (no separate names/descriptions switch); size-only variants get the base photo with size wording updated by Gemini only where the product shows one in writing; undo of a run removes its published photos but leaves the variants.
+
 ## 2026-10-10 (orders by payment code; different amounts off)
 
 - `GET /api/v1/orders?paymentCode=WITH_CODE|NO_CODE|EXPIRED_NO_CODE` (400 for anything else): WITH_CODE = a claim exists or the order is Paid..Delivered; NO_CODE = Pending payment with no claim; EXPIRED_NO_CODE = Expired with no claim. Test: `OrderPaymentCodeTabsIntegrationTest`.

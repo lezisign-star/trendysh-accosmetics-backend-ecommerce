@@ -108,13 +108,16 @@ public record AdminOrderDetailDto(
      */
     public record Line(UUID itemId, UUID variantId, String sku, String productName, String variantName,
                        BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal, boolean wholesaleApplied,
-                       BigDecimal returnedQty, List<Line> components) {
+                       BigDecimal returnedQty, List<Line> components,
+                       /** The ordered colour/size/shade on its own, "Emerald Green"; null for a one-option product. */
+                       String optionLabel) {
         static Line from(CustomerOrderItem i, List<CustomerOrderItem> children) {
             return new Line(i.getId(), i.getVariant().getId(), i.getVariant().getSku(),
                     i.getVariant().getProduct().getName(), i.getVariant().getVariantName(),
                     i.getQty(), i.getUnitPrice(), i.getLineTotal(), i.isWholesaleApplied(),
                     i.getReturnedQty(),
-                    children.stream().map(c -> Line.from(c, List.of())).toList());
+                    children.stream().map(c -> Line.from(c, List.of())).toList(),
+                    i.getVariant().shortOption());
         }
     }
 

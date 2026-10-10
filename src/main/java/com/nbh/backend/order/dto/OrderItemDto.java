@@ -15,13 +15,15 @@ public record OrderItemDto(
         BigDecimal lineTotal,
         boolean wholesaleApplied,
         /** The catalogue product behind this line — what a customer review attaches to. */
-        UUID productId
+        UUID productId,
+        /** Which colour/size/shade was ordered, on its own ("Emerald Green"); null for a product with one option. */
+        String optionLabel
 ) {
     public static OrderItemDto from(CustomerOrderItem item) {
         return new OrderItemDto(
                 item.getVariant().getId(), item.getVariant().getSku(),
                 item.getVariant().getProduct().getName(), item.getVariant().getVariantName(),
                 item.getQty(), item.getUnitPrice(), item.getLineTotal(), item.isWholesaleApplied(),
-                item.getVariant().getProduct().getId());
+                item.getVariant().getProduct().getId(), item.getVariant().shortOption());
     }
 }

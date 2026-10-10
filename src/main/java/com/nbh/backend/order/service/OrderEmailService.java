@@ -182,9 +182,7 @@ public class OrderEmailService {
             if (item.getParentItem() != null) {
                 continue;
             }
-            String variant = item.getVariant().getVariantName();
-            String name = item.getVariant().getProduct().getName()
-                    + (variant == null || variant.isBlank() || "Default".equalsIgnoreCase(variant) ? "" : " (" + variant + ")")
+            String name = item.getVariant().displayLabel()
                     + " × " + item.getQty().stripTrailingZeros().toPlainString();
             lines.add(new Line(name, ksh(item.getLineTotal())));
         }

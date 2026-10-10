@@ -63,6 +63,11 @@ public class GeminiTextClient {
      * {@link GeminiImageClient.GeminiException}.
      */
     public JsonNode describe(GeminiImageClient.Image photo, String prompt) {
+        return ask(photo, prompt, schema());
+    }
+
+    /** As {@link #describe}, for any answer shape: {@code schema} is a Gemini response schema. */
+    public JsonNode ask(GeminiImageClient.Image photo, String prompt, Map<String, Object> schema) {
         if (!config.geminiConfigured()) {
             throw new GeminiImageClient.GeminiException("Gemini isn't configured — set GEMINI_API_KEY.", false);
         }
@@ -76,7 +81,7 @@ public class GeminiTextClient {
                 "contents", List.of(Map.of("parts", parts)),
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
-                        "responseSchema", schema(),
+                        "responseSchema", schema,
                         "temperature", 0.4));
         try {
             return attempt(body);

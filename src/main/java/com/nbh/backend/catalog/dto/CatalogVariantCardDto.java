@@ -65,7 +65,11 @@ public record CatalogVariantCardDto(
         Integer wholesaleMinQty,
         BigDecimal wholesalePrice,
         /** The product's one-line summary for listings; null when none was written. */
-        String shortDescription
+        String shortDescription,
+        /** The option on its own ("Emerald Green"), for the variant picker; null when the card shows only the product. */
+        String optionLabel,
+        /** The picker's colour dot "#RRGGBB", when the variant has a colour; null otherwise. */
+        String swatchHex
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */
     public static boolean isMeaninglessName(String variantName) {

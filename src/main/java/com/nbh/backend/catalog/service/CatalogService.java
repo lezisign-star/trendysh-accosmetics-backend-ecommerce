@@ -154,7 +154,8 @@ public class CatalogService {
         long sellableCount = sellableCountByProduct.getOrDefault(p.getId(), 1L);
         boolean hideName = sellableCount <= 1 || CatalogVariantCardDto.isMeaninglessName(v.getVariantName());
         String variantName = hideName ? null : v.getVariantName();
-        String displayName = variantName != null ? p.getName() + " — " + variantName : p.getName();
+        String optionLabel = hideName ? null : v.shortOption();
+        String displayName = optionLabel != null ? p.getName() + " — " + optionLabel : p.getName();
 
         // No cart-quantity context on a card, so BigDecimal.ZERO can never qualify for a wholesale
         // tier here — the tier is advertised separately via wholesaleMinQty/wholesalePrice below,
@@ -174,7 +175,7 @@ public class CatalogService {
                 soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO),
                 availableQty, v.getSku(), p.getDescription(),
                 (int) Math.max(0, sellableCount - 1), v.getWholesaleMinQty(), v.getWholesalePrice(),
-                p.getShortDescription());
+                p.getShortDescription(), optionLabel, v.getSwatchHex());
     }
 
     /**
