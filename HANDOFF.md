@@ -1,5 +1,11 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-10 (orders by payment code; different amounts off)
+
+- `GET /api/v1/orders?paymentCode=WITH_CODE|NO_CODE|EXPIRED_NO_CODE` (400 for anything else): WITH_CODE = a claim exists or the order is Paid..Delivered; NO_CODE = Pending payment with no claim; EXPIRED_NO_CODE = Expired with no claim. Test: `OrderPaymentCodeTabsIntegrationTest`.
+- `app.payments.allow-different-amount` (default false): `PaymentClaimService.submit` refuses a claim whose amount is not the order's, so an old open page cannot sneak one in. The note-required-to-approve rule stays for when it is switched on.
+
+
 ## 2026-10-10 (new-order ring + description model)
 
 - V60: `customer_order.alert_acknowledged_at/_by`; every existing order is marked seen so nothing rings on deploy. `GET /api/v1/order-alerts` (count, `upTo`, up to 20 oldest) and `POST /api/v1/order-alerts/stop` (`upTo` limits it to what the screen saw, so an order arriving meanwhile keeps ringing). Permission: ORDER_VIEW or ORDER_MANAGE_ALL. Stopping publishes the staff-only `ORDER_ALERTS` data topic. Tests: `OrderAlertIntegrationTest`.

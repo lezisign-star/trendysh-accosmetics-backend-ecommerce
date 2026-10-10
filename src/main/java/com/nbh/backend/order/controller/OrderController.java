@@ -69,7 +69,14 @@ public class OrderController {
                                        @RequestParam(defaultValue = "false") boolean needsAttentionOnly,
                                        @RequestParam(defaultValue = "false") boolean queue,
                                        @RequestParam(required = false) String pickupPlace,
+                                       @RequestParam(required = false) String paymentCode,
                                        @PageableDefault(size = 20) Pageable pageable) {
+        // The payment-code tabs: WITH_CODE (a code was entered, or the order is already paid), NO_CODE (placed,
+        // still waiting for a code) and EXPIRED_NO_CODE (the window closed with no code ever entered).
+        String codeFilter = (paymentCode == null || paymentCode.isBlank()) ? null : paymentCode.trim().toUpperCase();
+        if (codeFilter != null && !PAYMENT_CODE_FILTERS.contains(codeFilter)) {
+            throw new IllegalArgumentException("paymentCode must be one of " + PAYMENT_CODE_FILTERS);
+        }
         String term = (q == null || q.isBlank()) ? null : q.trim();
         String phone = PhoneNumbers.searchFragment(term);
         // Only pickup orders can be narrowed to a shop, by the name the customer chose at checkout ("Simara Mall").
@@ -84,7 +91,7 @@ public class OrderController {
             return withPaymentCodes(orderRepository.searchQueue(open, term, phone, needsAttentionOnly, place, pageable)
                     .map(o -> o.withUrgency(now)));
         }
-        return withPaymentCodes(orderRepository.search(status, term, phone, needsAttentionOnly, place, pageable)
+        return withPaymentCodes(orderRepository.search(status, term, phone, needsAttentionOnly, place, codeFilter, pageable)
                 .map(o -> o.withUrgency(now)));
     }
 
@@ -114,6 +121,8 @@ public class OrderController {
      * queue (as do cancelled, failed and expired ones) — delivered is reached either by staff or by the
      * customer confirming on the track page, or automatically for TumaBoda deliveries.
      */
+    static final List<String> PAYMENT_CODE_FILTERS = List.of("WITH_CODE", "NO_CODE", "EXPIRED_NO_CODE");
+
     static final List<OrderStatus> QUEUE_STATUSES = List.of(
             OrderStatus.PENDING_PAYMENT, OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY);
 

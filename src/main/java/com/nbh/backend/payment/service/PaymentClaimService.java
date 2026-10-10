@@ -12,6 +12,7 @@ import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentClaimRepository;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.stock.service.StockReservationService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,14 @@ public class PaymentClaimService {
      * rule loose (2026-10-06): it only keeps out an empty box or "paid", and staff check every code against the statement.
      */
     static final int MIN_CODE_LENGTH = 6;
+
+    /**
+     * Whether a customer may report paying an amount other than the order's, or from someone else's name. Off
+     * (owner, 2026-10-10: "faded/disabled for now"): the pay page no longer offers it, and a claim for any other
+     * amount is refused here too, so an old open page cannot sneak one in.
+     */
+    @Value("${app.payments.allow-different-amount:false}")
+    private boolean allowDifferentAmount;
 
     private final PaymentRecordRepository paymentRecordRepository;
     private final PaymentClaimRepository claimRepository;
@@ -107,6 +116,10 @@ public class PaymentClaimService {
         if (payment.getOrder().getStatus() == OrderStatus.CANCELLED) {
             throw new ConflictException("This order was cancelled by the shop, so we can't take a payment code for it."
                     + " If you have already paid, please message us on WhatsApp and we'll refund you.");
+        }
+        if (!allowDifferentAmount && amount != null && amount.compareTo(payment.getAmount()) != 0) {
+            throw new IllegalArgumentException("Paying a different amount is not available online yet. Please pay the"
+                    + " exact amount shown, or message us on WhatsApp and we'll sort it out.");
         }
         if (claimRepository.existsByPaymentIdAndTransactionCodeIgnoreCase(payment.getId(), code)) {
             throw new ConflictException("You've already sent us that transaction code");

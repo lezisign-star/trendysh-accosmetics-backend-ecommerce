@@ -204,11 +204,26 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
               AND (:pickupPlace IS NULL
                    OR (o.fulfilmentType = com.nbh.backend.order.entity.FulfilmentType.PICKUP
                        AND LOWER(o.deliveryAddress) LIKE LOWER(CONCAT(CAST(:pickupPlace AS string), '%'))))
+              AND (:paymentCode IS NULL
+                   OR (CAST(:paymentCode AS string) = 'WITH_CODE'
+                       AND (o.status IN (com.nbh.backend.order.entity.OrderStatus.PAID,
+                                         com.nbh.backend.order.entity.OrderStatus.PICKING,
+                                         com.nbh.backend.order.entity.OrderStatus.READY,
+                                         com.nbh.backend.order.entity.OrderStatus.DISPATCHED,
+                                         com.nbh.backend.order.entity.OrderStatus.DELIVERED)
+                            OR EXISTS (SELECT 1 FROM PaymentClaim c WHERE c.payment.order = o)))
+                   OR (CAST(:paymentCode AS string) = 'NO_CODE'
+                       AND o.status = com.nbh.backend.order.entity.OrderStatus.PENDING_PAYMENT
+                       AND NOT EXISTS (SELECT 1 FROM PaymentClaim c WHERE c.payment.order = o))
+                   OR (CAST(:paymentCode AS string) = 'EXPIRED_NO_CODE'
+                       AND o.status = com.nbh.backend.order.entity.OrderStatus.EXPIRED
+                       AND NOT EXISTS (SELECT 1 FROM PaymentClaim c WHERE c.payment.order = o)))
             ORDER BY o.createdAt DESC
             """)
     Page<OrderSummaryDto> search(@Param("status") OrderStatus status, @Param("q") String q,
                                   @Param("phoneQ") String phoneQ, @Param("needsAttentionOnly") boolean needsAttentionOnly,
-                                  @Param("pickupPlace") String pickupPlace, Pageable pageable);
+                                  @Param("pickupPlace") String pickupPlace, @Param("paymentCode") String paymentCode,
+                                  Pageable pageable);
 
     /**
      * The fulfilment queue: only orders still waiting on staff ({@code statuses} — dispatched, delivered,

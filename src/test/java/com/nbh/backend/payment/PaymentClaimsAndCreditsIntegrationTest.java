@@ -138,8 +138,23 @@ class PaymentClaimsAndCreditsIntegrationTest {
     }
 
     @Test
+    void aClaimForADifferentAmountIsRefusedWhileThatIsSwitchedOff() {
+        assertThrows(IllegalArgumentException.class,
+                () -> claimService.submit(orderNo, reference, uniq("QX"), new BigDecimal("300"), null, "Jane"));
+        // The exact amount is still taken.
+        claimService.submit(orderNo, reference, uniq("QY"), new BigDecimal("500"), null, null);
+    }
+
+    @Test
     void aDifferentAmountCanOnlyBeApprovedWithANote() {
-        PaymentClaim claim = claimService.submit(orderNo, reference, uniq("QD"), new BigDecimal("300"), null, "Jane");
+        // Different amounts are off by default; this checks the rule that applies once they are switched on.
+        org.springframework.test.util.ReflectionTestUtils.setField(claimService, "allowDifferentAmount", true);
+        PaymentClaim claim;
+        try {
+            claim = claimService.submit(orderNo, reference, uniq("QD"), new BigDecimal("300"), null, "Jane");
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(claimService, "allowDifferentAmount", false);
+        }
 
         assertThrows(IllegalArgumentException.class, () -> claimService.approve(claim.getId(), "staff@example.com", null));
         assertThrows(IllegalArgumentException.class, () -> claimService.approve(claim.getId(), "staff@example.com", " "));
