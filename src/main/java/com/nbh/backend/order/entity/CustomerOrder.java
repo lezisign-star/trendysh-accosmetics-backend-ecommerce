@@ -142,6 +142,13 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "handoff_note", length = 300)
     private String handoffNote;
 
+    /** When a member of staff stopped this order's new-order ring (V60); null while it is still ringing. */
+    @Column(name = "alert_acknowledged_at")
+    private Instant alertAcknowledgedAt;
+
+    @Column(name = "alert_acknowledged_by", length = 120)
+    private String alertAcknowledgedBy;
+
     /** When staff told the shopper which transporter has it and where to collect; null until they have (V59). */
     @Column(name = "customer_informed_at")
     private Instant customerInformedAt;

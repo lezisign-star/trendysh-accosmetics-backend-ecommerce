@@ -40,6 +40,20 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @EntityGraph(attributePaths = {"items", "items.variant", "items.variant.product"})
     Optional<CustomerOrder> findById(UUID id);
 
+    /** Orders nobody has stopped the new-order ring for, oldest first. */
+    @Query("select o from CustomerOrder o where o.alertAcknowledgedAt is null order by o.createdAt asc")
+    List<CustomerOrder> unacknowledgedAlerts(org.springframework.data.domain.Pageable page);
+
+    @Query("select count(o) from CustomerOrder o where o.alertAcknowledgedAt is null")
+    long countUnacknowledgedAlerts();
+
+    /** Stops the ring for every order that arrived up to {@code upTo}; a newer one keeps ringing. */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("update CustomerOrder o set o.alertAcknowledgedAt = :now, o.alertAcknowledgedBy = :by "
+            + "where o.alertAcknowledgedAt is null and o.createdAt <= :upTo")
+    int acknowledgeAlertsUpTo(@Param("upTo") java.time.Instant upTo, @Param("now") java.time.Instant now,
+                              @Param("by") String by);
+
     /**
      * Phase 0 fix (2026-09-27), D2: every mutating call in {@code OrderFulfilmentService}
      * ({@code fulfil}/{@code startPicking}/{@code markReady}/{@code markDelivered}/

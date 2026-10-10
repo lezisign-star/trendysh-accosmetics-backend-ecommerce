@@ -7,11 +7,11 @@ package com.nbh.backend.common.event;
 public record DataChangedEvent(Topic topic) {
 
     public enum Topic {
-        DELIVERY_PLACES, DELIVERY_SUGGESTIONS, PRODUCTS, CATALOG, STOCK, IMAGE_CLEANUP;
+        DELIVERY_PLACES, DELIVERY_SUGGESTIONS, PRODUCTS, CATALOG, STOCK, IMAGE_CLEANUP, ORDER_ALERTS;
 
         /** Whether storefront visitors, not just staff, should be told. */
         public boolean isPublic() {
-            return this != DELIVERY_SUGGESTIONS && this != IMAGE_CLEANUP;
+            return this != DELIVERY_SUGGESTIONS && this != IMAGE_CLEANUP && this != ORDER_ALERTS;
         }
     }
 }
