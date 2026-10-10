@@ -3,6 +3,7 @@ package com.nbh.backend.order.controller;
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.dto.AdminOrderDetailDto;
 import com.nbh.backend.order.dto.AssignTransporterRequest;
+import com.nbh.backend.order.dto.HandoffRequest;
 import com.nbh.backend.order.dto.OrderDto;
 import com.nbh.backend.order.dto.OrderReturnRequest;
 import com.nbh.backend.payment.dto.PaymentCodeStatus;
@@ -145,6 +146,24 @@ public class OrderController {
     @Transactional
     public OrderDto assignTransporter(@PathVariable java.util.UUID id, @Valid @RequestBody AssignTransporterRequest request) {
         return OrderDto.from(fulfilmentService.assignTransporter(id, request));
+    }
+
+    /** Where the parcel was left and its receipt/waybill number. Settable after dispatch too. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/handoff")
+    @Transactional
+    public AdminOrderDetailDto recordHandoff(@PathVariable java.util.UUID id, @Valid @RequestBody HandoffRequest request) {
+        fulfilmentService.recordHandoff(id, request);
+        return get(id);
+    }
+
+    /** Staff told the shopper which transporter has it and where to collect. */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/customer-informed")
+    @Transactional
+    public AdminOrderDetailDto customerInformed(@PathVariable java.util.UUID id) {
+        fulfilmentService.markCustomerInformed(id);
+        return get(id);
     }
 
     /**

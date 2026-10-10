@@ -132,6 +132,20 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "agreed_delivery_price", precision = 14, scale = 2)
     private BigDecimal agreedDeliveryPrice;
 
+    /** Where a phone-arranged parcel was left (stage, office, counter) and the receipt/waybill number the transporter gave (V59). */
+    @Column(name = "handoff_stage", length = 200)
+    private String handoffStage;
+
+    @Column(name = "handoff_reference", length = 60)
+    private String handoffReference;
+
+    @Column(name = "handoff_note", length = 300)
+    private String handoffNote;
+
+    /** When staff told the shopper which transporter has it and where to collect; null until they have (V59). */
+    @Column(name = "customer_informed_at")
+    private Instant customerInformedAt;
+
     // ---- TumaBoda API delivery (V38). All null for orders arranged by phone. ----
 
     /** Where a TumaBoda rider drops off, from the address the customer picked at checkout. Present means "book through the API". */

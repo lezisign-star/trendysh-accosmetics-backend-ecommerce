@@ -43,6 +43,12 @@ public record AdminOrderDetailDto(
         String transporterName,
         String transporterPhone,
         BigDecimal agreedDeliveryPrice,
+        /** Where the parcel was left, its receipt/waybill number and a note for the shopper; null until recorded. */
+        String handoffStage,
+        String handoffReference,
+        String handoffNote,
+        /** When the shopper was told which transporter has it and where to collect; null until then. */
+        Instant customerInformedAt,
         Tumaboda tumaboda,
         List<Line> items,
         List<Payment> payments,
@@ -139,6 +145,7 @@ public record AdminOrderDetailDto(
                 o.getSubtotal(), o.getVatTotal(), o.getDeliveryFee(), o.getGrandTotal(),
                 o.getCreatedAt(), o.getPlacedAt(),
                 o.getTransporterName(), o.getTransporterPhone(), o.getAgreedDeliveryPrice(),
+                o.getHandoffStage(), o.getHandoffReference(), o.getHandoffNote(), o.getCustomerInformedAt(),
                 Tumaboda.from(o),
                 lines,
                 payments.stream().map(Payment::from).toList(),

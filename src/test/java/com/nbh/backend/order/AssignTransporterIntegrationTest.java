@@ -164,6 +164,50 @@ class AssignTransporterIntegrationTest {
         assertThat(okStaff(get("/api/v1/orders/" + orderId)).get("transporterPhone").asText()).isEqualTo("254733111222");
     }
 
+    /**
+     * 2026-10-10: the shop may pick the sacco for the shopper and tell them. The stage and receipt number are recorded,
+     * can still be added after the parcel was dispatched, and changing them clears the "informed" mark.
+     */
+    @Test
+    void theHandoffCanBeRecordedAfterDispatchAndChangingItAsksForTheShopperToBeToldAgain() throws Exception {
+        String orderId = paidOrder("DELIVERY_COURIER", "MATATU")[0];
+        String handoff = "/api/v1/orders/" + orderId + "/handoff";
+        String informed = "/api/v1/orders/" + orderId + "/customer-informed";
+
+        // Nothing to record until a transporter is assigned.
+        assertThat(statusStaff(post(handoff).contentType(MediaType.APPLICATION_JSON).content("{\"stage\":\"Tom Mboya St\"}")))
+                .isEqualTo(422);
+
+        okStaff(post("/api/v1/orders/" + orderId + "/assign-transporter").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"transporterName\":\"Nicco\",\"transporterPhone\":\"0733111222\",\"agreedPrice\":300}"));
+        okStaff(post("/api/v1/orders/" + orderId + "/fulfil"));
+
+        JsonNode saved = okStaff(post(handoff).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"stage\":\" Tom Mboya St \",\"reference\":\"WB-1042\",\"note\":\"Ask for the green parcel\"}"));
+        assertThat(saved.get("handoffStage").asText()).isEqualTo("Tom Mboya St");
+        assertThat(saved.get("handoffReference").asText()).isEqualTo("WB-1042");
+        assertThat(saved.get("customerInformedAt").isNull()).isTrue();
+
+        JsonNode told = okStaff(post(informed));
+        assertThat(told.get("customerInformedAt").isNull()).isFalse();
+
+        // Saving the same details again does not undo it; a changed receipt number does.
+        JsonNode same = okStaff(post(handoff).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"stage\":\"Tom Mboya St\",\"reference\":\"WB-1042\",\"note\":\"Ask for the green parcel\"}"));
+        assertThat(same.get("customerInformedAt").isNull()).isFalse();
+        JsonNode changed = okStaff(post(handoff).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"stage\":\"Tom Mboya St\",\"reference\":\"WB-1043\"}"));
+        assertThat(changed.get("customerInformedAt").isNull()).isTrue();
+        assertThat(changed.get("handoffNote").isNull()).isTrue();
+    }
+
+    @Test
+    void aPickupOrderHasNoHandoff() throws Exception {
+        String orderId = paidOrder("PICKUP", null)[0];
+
+        assertThat(statusStaff(post("/api/v1/orders/" + orderId + "/customer-informed"))).isEqualTo(422);
+    }
+
     @Test
     void assigningATransporterToAPickupOrderIsRejected() throws Exception {
         String orderId = paidOrder("PICKUP", null)[0];

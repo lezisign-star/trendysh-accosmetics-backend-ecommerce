@@ -8,6 +8,7 @@ import com.nbh.backend.common.event.OrderReadyEvent;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.common.util.PhoneNumbers;
 import com.nbh.backend.order.dto.AssignTransporterRequest;
+import com.nbh.backend.order.dto.HandoffRequest;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.FulfilmentType;
@@ -76,6 +77,11 @@ public class OrderFulfilmentService {
     /** {@code fulfil} (the real stock movement) can be triggered from any pre-dispatch stage — staff aren't forced through PICKING/READY if they don't use them. */
     private static final Set<OrderStatus> DISPATCHABLE_STATUSES =
             EnumSet.of(OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY);
+
+    /** When a hand-off can be recorded: from paid until delivered (the waybill often comes after dispatch). */
+    private static final Set<OrderStatus> HANDOFF_STATUSES =
+            EnumSet.of(OrderStatus.PAID, OrderStatus.PICKING, OrderStatus.READY, OrderStatus.DISPATCHED,
+                    OrderStatus.DELIVERED);
 
     /**
      * Anything DISPATCHED or later has physically left the building —
@@ -146,6 +152,58 @@ public class OrderFulfilmentService {
         order.setTransporterPhone(PhoneNumbers.normalize(transporterPhone));
         order.setAgreedDeliveryPrice(request.agreedPrice());
         return orderRepository.save(order);
+    }
+
+    /**
+     * Records where the parcel was left and the receipt number the transporter gave. Unlike the transporter itself this
+     * stays settable after dispatch: the waybill is often only in hand once the parcel has been dropped off. Whatever
+     * changes, the shopper has to be told again, so the "informed" mark is cleared.
+     */
+    @Transactional
+    public CustomerOrder recordHandoff(java.util.UUID orderId, HandoffRequest request) {
+        CustomerOrder order = phoneArrangedOrder(orderId);
+        String stage = blankToNull(request.stage());
+        String reference = blankToNull(request.reference());
+        String note = blankToNull(request.note());
+        boolean changed = !java.util.Objects.equals(stage, order.getHandoffStage())
+                || !java.util.Objects.equals(reference, order.getHandoffReference())
+                || !java.util.Objects.equals(note, order.getHandoffNote());
+        order.setHandoffStage(stage);
+        order.setHandoffReference(reference);
+        order.setHandoffNote(note);
+        if (changed) {
+            order.setCustomerInformedAt(null);
+        }
+        return orderRepository.save(order);
+    }
+
+    /** Staff have told the shopper which transporter has the parcel and where to collect it. */
+    @Transactional
+    public CustomerOrder markCustomerInformed(java.util.UUID orderId) {
+        CustomerOrder order = phoneArrangedOrder(orderId);
+        order.setCustomerInformedAt(java.time.Instant.now());
+        return orderRepository.save(order);
+    }
+
+    private CustomerOrder phoneArrangedOrder(java.util.UUID orderId) {
+        CustomerOrder order = orderRepository.lockById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+        if (order.getFulfilmentType() != FulfilmentType.DELIVERY_COURIER || order.isTumabodaApiDelivery()) {
+            throw new UnprocessableException("Order " + order.getOrderNo()
+                    + " is not delivered by a phone-arranged transporter, so there is no hand-off to record");
+        }
+        if (order.getTransporterName() == null) {
+            throw new UnprocessableException("Assign a transporter for " + order.getOrderNo() + " first");
+        }
+        if (!HANDOFF_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException("Order " + order.getOrderNo() + " is " + order.getStatus()
+                    + " — there is no hand-off to record yet");
+        }
+        return order;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     @Transactional

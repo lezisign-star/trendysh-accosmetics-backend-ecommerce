@@ -1,5 +1,11 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-10 (orders) — parcel hand-off details (V59)
+
+- `customer_order`: `handoff_stage`, `handoff_reference`, `handoff_note`, `customer_informed_at`.
+- `POST /api/v1/orders/{id}/handoff` (stage, reference, note, all optional; settable after dispatch) and `POST /api/v1/orders/{id}/customer-informed`; both need ORDER_MANAGE_ALL, only for phone-arranged courier orders with a transporter, Paid to Delivered. Changing any detail clears `customer_informed_at`. Returned in the admin order detail.
+- Tests in `AssignTransporterIntegrationTest`.
+
 ## 2026-10-10 (payments) — approving a claim for a different amount needs a note
 
 - `PaymentClaimService.approve` refuses (400) when the amount the customer reported differs from the order amount and no note is given; the note is kept as the claim's resolution note. Test: `aDifferentAmountCanOnlyBeApprovedWithANote`.
