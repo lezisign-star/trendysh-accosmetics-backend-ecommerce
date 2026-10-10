@@ -27,8 +27,8 @@ import java.util.UUID;
 @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
 public class VariantGenerationController {
 
-    public record RunRequest(UUID productId, UUID baseVariantId, @Size(max = 30) List<@Size(max = 60) String> colors,
-                             @Size(max = 30) List<@Size(max = 60) String> sizes, @Size(max = 2000) String prompt,
+    public record RunRequest(UUID productId, UUID baseVariantId, @Size(max = 150) List<@Size(max = 60) String> colors,
+                             @Size(max = 150) List<@Size(max = 60) String> sizes, @Size(max = 2000) String prompt,
                              BigDecimal price, @Size(max = 80) String baseOption, boolean approveFirst) {}
 
     public record RetryRequest(@Size(max = 100) List<UUID> variantIds, boolean approveFirst) {}

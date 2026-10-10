@@ -53,6 +53,25 @@ public class VariantPlanner {
 
     /** One {@link Details} per combo, in the same order. */
     public List<Details> details(String productName, String productDescription, String note, List<Combo> combos) {
+        List<Details> all = new ArrayList<>();
+        for (int from = 0; from < combos.size(); from += CHUNK) {
+            List<Combo> part = combos.subList(from, Math.min(combos.size(), from + CHUNK));
+            try {
+                all.addAll(detailsOf(productName, productDescription, note, part));
+            } catch (com.nbh.backend.imagecleanup.GeminiImageClient.GeminiException e) {
+                if (e.isQuotaExceeded()) {
+                    throw e;
+                }
+                part.forEach(c -> all.add(new Details(null, null))); // that chunk gets no text; the variants are still made
+            }
+        }
+        return all;
+    }
+
+    /** Options per Gemini call: a hundred in one answer risks a cut-off reply. */
+    private static final int CHUNK = 40;
+
+    private List<Details> detailsOf(String productName, String productDescription, String note, List<Combo> combos) {
         Map<String, Object> str = Map.of("type", "STRING");
         Map<String, Object> item = Map.of("type", "OBJECT",
                 "properties", Map.of("index", Map.of("type", "INTEGER"), "swatchHex", str, "description", str),

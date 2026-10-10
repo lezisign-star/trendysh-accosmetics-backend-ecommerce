@@ -12,7 +12,7 @@ import java.util.Map;
  */
 public final class VariantCombos {
 
-    public static final int MAX_VARIANTS = 30;
+    public static final int MAX_VARIANTS = 150;
 
     /** One option to create; either part may be null (a colour-only or size-only variant). */
     public record Combo(String color, String size) {
