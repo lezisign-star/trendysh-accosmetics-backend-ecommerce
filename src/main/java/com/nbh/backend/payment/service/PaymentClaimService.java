@@ -143,6 +143,15 @@ public class PaymentClaimService {
     public PaymentClaim approve(UUID claimId, String staffEmail, String note) {
         PaymentClaim claim = lockPending(claimId);
         PaymentRecord payment = claim.getPayment();
+        // Approving marks the whole order paid, so when the customer reported a different amount the person
+        // approving has to say what they agreed (balance in cash, part payment accepted) and it is kept.
+        if (claim.getAmountClaimed() != null && payment.getAmount() != null
+                && claim.getAmountClaimed().compareTo(payment.getAmount()) != 0
+                && (note == null || note.isBlank())) {
+            throw new IllegalArgumentException("The customer reported paying " + claim.getAmountClaimed().toPlainString()
+                    + " but the order is " + payment.getAmount().toPlainString()
+                    + ". Add a note saying what you agreed before approving");
+        }
         // confirmSuccess is idempotent on an already-SUCCESS payment and throws (rolling this whole
         // approval back) if the hold already lapsed, in which case staff must re-check stock first.
         paymentService.confirmSuccess(payment.getId(), claim.getTransactionCode(),

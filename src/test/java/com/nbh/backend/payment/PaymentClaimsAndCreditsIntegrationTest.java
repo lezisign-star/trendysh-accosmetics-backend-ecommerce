@@ -138,6 +138,18 @@ class PaymentClaimsAndCreditsIntegrationTest {
     }
 
     @Test
+    void aDifferentAmountCanOnlyBeApprovedWithANote() {
+        PaymentClaim claim = claimService.submit(orderNo, reference, uniq("QD"), new BigDecimal("300"), null, "Jane");
+
+        assertThrows(IllegalArgumentException.class, () -> claimService.approve(claim.getId(), "staff@example.com", null));
+        assertThrows(IllegalArgumentException.class, () -> claimService.approve(claim.getId(), "staff@example.com", " "));
+        assertEquals(OrderStatus.PENDING_PAYMENT, orderRepository.findByOrderNo(orderNo).orElseThrow().getStatus());
+
+        claimService.approve(claim.getId(), "staff@example.com", "balance paid in cash");
+        assertEquals(OrderStatus.PAID, orderRepository.findByOrderNo(orderNo).orElseThrow().getStatus());
+    }
+
+    @Test
     void rejectingNeedsAReasonAndLeavesTheOrderUnpaid() {
         PaymentClaim claim = claimService.submit(orderNo, reference, uniq("QR"), new BigDecimal("500"), null, null);
 

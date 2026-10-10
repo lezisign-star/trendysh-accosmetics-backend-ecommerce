@@ -1,5 +1,9 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-10 (payments) — approving a claim for a different amount needs a note
+
+- `PaymentClaimService.approve` refuses (400) when the amount the customer reported differs from the order amount and no note is given; the note is kept as the claim's resolution note. Test: `aDifferentAmountCanOnlyBeApprovedWithANote`.
+
 ## 2026-10-09 (paging) — runs can be paged
 
 `GET /admin/image-cleanup/batches/page?page=&size=` (default 10, max 50) returns a Spring page of runs newest first with `totalElements`/`totalPages`; `/batches` still returns the latest 50 as a plain list (the studio uses it to know whether a run is going). Test: `runsCanBePagedThroughNewestFirstWithATotal`. Full suite 888.
