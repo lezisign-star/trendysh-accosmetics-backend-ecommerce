@@ -13,6 +13,6 @@ public interface ImageCleanupBatchRepository extends JpaRepository<ImageCleanupB
 
     List<ImageCleanupBatch> findByStatus(ImageCleanupBatch.Status status);
 
-    @Query("SELECT b FROM ImageCleanupBatch b ORDER BY b.createdAt DESC")
+    @Query("SELECT b FROM ImageCleanupBatch b ORDER BY b.createdAt DESC, b.id DESC")
     List<ImageCleanupBatch> recent(Pageable pageable);
 }
