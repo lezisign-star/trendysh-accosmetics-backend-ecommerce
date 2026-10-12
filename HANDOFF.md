@@ -24,7 +24,7 @@ Plan phase 6. Products made before variants v2 tell their variants apart only by
   - leave
   - one-variant and already-tidy products not listed
   - a bad dot or a stranger variant gives 400 with nothing saved, plus the attention item
-  - Full suite: 1011/1011 before the real-data suggestion test was added; that class then passed 6/6. Verified live on the QA copy: 35 products listed, Acrylic Powder Set saved as Clear/Pink/White 100g (the shop then had its colours and size), Beauty Blender Sponge left as it is.
+  - Full suite: 1012/1012 in the end. The last full run caught a clash in this phase's own test data: a variant named like a demo product ("Chrome Mirror Gel Polish - Red") tripped `MockDataToggleIntegrationTest`, which checks no demo names show while demo data is off. The test now uses "Chrome Shine Gel - Red"; the two leftover rows in the shared test database were renamed the same way. Both classes then passed (6/6 each). Verified live on the QA copy: 35 products listed, Acrylic Powder Set saved as Clear/Pink/White 100g (the shop then had its colours and size), Beauty Blender Sponge left as it is.
 
 
 ## 2026-10-12 (variants v2, phase 5, backend side) — basket lines say which colour and size

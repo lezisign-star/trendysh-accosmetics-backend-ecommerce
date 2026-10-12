@@ -103,7 +103,7 @@ class TidyOptionsIntegrationTest {
     /** Names the shop's own data really has (seen on the QA copy). */
     @Test
     void aSizeInsideAPartIsSplitOffAndTheColourComesFromTheLastPartThatNamesOne() throws Exception {
-        JsonNode p = product("Clear 100g", "Pink 100g", "Chrome Mirror Gel Polish - Red");
+        JsonNode p = product("Clear 100g", "Pink 100g", "Chrome Shine Gel - Red");
         JsonNode listed = listed(p).orElseThrow();
 
         assertThat(row(listed, 0).get("color").asText()).isEqualTo("Clear");
