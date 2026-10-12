@@ -126,7 +126,15 @@ public class GeminiImageClient {
         }
     }
 
+    /** Shared with every other Gemini caller (see {@link GeminiLimiter}); optional so hand-built instances still work. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GeminiLimiter limiter;
+
     private Image attempt(Object[] parts) {
+        return limiter == null ? attemptNow(parts) : limiter.call(() -> attemptNow(parts));
+    }
+
+    private Image attemptNow(Object[] parts) {
         String url = config.getGeminiBaseUrl() + "/v1beta/models/" + config.getGeminiModel() + ":generateContent";
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);

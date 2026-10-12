@@ -60,6 +60,14 @@ app:
     # write (which, unlike an admin edit, announces nothing) and then read the storefront straight away.
     # The cache's own tests switch it on explicitly.
     page-cache-ttl-ms: 0
+  # No rate limit against the Gemini stand-ins (a real key keeps the default).
+  gemini:
+    requests-per-minute: 0
+  # The variant-job poller is held off for an hour like the other background sweepers: tests call pollOnce() themselves
+  # so they decide exactly when a job is picked up (and can fake a restart in between).
+  variant-jobs:
+    initial-delay-ms: 3600000
+    quota-pause-minutes: 15
 
 logging:
   level:

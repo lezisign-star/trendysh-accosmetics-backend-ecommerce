@@ -1,19 +1,28 @@
 package com.nbh.backend.catalog.service;
 
+import com.nbh.backend.catalog.entity.ColorFamily;
+import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductOptionValue;
 import com.nbh.backend.catalog.entity.ProductOptionValue.Kind;
 import com.nbh.backend.catalog.entity.ProductVariant;
+import com.nbh.backend.catalog.repository.ProductImageRepository;
 import com.nbh.backend.catalog.repository.ProductOptionValueRepository;
+import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.common.exception.ConflictException;
+import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.variantgen.VariantCombos;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -38,10 +47,180 @@ public class ProductOptionsService {
 
     private final ProductOptionValueRepository options;
     private final ProductVariantRepository variants;
+    private final ProductRepository products;
+    private final ProductImageRepository images;
 
-    public ProductOptionsService(ProductOptionValueRepository options, ProductVariantRepository variants) {
+    public ProductOptionsService(ProductOptionValueRepository options, ProductVariantRepository variants,
+                                 ProductRepository products, ProductImageRepository images) {
         this.options = options;
         this.variants = variants;
+        this.products = products;
+        this.images = images;
+    }
+
+    /** One colour or size as the staff screens see it, with how many of the product's variants have it. */
+    public record OptionDto(UUID id, Kind kind, String value, int position, String swatchHex, String colorFamily,
+                            String effectiveColorFamily, String sizeLabelText, UUID sizePhotoImageId, int variantCount) {}
+
+    /**
+     * A change to one colour or size. Every field is optional: null = leave it, "" = clear it (except {@code value},
+     * which can only be renamed). {@code swatchHex} and {@code colorFamily} are for colours, {@code sizeLabelText} and
+     * {@code sizePhotoImageId} for sizes.
+     */
+    public record OptionChange(String value, String swatchHex, String colorFamily, String sizeLabelText,
+                               String sizePhotoImageId) {}
+
+    /** The product's colours then its sizes, each in shop order. */
+    @Transactional(readOnly = true)
+    public List<OptionDto> list(UUID productId) {
+        requireProduct(productId);
+        List<ProductVariant> live = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
+        return options.findByProductIdOrderByKindAscPositionAsc(productId).stream()
+                .map(o -> toDto(o, live))
+                .toList();
+    }
+
+    /**
+     * Staff's change to one colour or size, applied to every variant that has it, so a colour is renamed, re-dotted or
+     * re-filed in one go across all its sizes. A rename also renames each variant whose name is still the one the
+     * generator gave it ("Lipstick – Rubby Red / 50ml"); a name staff wrote themselves is left alone. Renaming onto a
+     * value the product already has is refused rather than merging two options without asking.
+     */
+    @Transactional
+    public OptionDto update(UUID productId, UUID optionId, OptionChange change) {
+        Product product = requireProduct(productId);
+        ProductOptionValue row = options.findById(optionId).filter(o -> o.getProductId().equals(productId))
+                .orElseThrow(() -> new NotFoundException("That colour or size is not on this product."));
+        boolean color = row.getKind() == Kind.COLOR;
+        if (!color && (change.swatchHex() != null || change.colorFamily() != null)) {
+            throw new IllegalArgumentException("A size has no colour dot or colour family.");
+        }
+        if (color && (change.sizeLabelText() != null || change.sizePhotoImageId() != null)) {
+            throw new IllegalArgumentException("Label text and a size photo belong to a size, not a colour.");
+        }
+        List<ProductVariant> live = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
+        Function<ProductVariant, String> valueOf = color ? ProductVariant::getOptionColor : ProductVariant::getOptionSize;
+        String oldKey = key(row.getValue());
+        List<ProductVariant> having = live.stream().filter(v -> oldKey.equals(key(valueOf.apply(v)))).toList();
+
+        if (change.value() != null) {
+            String renamed = clean(change.value());
+            if (renamed == null) {
+                throw new IllegalArgumentException("A " + (color ? "colour" : "size") + " needs a name.");
+            }
+            boolean taken = options.findByProductIdOrderByKindAscPositionAsc(productId).stream()
+                    .anyMatch(o -> o.getKind() == row.getKind() && !o.getId().equals(optionId)
+                            && key(o.getValue()).equals(key(renamed)));
+            if (taken) {
+                throw new ConflictException("This product already has the " + (color ? "colour" : "size") + " \""
+                        + renamed + "\". Rename it to something else, or move its variants to that one in the editor.");
+            }
+            for (ProductVariant v : having) {
+                String oldLabel = v.getOptionLabel();
+                if (color) {
+                    v.setOptionColor(renamed);
+                } else {
+                    v.setOptionSize(renamed);
+                }
+                String newLabel = new VariantCombos.Combo(v.getOptionColor(), v.getOptionSize()).label();
+                if (oldLabel != null && v.getVariantName() != null
+                        && v.getVariantName().equals(VariantCombos.variantName(product.getName(), oldLabel))) {
+                    v.setVariantName(VariantCombos.variantName(product.getName(), newLabel));
+                }
+                v.setOptionLabel(newLabel);
+            }
+            row.setValue(renamed);
+        }
+        if (change.swatchHex() != null) {
+            String hex = null;
+            if (!change.swatchHex().isBlank()) {
+                hex = VariantCombos.normaliseHex(change.swatchHex());
+                if (hex == null) {
+                    throw new IllegalArgumentException("\"" + change.swatchHex().trim() + "\" is not a colour like #9B111E");
+                }
+            }
+            row.setSwatchHex(hex);
+            for (ProductVariant v : having) {
+                v.setSwatchHex(hex);
+            }
+        }
+        if (change.colorFamily() != null) {
+            ColorFamily family = ColorFamily.parse(change.colorFamily());
+            String stored = family == null ? null : family.name();
+            row.setColorFamily(stored);
+            for (ProductVariant v : having) {
+                v.setColorFamily(stored);
+            }
+        }
+        if (change.sizeLabelText() != null) {
+            String text = change.sizeLabelText().replaceAll("\\s+", " ").trim();
+            if (text.length() > 60) {
+                throw new IllegalArgumentException("Label text can be at most 60 characters.");
+            }
+            row.setSizeLabelText(text.isEmpty() ? null : text);
+        }
+        if (change.sizePhotoImageId() != null) {
+            UUID photo = null;
+            if (!change.sizePhotoImageId().isBlank()) {
+                try {
+                    photo = UUID.fromString(change.sizePhotoImageId().trim());
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException("That is not a photo of this product.");
+                }
+                UUID id = photo;
+                images.findById(id).filter(i -> i.getProduct().getId().equals(productId))
+                        .orElseThrow(() -> new IllegalArgumentException("That is not a photo of this product."));
+            }
+            row.setSizePhotoImageId(photo);
+        }
+        options.save(row);
+        variants.saveAll(having);
+        sync(productId);
+        return toDto(options.findById(optionId).orElseThrow(),
+                variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId));
+    }
+
+    /**
+     * Puts a product's colours (or sizes) in the order given. {@code ids} must be exactly that kind's list, so a screen
+     * that is out of date cannot drop or invent an option.
+     */
+    @Transactional
+    public List<OptionDto> reorder(UUID productId, Kind kind, List<UUID> ids) {
+        requireProduct(productId);
+        if (kind == null || ids == null) {
+            throw new IllegalArgumentException("Say which list (COLOR or SIZE) and give its options in order.");
+        }
+        List<ProductOptionValue> rows = options.findByProductIdOrderByKindAscPositionAsc(productId).stream()
+                .filter(o -> o.getKind() == kind).toList();
+        Set<UUID> given = new HashSet<>(ids);
+        Set<UUID> stored = new HashSet<>(rows.stream().map(ProductOptionValue::getId).toList());
+        if (given.size() != ids.size() || !given.equals(stored)) {
+            throw new IllegalArgumentException("The list has changed since it was loaded. Reload and try again.");
+        }
+        Map<UUID, ProductOptionValue> byId = new HashMap<>();
+        rows.forEach(r -> byId.put(r.getId(), r));
+        for (int i = 0; i < ids.size(); i++) {
+            byId.get(ids.get(i)).setPosition(i);
+        }
+        options.saveAll(rows);
+        options.flush();
+        sync(productId);
+        return list(productId);
+    }
+
+    private Product requireProduct(UUID productId) {
+        return products.findById(productId).filter(p -> !p.isDeleted())
+                .orElseThrow(() -> new NotFoundException("No such product."));
+    }
+
+    private static OptionDto toDto(ProductOptionValue o, List<ProductVariant> live) {
+        boolean color = o.getKind() == Kind.COLOR;
+        String k = key(o.getValue());
+        int count = (int) live.stream()
+                .filter(v -> k.equals(key(color ? v.getOptionColor() : v.getOptionSize()))).count();
+        ColorFamily effective = color ? o.effectiveColorFamily() : null;
+        return new OptionDto(o.getId(), o.getKind(), o.getValue(), o.getPosition(), o.getSwatchHex(), o.getColorFamily(),
+                effective == null ? null : effective.name(), o.getSizeLabelText(), o.getSizePhotoImageId(), count);
     }
 
     @Transactional

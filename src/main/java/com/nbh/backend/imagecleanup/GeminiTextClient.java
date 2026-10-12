@@ -129,7 +129,15 @@ public class GeminiTextClient {
         }
     }
 
+    /** Shared with every other Gemini caller (see {@link GeminiLimiter}); optional so hand-built instances still work. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GeminiLimiter limiter;
+
     private JsonNode attempt(Map<String, Object> body) {
+        return limiter == null ? attemptNow(body) : limiter.call(() -> attemptNow(body));
+    }
+
+    private JsonNode attemptNow(Map<String, Object> body) {
         String url = config.getGeminiBaseUrl() + "/v1beta/models/" + config.getDescriptionModel() + ":generateContent";
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);

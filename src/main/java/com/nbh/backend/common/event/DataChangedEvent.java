@@ -7,11 +7,14 @@ package com.nbh.backend.common.event;
 public record DataChangedEvent(Topic topic) {
 
     public enum Topic {
-        DELIVERY_PLACES, DELIVERY_SUGGESTIONS, PRODUCTS, CATALOG, STOCK, IMAGE_CLEANUP, ORDER_ALERTS;
+        DELIVERY_PLACES, DELIVERY_SUGGESTIONS, PRODUCTS, CATALOG, STOCK, IMAGE_CLEANUP, ORDER_ALERTS,
+        /** Variant generation jobs (V64): progress, pauses, finishes. Staff only. */
+        VARIANT_JOBS;
 
         /** Whether storefront visitors, not just staff, should be told. */
         public boolean isPublic() {
-            return this != DELIVERY_SUGGESTIONS && this != IMAGE_CLEANUP && this != ORDER_ALERTS;
+            return this != DELIVERY_SUGGESTIONS && this != IMAGE_CLEANUP && this != ORDER_ALERTS
+                    && this != VARIANT_JOBS;
         }
     }
 }

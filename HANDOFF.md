@@ -1,6 +1,100 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
 
+## 2026-10-12 (variants v2, phase 3) — variant jobs, the wizard's checks, colour/size management, bulk prices, Needs attention (V64)
+
+Plan sections 3.2–3.5 and 3.7 (`VARIANTS_PLAN.md`). Backend only; the admin screens are phase 4.
+
+- **Colour and size management** (owner: "are those colors manageable by the staff and admins?"). These are in `ProductOptionsController` and `ProductOptionsService`.
+  - `GET /api/v1/products/{id}/options` lists the colours then the sizes, in order, with `variantCount`, `effectiveColorFamily`, `sizeLabelText` and `sizePhotoImageId`.
+  - `PATCH /api/v1/products/{id}/options/{optionId}` takes {value?, swatchHex?, colorFamily?, sizeLabelText?, sizePhotoImageId?}. Null means leave it; "" means clear it.
+    - **A rename** applies to every variant with that value, including its label. A variant name is changed only when it is still the generated `VariantCombos.variantName(product, oldLabel)`; a name staff wrote is left alone.
+    - **Renaming onto a value the product already has gives 409.** The two are never merged without asking.
+    - **A dot or family change** applies to all of that colour's sizes.
+    - Using a colour field on a size, or the reverse, gives 400. A size photo must be one of this product's photos.
+  - `PUT /api/v1/products/{id}/options/order` {kind, ids} reorders a list. `ids` must be exactly that list; a stale or partial list gives 400. Each variant's `sizePosition` follows.
+- **Bulk prices:** `PATCH /api/v1/products/{id}/variants/prices` {variantIds, exactly one of setPrice / adjustBy / adjustPercent} (`VariantPriceService`).
+  - It's all or nothing: a result of 0 or less is refused, naming the variant.
+  - A percentage is rounded to the shilling.
+  - A variant without a price can be given one but not raised or lowered.
+- **V64:** `variant_job` (status, stage, request JSON, summary, heartbeat/lock, quota wait, counters) and `variant_job_item` (one per variant: colour, size, price, opening stock and cost, description and photo status, attempts, error).
+- **Wizard checks** (`VariantJobValidator`, pure; `POST /api/v1/admin/variant-jobs/preview` returns the plan and writes nothing):
+  - **Pricing:** the rule (SAME / STEP_UP / STEP_DOWN / PER_SIZE / PER_CELL), then each colour's +/-, then single-cell prices. The server works out every price. A screen price that disagrees gives an error.
+  - **Availability:** "only some colours in this size" and per-cell exclusions. "Every size comes in every colour" ticked while something is left out is an error.
+  - **Errors** (block Generate):
+    - a missing or repeated name
+    - an unknown colour or size in an exception
+    - no price, or a price of 0 or less
+    - an invalid dot or family
+    - fractional or negative opening stock
+    - nothing new to make, or more than 150
+    - no photo to work from
+    - the base's own option contradicting what's sent
+  - **Warnings** (allowed):
+    - already-existing combinations (skipped)
+    - a bigger size cheaper than a smaller one
+    - a price over 3× or under ⅓ of the median of its row or column
+    - opening stock without a cost
+    - two nearly identical dots (CIE76 ΔE < 5)
+    - a base variant with no colour or size, which won't show in the picker
+  - **The summary** lists the rule and each exception in words ("Gold Shimmer: +KSh 150 in every size", "Travel 1g: only Ruby Red, Nude Beige", "Not made: …").
+  - **The estimate** is variants, AI photo calls, description calls and minutes.
+- **Starting a job:** `POST /api/v1/admin/variant-jobs` re-checks the request and gives 422 with the plan while there are errors. Otherwise it saves a QUEUED job with one item per variant to make.
+- **The job engine:**
+  - **`VariantJobPoller`:** every `app.variant-jobs.poll-ms` (3 s) it claims as many jobs as there are free workers (`app.variant-jobs.workers`, 3) with `FOR UPDATE SKIP LOCKED`. It claims queued jobs, paused jobs whose wait is over, and running jobs whose heartbeat is older than `stale-heartbeat-minutes` (5, meaning the server restarted).
+  - **`VariantJobWorker`** runs the stages; each only does the items still PENDING.
+    1. **Create** (`VariantJobWriter.createAll`, one transaction, the product row locked):
+       - the variants, with SKU, name, colour/size/dot/family, price, the base's unit/VAT/weight, and hidden when approve-first
+       - opening stock through `VariantStockService.addOnHand`, as the staff member who started the job
+       - the list sync, then the dots, families, label text and size photos staff gave
+       - a combination the product gained since the preview is SKIPPED, not doubled
+    2. **Descriptions:** `VariantPlanner.details`, now also given the product photo, in chunks of 40.
+    3. **Photos** (`PhotoPlan`):
+       - one recolour per colour (and per starting photo; a size's own photo is used for that size)
+       - one "change only the printed size" edit per variant whose size has label text (`VariantPhotoPromptBuilder.labelOnly`)
+       - otherwise the variant gets its own photo row that **shares the colour's file**. A file is only deleted once no photo row uses it, so no re-upload is needed.
+       - A failed colour isn't asked for again for that colour's other sizes in the same run.
+  - **When the quota runs out**, the job becomes PAUSED_QUOTA for `quota-pause-minutes` (15), then carries on by itself. A failed photo or description never stops the rest.
+  - **Endings:**
+    - COMPLETED, or COMPLETED_WITH_ERRORS when something failed
+    - AWAITING_APPROVAL when approve-first; `/publish` makes the variants live
+    - CANCELLED; `/cancel` acts at once when waiting, or between items when working, and variants already made stay
+    - FAILED
+  - `/retry` puts the failed items back in the queue.
+  - Every change publishes the new staff-only live topic `VARIANT_JOBS`.
+- **The shared Gemini limiter** (`imagecleanup.GeminiLimiter`): every Gemini call, photo studio included, goes through one gate. It's at most `app.gemini.max-concurrent` (2) at a time and `app.gemini.requests-per-minute` (30) a minute; 0 means no rate limit (the test profile). Set it from the shop's Gemini plan.
+- **Colour suggestions:** `POST /api/v1/admin/variant-jobs/suggest-swatches` {names} (`SwatchSuggester`).
+  - About 70 everyday shade words, matched as whole words with the longest first ("Deep Ruby Red" → ruby), are answered at once.
+  - Only the rest go to Gemini, in one call. Without Gemini they come back with no suggestion.
+  - Clear, silver, gold and multi carry their family.
+- **Needs attention:** `GET /api/v1/admin/attention` (`attention.AttentionService`) is worked out from current state, never stored. It returns {count, items}; the count is CRITICAL + ACTION, INFO is shown but not counted. Each item has a title, detail, product, job, variant ids and actions (RETRY_JOB, OPEN_JOB, PUBLISH_JOB, UPLOAD_PHOTOS, ADD_STOCK). The items:
+
+  | When | Severity |
+  |---|---|
+  | A job failed | CRITICAL |
+  | A job is waiting for approval | ACTION |
+  | Photos failed | ACTION |
+  | Descriptions not written | ACTION |
+  | New live variants have never had any stock | ACTION |
+  | A job paused on the quota, with its resume time | INFO |
+
+  Jobs that finished more than 30 days ago, cancelled jobs and removed products don't raise items.
+- **Old generator:** `/api/v1/admin/variant-generation` still works and is marked superseded in its javadoc. Phase 4 moves the screens over.
+- **Changes from the plan, on purpose:**
+  - **Approve-first hides the variants** and attaches photos directly instead of making photo-studio drafts (3.7).
+  - **The sizes of one colour share its photo file**, each with its own row, instead of re-uploading.
+  - **A variant shows no picture until its photo is made.** The shop never borrows another option's photo (`PhotoOwnership`), so the plan's "show the product's photo until then" wasn't done.
+  - **The Needs attention items aren't filtered per permission.** The endpoint takes product view/manage or stock receive.
+  - **The quota wait is a fixed 15 minutes;** Gemini's Retry-After isn't read.
+- **Tests:**
+  - `ProductOptionManagementIntegrationTest` (9)
+  - `VariantJobValidatorTest` (15)
+  - `GeminiLimiterTest` (3)
+  - `VariantJobIntegrationTest` (11, through the real poller and worker against Gemini and Cloudinary stand-ins): a whole job; label text and size photos; errors give 422; approve-first; two jobs at once; the quota pause and resume without doubles; takeover after a "restart"; a failed photo, attention, retry; cancel; a combination added meanwhile is skipped; swatch suggestions.
+  - Full suite: 1003 on the local test database. The one failure in the last full run was `GeminiLimiterTest`'s timing check, which tested the wrong promise (each gap rather than "the i-th call no earlier than i gaps after the first"). It is fixed, the limiter now also waits out early wake-ups from `Thread.sleep` on Windows, and the test passed 5/5 alone. The architecture test (`StockReadPathArchitectureTest`) caught a stock-ledger query outside the stock package; the "has this variant ever had stock" check now uses `StockAvailabilityService.available`.
+- `VariantPriceService` also clears a sale or wholesale price that is no longer below the new price, as the product list's bulk price change does, and returns {variants, warnings}.
+
+
 ## 2026-10-12 (variants v2, phase 2) — each product's own colour and size list; the shop gets colour, size, family and brand (V63)
 
 Plan section 3.1 / 3.6, `VARIANTS_PLAN.md`. Backend only; no frontend change was needed (every new field is optional, and the current editor keeps working, see below).

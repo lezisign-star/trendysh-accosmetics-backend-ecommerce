@@ -56,4 +56,21 @@ public class VariantPhotoPromptBuilder {
         p.append("Square 1:1 composition, 1024x1024 pixels.");
         return p.toString();
     }
+
+    /**
+     * The variant jobs' second photo step (VARIANTS_PLAN.md 3.2): the colour is already right in the attached photo; only
+     * the size printed on the product or its packaging changes, to the text staff gave for that size.
+     */
+    public String labelOnly(String productName, String labelText, String backgroundHex) {
+        String text = labelText.replaceAll("\\s+", " ").trim();
+        return "The attached image is a catalogue photo of a product a shop sells: \"" + productName + "\". Make the photo "
+                + "of the same product in another size.\n\n"
+                + "THE ONLY THING THAT CHANGES: where the product or its packaging shows its size or capacity in writing "
+                + "(for example \"50ml\", \"3.5g\", \"Large\"), change that text to exactly \"" + text + "\", in the same "
+                + "font, colour, size and position as the text it replaces. If no size is written anywhere, change nothing.\n\n"
+                + "EVERYTHING ELSE stays exactly as in the photo: the colour, shape, proportions, parts, every other word, "
+                + "logo and graphic, the angle, framing, the " + backgroundHex + " backdrop, lighting and shadow. Do not add "
+                + "any text, watermark, logo or caption of your own.\n\n"
+                + "Square 1:1 composition, 1024x1024 pixels.";
+    }
 }

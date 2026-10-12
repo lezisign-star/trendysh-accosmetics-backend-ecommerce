@@ -53,11 +53,17 @@ public class VariantPlanner {
 
     /** One {@link Details} per combo, in the same order. */
     public List<Details> details(String productName, String productDescription, String note, List<Combo> combos) {
+        return details(productName, productDescription, note, combos, null);
+    }
+
+    /** As above, also showing Gemini the product's photo (null = none), so the text matches what the product is. */
+    public List<Details> details(String productName, String productDescription, String note, List<Combo> combos,
+                                 com.nbh.backend.imagecleanup.GeminiImageClient.Image photo) {
         List<Details> all = new ArrayList<>();
         for (int from = 0; from < combos.size(); from += CHUNK) {
             List<Combo> part = combos.subList(from, Math.min(combos.size(), from + CHUNK));
             try {
-                all.addAll(detailsOf(productName, productDescription, note, part));
+                all.addAll(detailsOf(productName, productDescription, note, part, photo));
             } catch (com.nbh.backend.imagecleanup.GeminiImageClient.GeminiException e) {
                 if (e.isQuotaExceeded()) {
                     throw e;
@@ -71,7 +77,8 @@ public class VariantPlanner {
     /** Options per Gemini call: a hundred in one answer risks a cut-off reply. */
     private static final int CHUNK = 40;
 
-    private List<Details> detailsOf(String productName, String productDescription, String note, List<Combo> combos) {
+    private List<Details> detailsOf(String productName, String productDescription, String note, List<Combo> combos,
+                                    com.nbh.backend.imagecleanup.GeminiImageClient.Image photo) {
         Map<String, Object> str = Map.of("type", "STRING");
         Map<String, Object> item = Map.of("type", "OBJECT",
                 "properties", Map.of("index", Map.of("type", "INTEGER"), "swatchHex", str, "description", str),
@@ -89,6 +96,7 @@ public class VariantPlanner {
         }
         String prompt = "You write variant text for Trendysh, a beauty and home-supplies shop in Nairobi. The product is \""
                 + productName + "\"." + (blank(productDescription) ? "" : " Its description: \"" + clip(productDescription, 1500) + "\".")
+                + (photo == null ? "" : " The attached photo shows the product; describe only what it and the text show.")
                 + "\n\nFor each numbered option below return:\n"
                 + "- index: the number.\n"
                 + "- swatchHex: for an option with a colour, the \"#RRGGBB\" that best shows that colour as a small dot; "
@@ -99,7 +107,7 @@ public class VariantPlanner {
                 + "Options:\n" + list
                 + (blank(note) ? "" : "\nShop's prompt (treat as true): \"" + clip(note, 1500) + "\"\n")
                 + "\nAnswer with the JSON object only.";
-        JsonNode a = gemini.ask(null, prompt, schema);
+        JsonNode a = gemini.ask(photo, prompt, schema);
         Details[] out = new Details[combos.size()];
         for (JsonNode v : a.path("variants")) {
             int i = v.path("index").asInt(-1);

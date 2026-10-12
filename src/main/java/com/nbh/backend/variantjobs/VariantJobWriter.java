@@ -1,0 +1,475 @@
+package com.nbh.backend.variantjobs;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nbh.backend.catalog.entity.ColorFamily;
+import com.nbh.backend.catalog.entity.Product;
+import com.nbh.backend.catalog.entity.ProductImage;
+import com.nbh.backend.catalog.entity.ProductOptionValue;
+import com.nbh.backend.catalog.entity.ProductVariant;
+import com.nbh.backend.catalog.repository.ProductImageRepository;
+import com.nbh.backend.catalog.repository.ProductOptionValueRepository;
+import com.nbh.backend.catalog.repository.ProductRepository;
+import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.catalog.service.ProductOptionsService;
+import com.nbh.backend.catalog.service.ProductService;
+import com.nbh.backend.common.event.DataChangedEvent;
+import com.nbh.backend.staff.entity.StaffUser;
+import com.nbh.backend.staff.repository.StaffUserRepository;
+import com.nbh.backend.stock.service.VariantStockService;
+import com.nbh.backend.variantgen.VariantCombos;
+import com.nbh.backend.variantjobs.VariantJob.Stage;
+import com.nbh.backend.variantjobs.VariantJob.Status;
+import com.nbh.backend.variantjobs.VariantJobItem.StepStatus;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.*;
+
+/** The database half of a variant job: each method is its own short transaction, kept apart from Gemini/Cloudinary calls. */
+@Service
+public class VariantJobWriter {
+
+    /** A photo the job can start from: the base variant's own main photo, or one of a size's photos. */
+    public record Source(UUID imageId, String url) {}
+
+    private final VariantJobRepository jobs;
+    private final VariantJobItemRepository items;
+    private final ProductRepository products;
+    private final ProductVariantRepository variants;
+    private final ProductImageRepository images;
+    private final ProductOptionValueRepository optionRows;
+    private final ProductOptionsService productOptions;
+    private final ProductService productService;
+    private final VariantStockService stock;
+    private final StaffUserRepository staff;
+    private final ObjectMapper json;
+    private final ApplicationEventPublisher events;
+
+    public VariantJobWriter(VariantJobRepository jobs, VariantJobItemRepository items, ProductRepository products,
+                            ProductVariantRepository variants, ProductImageRepository images,
+                            ProductOptionValueRepository optionRows, ProductOptionsService productOptions,
+                            ProductService productService, VariantStockService stock, StaffUserRepository staff,
+                            ObjectMapper json, ApplicationEventPublisher events) {
+        this.jobs = jobs;
+        this.items = items;
+        this.products = products;
+        this.variants = variants;
+        this.images = images;
+        this.optionRows = optionRows;
+        this.productOptions = productOptions;
+        this.productService = productService;
+        this.stock = stock;
+        this.staff = staff;
+        this.json = json;
+        this.events = events;
+    }
+
+    // ---------------------------------------------------------------- reading
+
+    public VariantJobRequest request(VariantJob job) {
+        try {
+            return json.readValue(job.getRequest(), VariantJobRequest.class);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("The job's saved request can't be read: " + e.getMessage(), e);
+        }
+    }
+
+    /** The base variant: the one asked for, else the product's first live variant that is not a kit. */
+    @Transactional(readOnly = true)
+    public Optional<ProductVariant> base(UUID productId, UUID baseVariantId) {
+        List<ProductVariant> live = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
+        return baseVariantId == null ? live.stream().filter(v -> !v.isKit()).findFirst()
+                : live.stream().filter(v -> v.getId().equals(baseVariantId)).findFirst();
+    }
+
+    /** The base variant's main photo (its own, else a photo not given to any option), or null. */
+    @Transactional(readOnly = true)
+    public Source basePhoto(UUID productId, UUID baseVariantId) {
+        List<ProductImage> own = images.findByVariantIdOrderBySortOrderAsc(baseVariantId);
+        ProductImage pick = own.stream().filter(ProductImage::isPrimary).findFirst().or(() -> own.stream().findFirst())
+                .orElse(null);
+        if (pick == null) {
+            List<ProductImage> loose = images.findByProductIdOrderBySortOrderAsc(productId).stream()
+                    .filter(i -> i.getVariant() == null).toList();
+            pick = loose.stream().filter(ProductImage::isPrimary).findFirst().or(() -> loose.stream().findFirst()).orElse(null);
+        }
+        return pick == null ? null : new Source(pick.getId(), pick.getUrl());
+    }
+
+    @Transactional(readOnly = true)
+    public Set<UUID> productImageIds(UUID productId) {
+        Set<UUID> ids = new HashSet<>();
+        images.findByProductIdOrderBySortOrderAsc(productId).forEach(i -> ids.add(i.getId()));
+        return ids;
+    }
+
+    @Transactional(readOnly = true)
+    public Map<UUID, String> imageUrls(Collection<UUID> imageIds) {
+        Map<UUID, String> out = new HashMap<>();
+        images.findAllById(imageIds).forEach(i -> out.put(i.getId(), i.getUrl()));
+        return out;
+    }
+
+    /** The combinations the product's live variants already are, keyed like {@link VariantJobValidator#cellKey}. */
+    @Transactional(readOnly = true)
+    public Set<String> existingCombos(UUID productId) {
+        Set<String> out = new HashSet<>();
+        for (ProductVariant v : variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId)) {
+            String c = ProductOptionsService.clean(v.getOptionColor());
+            String s = ProductOptionsService.clean(v.getOptionSize());
+            if (c != null || s != null) {
+                out.add(VariantJobValidator.cellKey(c, s));
+            }
+        }
+        return out;
+    }
+
+    // ---------------------------------------------------------------- claiming
+
+    /** Takes the next job a worker may run (see {@link VariantJobRepository#claimable}), marking it RUNNING. */
+    @Transactional
+    public Optional<UUID> claim(String workerId, Instant staleBefore) {
+        Instant now = Instant.now();
+        return jobs.claimable(now, staleBefore).map(job -> {
+            job.setStatus(Status.RUNNING);
+            job.setLockedBy(workerId);
+            job.setHeartbeatAt(now);
+            job.setNextAttemptAt(null);
+            if (job.getStartedAt() == null) {
+                job.setStartedAt(now);
+            }
+            jobs.save(job);
+            announce();
+            return job.getId();
+        });
+    }
+
+    @Transactional
+    public void heartbeat(UUID jobId) {
+        jobs.findById(jobId).ifPresent(j -> {
+            j.setHeartbeatAt(Instant.now());
+            jobs.save(j);
+        });
+    }
+
+    @Transactional(readOnly = true)
+    public boolean cancelRequested(UUID jobId) {
+        return jobs.findById(jobId).map(VariantJob::isCancelRequested).orElse(true);
+    }
+
+    // ---------------------------------------------------------------- step 1: create
+
+    /**
+     * Makes every variant the job still has to make, in one transaction (all or nothing, so a restart simply runs it
+     * again): SKU, name, colour/size/dot/family, price, the base's unit/VAT/weight, hidden when approve-first; opening
+     * stock posted as a receipt; the product's colour and size list updated with the dots, families, label text and
+     * size photos staff gave. A combination the product gained since the preview is skipped, not doubled. The product
+     * row is locked first, so two jobs for one product cannot both make the same combination.
+     */
+    @Transactional
+    public void createAll(UUID jobId) {
+        VariantJob job = jobs.findById(jobId).orElseThrow();
+        VariantJobRequest r = request(job);
+        jobs.lockProduct(job.getProductId());
+        Product product = products.findById(job.getProductId()).orElseThrow();
+        ProductVariant base = base(product.getId(), r.baseVariantId())
+                .orElseThrow(() -> new IllegalStateException("The product has no variant left to make the new ones from."));
+        StaffUser by = job.getCreatedBy() == null ? null : staff.findById(job.getCreatedBy()).orElse(null);
+
+        if (r.baseOption() != null && base.getOptionColor() == null && base.getOptionSize() == null) {
+            base.setOptionColor(ProductOptionsService.clean(r.baseOption().color()));
+            base.setOptionSize(ProductOptionsService.clean(r.baseOption().size()));
+            base.setSwatchHex(base.getOptionColor() == null ? null : hexOf(r, base.getOptionColor()));
+            base.setColorFamily(base.getOptionColor() == null ? null : familyOf(r, base.getOptionColor()));
+            variants.save(base);
+        }
+        Set<String> existing = existingCombos(product.getId());
+        if (base.getOptionColor() != null || base.getOptionSize() != null) {
+            existing.add(VariantJobValidator.cellKey(base.getOptionColor(), base.getOptionSize()));
+        }
+        int order = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(product.getId()).stream()
+                .mapToInt(ProductVariant::getSortOrder).max().orElse(-1) + 1;
+        int created = 0;
+        List<VariantJobItem> jobItems = items.findByJobIdOrderByPositionAsc(jobId);
+        for (VariantJobItem item : jobItems) {
+            if (item.getVariantId() != null) {
+                created++;
+                continue;
+            }
+            if (existing.contains(VariantJobValidator.cellKey(item.getColor(), item.getSize()))) {
+                item.setDescriptionStatus(StepStatus.SKIPPED);
+                item.setPhotoStatus(StepStatus.SKIPPED);
+                item.setLastError("The product already had this one when the job started, so it was not made again.");
+                continue;
+            }
+            ProductVariant v = new ProductVariant();
+            v.setProduct(product);
+            v.setSku(productService.nextSku(product));
+            String label = item.label();
+            v.setVariantName(VariantCombos.variantName(product.getName(), label));
+            v.setOptionLabel(label);
+            v.setOptionColor(item.getColor());
+            v.setOptionSize(item.getSize());
+            v.setSwatchHex(item.getColor() == null ? null : hexOf(r, item.getColor()));
+            v.setColorFamily(item.getColor() == null ? null : familyOf(r, item.getColor()));
+            v.setDescription(base.getDescription());
+            v.setSellingPrice(item.getPrice());
+            v.setStandardCost(item.getUnitCost() != null ? item.getUnitCost() : base.getStandardCost());
+            v.setUom(base.getUom());
+            v.setWeightGrams(base.getWeightGrams());
+            v.setVolumeMl(base.getVolumeMl());
+            v.setVatRate(base.getVatRate());
+            v.setVatExempt(base.isVatExempt());
+            v.setActive(!job.isApproveFirst());
+            v.setSortOrder(order++);
+            v.setGeneratedFromVariantId(base.getId());
+            v = variants.saveAndFlush(v);
+            item.setVariantId(v.getId());
+            existing.add(VariantJobValidator.cellKey(item.getColor(), item.getSize()));
+            created++;
+            if (item.getOpeningStock() != null && item.getOpeningStock().signum() > 0) {
+                if (by == null) {
+                    item.setLastError("Opening stock was not added: the staff member who started the job no longer exists.");
+                } else {
+                    stock.addOnHand(product.getId(), v.getId(), item.getOpeningStock(), item.getUnitCost(),
+                            "Opening stock (variant job)", true, by);
+                }
+            }
+        }
+        items.saveAll(jobItems);
+        productOptions.sync(product.getId());
+        applyOptionDetails(product.getId(), r);
+
+        job.setVariantsCreated(created);
+        job.setStage(Stage.DESCRIPTIONS);
+        job.setHeartbeatAt(Instant.now());
+        jobs.save(job);
+        announce();
+        events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
+    }
+
+    /** The dots and families staff confirmed reach the colour list; label text and size photos reach the size list. */
+    private void applyOptionDetails(UUID productId, VariantJobRequest r) {
+        for (ProductOptionValue row : optionRows.findByProductIdOrderByKindAscPositionAsc(productId)) {
+            if (row.getKind() == ProductOptionValue.Kind.COLOR) {
+                for (VariantJobRequest.ColorIn c : nn(r.colors())) {
+                    if (sameValue(c.name(), row.getValue())) {
+                        String hex = VariantCombos.normaliseHex(c.hex());
+                        if (hex != null) row.setSwatchHex(hex);
+                        ColorFamily f = c.family() == null || c.family().isBlank() ? null : ColorFamily.parse(c.family());
+                        if (f != null) row.setColorFamily(f.name());
+                    }
+                }
+            } else {
+                for (VariantJobRequest.SizeIn s : nn(r.sizes())) {
+                    if (sameValue(s.name(), row.getValue())) {
+                        if (s.labelText() != null && !s.labelText().isBlank()) {
+                            row.setSizeLabelText(s.labelText().replaceAll("\\s+", " ").trim());
+                        }
+                        if (s.photoImageId() != null) row.setSizePhotoImageId(s.photoImageId());
+                    }
+                }
+            }
+        }
+        optionRows.flush();
+    }
+
+    // ---------------------------------------------------------------- steps 2 and 3
+
+    @Transactional
+    public void saveDescriptions(UUID jobId, Map<UUID, String> byItem) {
+        VariantJob job = jobs.findById(jobId).orElseThrow();
+        Map<UUID, VariantJobItem> all = new HashMap<>();
+        items.findByJobIdOrderByPositionAsc(jobId).forEach(i -> all.put(i.getId(), i));
+        for (Map.Entry<UUID, String> e : byItem.entrySet()) {
+            VariantJobItem item = all.get(e.getKey());
+            if (item == null || item.getVariantId() == null) continue;
+            if (e.getValue() == null) {
+                item.setDescriptionStatus(StepStatus.FAILED);
+                item.setLastError("The description could not be written.");
+            } else {
+                variants.findById(item.getVariantId()).ifPresent(v -> {
+                    v.setDescription(e.getValue());
+                    variants.save(v);
+                });
+                item.setDescriptionStatus(StepStatus.DONE);
+            }
+        }
+        items.saveAll(all.values());
+        recount(job);
+        job.setHeartbeatAt(Instant.now());
+        jobs.save(job);
+        announce();
+    }
+
+    @Transactional
+    public void setStage(UUID jobId, Stage stage) {
+        jobs.findById(jobId).ifPresent(j -> {
+            j.setStage(stage);
+            jobs.save(j);
+        });
+    }
+
+    /**
+     * Puts a finished photo on the variant as its main photo. {@code url} may be a file another photo row already uses
+     * (the sizes of one colour share their colour's photo); a file is only deleted once no photo row uses it.
+     */
+    @Transactional
+    public void attachPhoto(UUID jobId, UUID itemId, String url, boolean madeByAi) {
+        VariantJobItem item = items.findById(itemId).orElseThrow();
+        ProductVariant v = variants.findById(item.getVariantId()).orElse(null);
+        if (v != null && !v.isDeleted()) {
+            List<ProductImage> own = images.findByVariantIdOrderBySortOrderAsc(v.getId());
+            for (ProductImage e : own) {
+                e.setSortOrder(e.getSortOrder() + 1);
+                e.setPrimary(false);
+            }
+            images.saveAll(own);
+            ProductImage image = new ProductImage();
+            image.setProduct(v.getProduct());
+            image.setVariant(v);
+            image.setUrl(url);
+            image.setAltText(v.displayLabel());
+            image.setSortOrder(0);
+            image.setPrimary(true);
+            image.setSource(madeByAi ? ProductImage.ImageSource.AI_CLEANED : ProductImage.ImageSource.UPLOAD);
+            images.save(image);
+        }
+        item.setPhotoStatus(StepStatus.DONE);
+        item.setPhotoAttempts(item.getPhotoAttempts() + 1);
+        item.setLastError(null);
+        items.save(item);
+        VariantJob job = jobs.findById(jobId).orElseThrow();
+        recount(job);
+        job.setHeartbeatAt(Instant.now());
+        jobs.save(job);
+        announce();
+    }
+
+    @Transactional
+    public void photoFailed(UUID jobId, UUID itemId, String error) {
+        VariantJobItem item = items.findById(itemId).orElseThrow();
+        item.setPhotoStatus(StepStatus.FAILED);
+        item.setPhotoAttempts(item.getPhotoAttempts() + 1);
+        item.setLastError(trim(error));
+        items.save(item);
+        VariantJob job = jobs.findById(jobId).orElseThrow();
+        recount(job);
+        job.setHeartbeatAt(Instant.now());
+        jobs.save(job);
+        announce();
+    }
+
+    // ---------------------------------------------------------------- ends
+
+    /** The quota ran out: the job waits and is taken again by the poller once {@code until} has passed. */
+    @Transactional
+    public void pause(UUID jobId, Instant until, String why) {
+        jobs.findById(jobId).ifPresent(j -> {
+            j.setStatus(Status.PAUSED_QUOTA);
+            j.setNextAttemptAt(until);
+            j.setLockedBy(null);
+            j.setLastError(trim(why));
+            jobs.save(j);
+            announce();
+        });
+    }
+
+    @Transactional
+    public void finish(UUID jobId) {
+        VariantJob job = jobs.findById(jobId).orElseThrow();
+        recount(job);
+        job.setStage(Stage.DONE);
+        job.setLockedBy(null);
+        job.setFinishedAt(Instant.now());
+        if (job.isCancelRequested()) {
+            job.setStatus(Status.CANCELLED);
+        } else if (job.isApproveFirst() && hasHidden(job)) {
+            job.setStatus(Status.AWAITING_APPROVAL);
+        } else {
+            job.setStatus(job.getPhotosFailed() + job.getDescriptionsFailed() > 0
+                    ? Status.COMPLETED_WITH_ERRORS : Status.COMPLETED);
+        }
+        if (job.getStatus() != Status.CANCELLED) {
+            job.setLastError(null);
+        }
+        jobs.save(job);
+        announce();
+    }
+
+    @Transactional
+    public void fail(UUID jobId, String why) {
+        jobs.findById(jobId).ifPresent(j -> {
+            j.setStatus(Status.FAILED);
+            j.setLockedBy(null);
+            j.setFinishedAt(Instant.now());
+            j.setLastError(trim(why));
+            jobs.save(j);
+            announce();
+        });
+    }
+
+    private boolean hasHidden(VariantJob job) {
+        return items.findByJobIdOrderByPositionAsc(job.getId()).stream()
+                .map(VariantJobItem::getVariantId).filter(Objects::nonNull)
+                .map(variants::findById).flatMap(Optional::stream)
+                .anyMatch(v -> !v.isDeleted() && !v.isActive());
+    }
+
+    /** The job's counters from its items, so they are right however often a step was retried. */
+    void recount(VariantJob job) {
+        int dd = 0, df = 0, pd = 0, pf = 0, created = 0;
+        for (VariantJobItem i : items.findByJobIdOrderByPositionAsc(job.getId())) {
+            if (i.getVariantId() != null) created++;
+            if (i.getDescriptionStatus() == StepStatus.DONE) dd++;
+            if (i.getDescriptionStatus() == StepStatus.FAILED) df++;
+            if (i.getPhotoStatus() == StepStatus.DONE) pd++;
+            if (i.getPhotoStatus() == StepStatus.FAILED) pf++;
+        }
+        job.setVariantsCreated(created);
+        job.setDescriptionsDone(dd);
+        job.setDescriptionsFailed(df);
+        job.setPhotosDone(pd);
+        job.setPhotosFailed(pf);
+    }
+
+    void announce() {
+        events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.VARIANT_JOBS));
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    static String hexOf(VariantJobRequest r, String color) {
+        for (VariantJobRequest.ColorIn c : nn(r.colors())) {
+            if (sameValue(c.name(), color)) return VariantCombos.normaliseHex(c.hex());
+        }
+        return null;
+    }
+
+    static String familyOf(VariantJobRequest r, String color) {
+        for (VariantJobRequest.ColorIn c : nn(r.colors())) {
+            if (sameValue(c.name(), color) && c.family() != null && !c.family().isBlank()) {
+                return ColorFamily.parse(c.family()).name();
+            }
+        }
+        return null;
+    }
+
+    static boolean sameValue(String a, String b) {
+        String x = ProductOptionsService.clean(a);
+        String y = ProductOptionsService.clean(b);
+        return x != null && y != null && x.equalsIgnoreCase(y);
+    }
+
+    static <T> List<T> nn(List<T> list) {
+        return list == null ? List.of() : list;
+    }
+
+    static String trim(String s) {
+        if (s == null) return null;
+        return s.length() <= 1000 ? s : s.substring(0, 1000);
+    }
+}

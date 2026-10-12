@@ -21,6 +21,10 @@ import java.util.UUID;
 /**
  * "Generate variants" from a finished product. Needs product-management rights like the photo studio (it spends Gemini
  * quota). Every field except the product is optional: colours and sizes may be left for Gemini to read out of the prompt.
+ *
+ * <p>Superseded by {@code /api/v1/admin/variant-jobs} (variants v2, 2026-10-12): jobs that run side by side, survive a
+ * restart, take prices per size and exceptions, and report to Needs attention. Kept working until the admin screens have
+ * moved over (VARIANTS_PLAN.md phase 4); new screens should not call it.
  */
 @RestController
 @RequestMapping("/api/v1/admin/variant-generation")
