@@ -168,6 +168,26 @@ class ProductOptionsIntegrationTest {
     }
 
     @Test
+    void aBasketLineSaysWhichColourAndSizeIsInIt() throws Exception {
+        JsonNode p = draft(unique("Basket Lipstick"), true,
+                opt("Ruby Mini", "Ruby Red", "Mini 2g", "#9B111E"), opt("Nude Mini", "Nude Beige", "Mini 2g", "#C8A28A"));
+        String productId = p.get("id").asText();
+        String ruby = p.get("variants").get(0).get("id").asText();
+        ok(put("/api/v1/products/" + productId + "/variants/" + ruby + "/stock"),
+                "{\"receivedQty\":\"5\",\"allowUnknownCost\":true}");
+
+        MvcResult added = mvc.perform(post("/api/v1/cart/items").header("X-Cart-Session", "s-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"variantId\":\"" + ruby + "\",\"qty\":1}")).andReturn();
+        assertThat(added.getResponse().getStatus()).as(added.getResponse().getContentAsString()).isEqualTo(200);
+        JsonNode line = json.readTree(added.getResponse().getContentAsString()).get("items").get(0);
+        assertThat(line.get("optionColor").asText()).isEqualTo("Ruby Red");
+        assertThat(line.get("optionSize").asText()).isEqualTo("Mini 2g");
+        assertThat(line.get("swatchHex").asText()).isEqualTo("#9B111E");
+        assertThat(line.get("optionLabel").asText()).isEqualTo("Ruby Red / Mini 2g");
+        assertThat(line.get("sku").asText()).isNotBlank();
+    }
+
+    @Test
     void savingFromAnEditorThatDoesNotSendOptionsLeavesThemAlone() throws Exception {
         JsonNode p = draft(unique("Bonnet"), false, opt("Black S", "Black", "S", "#1F1A1C"));
         String id = p.get("variants").get(0).get("id").asText();

@@ -1,5 +1,11 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+
+## 2026-10-12 (variants v2, phase 5, backend side) — basket lines say which colour and size
+
+- `CartItemDto` gained `optionLabel` (the short option), `optionColor`, `optionSize` and `swatchHex`, all at the end and nullable. They're the variant as it is now; the order freezes them at checkout (phase 1). The cart drawer and checkout show them as Colour / Size / SKU tags (frontend HANDOFF same date).
+- Test: `ProductOptionsIntegrationTest.aBasketLineSaysWhichColourAndSizeIsInIt`. Full suite 1006/1006.
+
 ## 2026-10-12 (variants v2, phase 4, backend side) — an older editor can't undo a job; the product's own variant is named
 
 Found while live-testing the phase 4 screens (QA copy of the dev data, Gemini/Cloudinary stand-in; frontend HANDOFF same date).

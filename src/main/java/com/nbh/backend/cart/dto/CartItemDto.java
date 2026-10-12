@@ -34,7 +34,13 @@ public record CartItemDto(
         BigDecimal previousUnitPrice,
         boolean wholesaleApplied,
         Integer wholesaleMinQty,
-        BigDecimal wholesalePrice
+        BigDecimal wholesalePrice,
+        /** Variants v2: the colour and size picked (with the colour's dot) and the short option, so the cart and checkout
+         *  show exactly which one is in the basket. The variant as it is now: the order freezes them at checkout. */
+        String optionLabel,
+        String optionColor,
+        String optionSize,
+        String swatchHex
 ) {
     public static CartItemDto from(CartItem item) {
         return from(item, true, null, null);
@@ -49,6 +55,8 @@ public record CartItemDto(
                 item.getProductNameSnapshot(), item.getVariantNameSnapshot(),
                 item.getQty(), item.getUnitPriceSnapshot(), item.getLineTotal(),
                 available, stockLeft, previousUnitPrice, item.isWholesaleApplied(),
-                item.getVariant().getWholesaleMinQty(), item.getVariant().getWholesalePrice());
+                item.getVariant().getWholesaleMinQty(), item.getVariant().getWholesalePrice(),
+                item.getVariant().shortOption(), item.getVariant().getOptionColor(), item.getVariant().getOptionSize(),
+                item.getVariant().getSwatchHex());
     }
 }
