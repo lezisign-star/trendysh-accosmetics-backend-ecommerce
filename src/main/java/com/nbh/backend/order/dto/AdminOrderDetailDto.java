@@ -110,14 +110,22 @@ public record AdminOrderDetailDto(
                        BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal, boolean wholesaleApplied,
                        BigDecimal returnedQty, List<Line> components,
                        /** The ordered colour/size/shade on its own, "Emerald Green"; null for a one-option product. */
-                       String optionLabel) {
+                       String optionLabel,
+                       /** The ordered colour on its own and the colour's dot ("#RRGGBB"); null when the variant had none. */
+                       String optionColor, String swatchHex,
+                       /** The ordered size on its own ("50ml"); null when the variant had none. */
+                       String optionSize,
+                       /** The photo the variant had when it was ordered; null for an order placed before photos were frozen. */
+                       String imageUrl) {
+        /** Described from what the line froze at checkout (see {@link CustomerOrderItem#rememberVariant}). */
         static Line from(CustomerOrderItem i, List<CustomerOrderItem> children) {
-            return new Line(i.getId(), i.getVariant().getId(), i.getVariant().getSku(),
-                    i.getVariant().getProduct().getName(), i.getVariant().getVariantName(),
+            return new Line(i.getId(), i.getVariant().getId(), i.soldSku(),
+                    i.soldProductName(), i.soldVariantName(),
                     i.getQty(), i.getUnitPrice(), i.getLineTotal(), i.isWholesaleApplied(),
                     i.getReturnedQty(),
                     children.stream().map(c -> Line.from(c, List.of())).toList(),
-                    i.getVariant().shortOption());
+                    i.soldOptionLabel(), i.soldOptionColor(), i.soldSwatchHex(), i.soldOptionSize(),
+                    i.soldImageUrl());
         }
     }
 

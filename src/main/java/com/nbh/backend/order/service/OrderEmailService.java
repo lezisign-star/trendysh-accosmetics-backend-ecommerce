@@ -182,7 +182,8 @@ public class OrderEmailService {
             if (item.getParentItem() != null) {
                 continue;
             }
-            String name = item.getVariant().displayLabel()
+            // The name the line was bought under: renaming the variant afterwards must not change what the email says.
+            String name = item.soldLabel()
                     + " × " + item.getQty().stripTrailingZeros().toPlainString();
             lines.add(new Line(name, ksh(item.getLineTotal())));
         }

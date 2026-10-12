@@ -5,6 +5,7 @@ import com.nbh.backend.cart.entity.CartItem;
 import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.catalog.entity.ProductVariant;
+import com.nbh.backend.catalog.service.VariantCovers;
 import com.nbh.backend.common.event.OrderPlacedEvent;
 import com.nbh.backend.common.exception.ConflictException;
 import com.nbh.backend.common.exception.TooManyRequestsException;
@@ -80,6 +81,7 @@ public class CheckoutService {
     private final int maxOpenOrdersPerContact;
     private final TumaBodaQuoteService quoteService;
     private final KitService kitService;
+    private final VariantCovers variantCovers;
 
     public CheckoutService(CartRepository cartRepository,
                             CartItemRepository cartItemRepository,
@@ -94,10 +96,12 @@ public class CheckoutService {
                             @org.springframework.beans.factory.annotation.Value(
                                     "${app.checkout.max-open-orders-per-contact:3}") int maxOpenOrdersPerContact,
                             TumaBodaQuoteService quoteService,
-                            KitService kitService) {
+                            KitService kitService,
+                            VariantCovers variantCovers) {
         this.maxOpenOrdersPerContact = maxOpenOrdersPerContact;
         this.quoteService = quoteService;
         this.kitService = kitService;
+        this.variantCovers = variantCovers;
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.orderRepository = orderRepository;
@@ -265,10 +269,22 @@ public class CheckoutService {
             }
         }
 
+        // Every line, kit components included, freezes what it was bought as (name, colour, size, SKU, photo): editing
+        // the variant later must never rewrite an order that already exists. One lookup for all the covers.
+        java.util.Map<java.util.UUID, ProductVariant> soldVariants = new java.util.LinkedHashMap<>();
+        for (CartItem cartItem : cartItems) {
+            soldVariants.putIfAbsent(cartItem.getVariant().getId(), cartItem.getVariant());
+        }
+        for (ReservationTarget target : targets) {
+            soldVariants.putIfAbsent(target.variant().getId(), target.variant());
+        }
+        java.util.Map<java.util.UUID, String> coverByVariant = variantCovers.urlsFor(soldVariants.values());
+
         for (CartItem cartItem : cartItems) {
             CustomerOrderItem orderItem = new CustomerOrderItem();
             orderItem.setOrder(order);
             orderItem.setVariant(cartItem.getVariant());
+            orderItem.rememberVariant(cartItem.getVariant(), coverByVariant.get(cartItem.getVariant().getId()));
             orderItem.setQty(cartItem.getQty());
             orderItem.setUnitPrice(cartItem.getUnitPriceSnapshot());
             orderItem.setWholesaleApplied(cartItem.isWholesaleApplied());
@@ -285,6 +301,7 @@ public class CheckoutService {
                 CustomerOrderItem componentItem = new CustomerOrderItem();
                 componentItem.setOrder(order);
                 componentItem.setVariant(component.variant());
+                componentItem.rememberVariant(component.variant(), coverByVariant.get(component.variant().getId()));
                 componentItem.setQty(component.qty());
                 componentItem.setUnitPrice(unitPrice);
                 componentItem.setVatRate(component.variant().getVatRate());

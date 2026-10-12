@@ -80,17 +80,17 @@ public class OrderReturnService {
                 // a stock movement of its own — see OrderFulfilmentService.fulfil's skip for the
                 // same reason. Nothing to reverse here; its real components are separate lines.
                 throw new UnprocessableException(
-                        item.getVariant().getSku() + " never posted its own stock movement — return its components instead");
+                        item.soldSku() + " never posted its own stock movement — return its components instead");
             }
 
             BigDecimal qty = new BigDecimal(reqLine.qty());
             if (qty.signum() <= 0) {
-                throw new UnprocessableException(item.getVariant().getSku() + ": return qty must be positive");
+                throw new UnprocessableException(item.soldSku() + ": return qty must be positive");
             }
-            QuantityRules.requireSensible(item.getVariant().getSku(), item.getVariant(), qty);
+            QuantityRules.requireSensible(item.soldSku(), item.getVariant(), qty);
             BigDecimal outstanding = item.getQty().subtract(item.getReturnedQty());
             if (qty.compareTo(outstanding) > 0) {
-                String name = item.getVariant().getProduct().getName();
+                String name = item.soldProductName();
                 throw new UnprocessableException(outstanding.signum() <= 0
                         ? name + ": all " + plain(item.getQty()) + " sold on this order have already been returned."
                         : name + ": only " + plain(outstanding) + " can still be returned (" + plain(item.getQty())

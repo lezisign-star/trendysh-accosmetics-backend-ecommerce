@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -51,6 +52,7 @@ class KitIntegrationTest {
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private CustomerOrderRepository orderRepository;
     @Autowired private StockReservationRepository reservationRepository;
+    @Autowired private JdbcTemplate jdbc;
 
     private String token;
 
@@ -223,6 +225,61 @@ class KitIntegrationTest {
         assertThat(shopOnHand(variantB)).isEqualByComparingTo("9");
         assertThat(shopOnHand(variantC)).isEqualByComparingTo("7");
         assertThat(shopOnHand(kitVariantId)).isNull(); // the kit's own SKU never posts a stock movement
+    }
+
+    @Test
+    void aKitOrderKeepsWhatTheKitAndEachComponentWereWhenItWasBoughtEvenAfterTheyAreRenamed() throws Exception {
+        String categoryId = newCategory();
+        String variantA = newComponentVariant(new BigDecimal("500"));
+        String variantB = newComponentVariant(new BigDecimal("300"));
+        receiveStock(Map.of(variantA, new BigDecimal("10"), variantB, new BigDecimal("10")));
+        JsonNode kit = createKit(categoryId, newProfession(), "A starter set for a new Nail Tech",
+                List.of(variantA, variantB), List.of("2", "1"), "1100");
+        String kitVariantId = kit.get("variantId").asText();
+
+        String sessionId = "kit-snapshot-session-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + kitVariantId + "\",\"qty\":1}", sessionId);
+        JsonNode checkoutResult = cartOk(post("/api/v1/checkout"),
+                checkoutRequestBody("kit-snapshot-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com"), sessionId);
+        String orderId = checkoutResult.get("order").get("id").asText();
+
+        // The kit's own line and both component lines froze their variant when the order was placed.
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM customer_order_item WHERE order_id = ?::uuid", Integer.class, orderId))
+                .isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM customer_order_item WHERE order_id = ?::uuid"
+                + " AND (sku_snapshot IS NULL OR product_name_snapshot IS NULL OR variant_name_snapshot IS NULL)",
+                Integer.class, orderId)).as("no line left without a snapshot").isZero();
+
+        JsonNode before = ok(get("/api/v1/orders/" + orderId), null).get("items").get(0);
+        assertThat(before.get("sku").asText()).isEqualTo(kit.get("sku").asText());
+        assertThat(before.get("components")).hasSize(2);
+
+        // Staff rename the kit, both components and their products, and re-number every SKU.
+        jdbc.update("UPDATE product SET name = name || ' (renamed)' WHERE id IN"
+                + " (SELECT product_id FROM product_variant WHERE id IN (?::uuid, ?::uuid, ?::uuid))",
+                kitVariantId, variantA, variantB);
+        jdbc.update("UPDATE product_variant SET sku = sku || '-NEW', variant_name = 'Renamed option'"
+                + " WHERE id IN (?::uuid, ?::uuid, ?::uuid)", kitVariantId, variantA, variantB);
+
+        JsonNode after = ok(get("/api/v1/orders/" + orderId), null).get("items").get(0);
+        assertThat(after.get("sku")).isEqualTo(before.get("sku"));
+        assertThat(after.get("productName")).isEqualTo(before.get("productName"));
+        assertThat(after.get("variantName")).isEqualTo(before.get("variantName"));
+        assertThat(after.get("components")).hasSize(2);
+        for (JsonNode was : before.get("components")) {
+            JsonNode now = null;
+            for (JsonNode candidate : after.get("components")) {
+                if (candidate.get("variantId").equals(was.get("variantId"))) {
+                    now = candidate;
+                }
+            }
+            assertThat(now).as("component %s still on the order", was.get("variantId")).isNotNull();
+            assertThat(now.get("sku")).as("component sku").isEqualTo(was.get("sku"));
+            assertThat(now.get("productName")).as("component name").isEqualTo(was.get("productName"));
+            assertThat(now.get("variantName")).as("component option").isEqualTo(was.get("variantName"));
+            assertThat(now.get("sku").asText()).doesNotContain("-NEW");
+            assertThat(now.get("productName").asText()).doesNotContain("(renamed)");
+        }
     }
 
     @Test

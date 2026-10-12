@@ -6,7 +6,9 @@ import com.nbh.backend.cart.repository.CartItemRepository;
 import com.nbh.backend.cart.repository.CartRepository;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductVariant;
+import com.nbh.backend.catalog.service.VariantCovers;
 import com.nbh.backend.order.dto.CheckoutRequest;
+import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.FulfilmentType;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
@@ -59,6 +61,7 @@ class CheckoutServiceUnitTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private com.nbh.backend.tumaboda.TumaBodaQuoteService quoteService;
     @Mock private com.nbh.backend.kits.service.KitService kitService;
+    @Mock private VariantCovers variantCovers;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
     private CheckoutService checkoutService;
@@ -71,7 +74,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK),
-                MAX_OPEN_ORDERS, quoteService, kitService);
+                MAX_OPEN_ORDERS, quoteService, kitService, variantCovers);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -154,6 +157,92 @@ class CheckoutServiceUnitTest {
         verify(paymentRecordRepository, never()).save(any());
     }
 
+    @Test
+    void everyLineFreezesWhatWasBoughtAndLaterEditsToTheVariantNeverReachIt() {
+        CartItem line = cartItem(new BigDecimal("650.00"), new BigDecimal("2"), new BigDecimal("0.1600"), false);
+        ProductVariant variant = line.getVariant();
+        variant.getProduct().setName("Velvet Matte Lipstick");
+        variant.setSku("VML-RR-50");
+        variant.setVariantName("Velvet Matte Lipstick – Ruby Red / 50ml");
+        variant.setOptionLabel("Ruby Red / 50ml");
+        variant.setOptionColor("Ruby Red");
+        variant.setOptionSize("50ml");
+        variant.setSwatchHex("#9B111E");
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(line));
+        when(variantCovers.urlsFor(any()))
+                .thenReturn(java.util.Map.of(variant.getId(), "https://res.cloudinary.com/demo/image/upload/ruby.jpg"));
+
+        CustomerOrderItem item = checkoutService.checkout(SESSION_ID, request()).order().getItems().get(0);
+
+        assertThat(item.getProductNameSnapshot()).isEqualTo("Velvet Matte Lipstick");
+        assertThat(item.getVariantNameSnapshot()).isEqualTo("Velvet Matte Lipstick – Ruby Red / 50ml");
+        assertThat(item.getSkuSnapshot()).isEqualTo("VML-RR-50");
+        assertThat(item.getOptionLabelSnapshot()).isEqualTo("Ruby Red / 50ml");
+        assertThat(item.getOptionColorSnapshot()).isEqualTo("Ruby Red");
+        assertThat(item.getOptionSizeSnapshot()).isEqualTo("50ml");
+        assertThat(item.getSwatchHexSnapshot()).isEqualTo("#9B111E");
+        assertThat(item.getImageUrlSnapshot()).isEqualTo("https://res.cloudinary.com/demo/image/upload/ruby.jpg");
+
+        // Staff rename everything after the sale: the line still says what the customer ordered.
+        variant.getProduct().setName("Velvet Lip Colour");
+        variant.setSku("VLC-001");
+        variant.setVariantName("Velvet Lip Colour – Crimson / 30ml");
+        variant.setOptionLabel("Crimson / 30ml");
+        variant.setOptionColor("Crimson");
+        variant.setOptionSize("30ml");
+        variant.setSwatchHex("#DC143C");
+        assertThat(item.soldSku()).isEqualTo("VML-RR-50");
+        assertThat(item.soldProductName()).isEqualTo("Velvet Matte Lipstick");
+        assertThat(item.soldOptionLabel()).isEqualTo("Ruby Red / 50ml");
+        assertThat(item.soldOptionColor()).isEqualTo("Ruby Red");
+        assertThat(item.soldOptionSize()).isEqualTo("50ml");
+        assertThat(item.soldSwatchHex()).isEqualTo("#9B111E");
+        assertThat(item.soldLabel()).isEqualTo("Velvet Matte Lipstick (Ruby Red / 50ml)");
+    }
+
+    @Test
+    void aKitLineAndEachOfItsComponentLinesFreezeTheirOwnVariantWithOneCoverLookup() {
+        CartItem kitLine = cartItem(new BigDecimal("900.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
+        kitLine.getVariant().getProduct().setName("Nail Tech Starter Kit");
+        kitLine.getVariant().setSku("KIT-0001");
+        ProductVariant base = cartItem(new BigDecimal("300.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false).getVariant();
+        base.getProduct().setName("Base Coat");
+        base.setSku("BASE-15");
+        base.setVariantName("15ml");
+        ProductVariant polish = cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false).getVariant();
+        polish.getProduct().setName("Gel Polish");
+        polish.setSku("GEL-RR");
+        polish.setVariantName("Gel Polish – Ruby Red");
+        polish.setOptionColor("Ruby Red");
+        polish.setSwatchHex("#9B111E");
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
+        when(kitService.componentsForVariant(kitLine.getVariant().getId())).thenReturn(List.of(
+                new com.nbh.backend.kits.service.KitService.KitComponentLine(base, BigDecimal.ONE),
+                new com.nbh.backend.kits.service.KitService.KitComponentLine(polish, new BigDecimal("2"))));
+        when(variantCovers.urlsFor(any())).thenReturn(java.util.Map.of(
+                polish.getId(), "https://res.cloudinary.com/demo/image/upload/gel-rr.jpg"));
+
+        List<CustomerOrderItem> items = checkoutService.checkout(SESSION_ID, request()).order().getItems();
+
+        assertThat(items).as("the kit's own line plus one line per component").hasSize(3);
+        CustomerOrderItem summary = items.get(0);
+        assertThat(summary.getSkuSnapshot()).isEqualTo("KIT-0001");
+        assertThat(summary.getProductNameSnapshot()).isEqualTo("Nail Tech Starter Kit");
+        CustomerOrderItem baseLine = items.stream().filter(i -> i.getVariant() == base).findFirst().orElseThrow();
+        assertThat(baseLine.getParentItem()).isSameAs(summary);
+        assertThat(baseLine.getSkuSnapshot()).isEqualTo("BASE-15");
+        assertThat(baseLine.getProductNameSnapshot()).isEqualTo("Base Coat");
+        assertThat(baseLine.getImageUrlSnapshot()).as("no photo of its own: none is borrowed").isNull();
+        CustomerOrderItem polishLine = items.stream().filter(i -> i.getVariant() == polish).findFirst().orElseThrow();
+        assertThat(polishLine.getSkuSnapshot()).isEqualTo("GEL-RR");
+        assertThat(polishLine.getOptionColorSnapshot()).isEqualTo("Ruby Red");
+        assertThat(polishLine.getSwatchHexSnapshot()).isEqualTo("#9B111E");
+        assertThat(polishLine.getImageUrlSnapshot()).endsWith("gel-rr.jpg");
+        assertThat(polishLine.soldOptionLabel()).as("the option, with the product's title taken off").isEqualTo("Ruby Red");
+
+        verify(variantCovers, times(1)).urlsFor(argThat(variants -> variants.size() == 3));
+    }
+
     // Checkout only ever reads mode()/paymentWindow() from this, never the bank-detail accessors,
     // so the settings repository doesn't need a real row backing it for these tests.
     private static BankPaymentSettings bankSettings(BankPaymentSettings.CollectionMode mode) {
@@ -182,7 +271,8 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
-                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS, quoteService, kitService);
+                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS, quoteService, kitService,
+                variantCovers);
         when(cartItemRepository.findByCartId(cart.getId()))
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
 

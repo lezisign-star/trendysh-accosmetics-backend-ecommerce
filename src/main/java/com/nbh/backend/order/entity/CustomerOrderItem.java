@@ -76,4 +76,99 @@ public class CustomerOrderItem {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_item_id")
     private CustomerOrderItem parentItem;
+
+    // What was bought, as it was when the order was placed (V62). Every one is nullable: an order placed before V62
+    // carries none, and the sold*() readers below then answer from the live variant. Renaming a variant or a product,
+    // or changing a variant's colour, size or SKU, therefore never rewrites an order that already exists.
+
+    @Column(name = "product_name_snapshot", length = 250)
+    private String productNameSnapshot;
+
+    @Column(name = "variant_name_snapshot", length = 250)
+    private String variantNameSnapshot;
+
+    @Column(name = "sku_snapshot", length = 60)
+    private String skuSnapshot;
+
+    /** The variant's stored short option, null when it had none; see {@link #soldOptionLabel()}. */
+    @Column(name = "option_label_snapshot", length = 160)
+    private String optionLabelSnapshot;
+
+    @Column(name = "option_color_snapshot", length = 80)
+    private String optionColorSnapshot;
+
+    @Column(name = "option_size_snapshot", length = 80)
+    private String optionSizeSnapshot;
+
+    @Column(name = "swatch_hex_snapshot", length = 9)
+    private String swatchHexSnapshot;
+
+    @Column(name = "image_url_snapshot", length = 500)
+    private String imageUrlSnapshot;
+
+    /**
+     * Freezes the variant as it is right now onto this line. {@code coverImageUrl} is the variant's own cover photo
+     * (null when it has none). Called once, when the line is created.
+     */
+    public void rememberVariant(ProductVariant source, String coverImageUrl) {
+        productNameSnapshot = source.getProduct().getName();
+        variantNameSnapshot = source.getVariantName();
+        skuSnapshot = source.getSku();
+        optionLabelSnapshot = source.getOptionLabel();
+        optionColorSnapshot = source.getOptionColor();
+        optionSizeSnapshot = source.getOptionSize();
+        swatchHexSnapshot = source.getSwatchHex();
+        imageUrlSnapshot = coverImageUrl;
+    }
+
+    /**
+     * True when this line froze its variant. The SKU stands for all of them: a live variant always has one, so a
+     * frozen line always carries it, and the other fields are legitimately null for a product with one plain option.
+     */
+    public boolean hasSnapshot() {
+        return skuSnapshot != null;
+    }
+
+    public String soldSku() {
+        return hasSnapshot() ? skuSnapshot : variant.getSku();
+    }
+
+    public String soldProductName() {
+        return productNameSnapshot != null ? productNameSnapshot : variant.getProduct().getName();
+    }
+
+    public String soldVariantName() {
+        return hasSnapshot() ? variantNameSnapshot : variant.getVariantName();
+    }
+
+    /** The option on its own, "Ruby Red / 50ml": what {@code ProductVariant.shortOption()} said when it was ordered. */
+    public String soldOptionLabel() {
+        return hasSnapshot()
+                ? ProductVariant.shortOptionOf(optionLabelSnapshot, variantNameSnapshot, soldProductName())
+                : variant.shortOption();
+    }
+
+    public String soldOptionColor() {
+        return hasSnapshot() ? optionColorSnapshot : variant.getOptionColor();
+    }
+
+    public String soldOptionSize() {
+        return hasSnapshot() ? optionSizeSnapshot : variant.getOptionSize();
+    }
+
+    public String soldSwatchHex() {
+        return hasSnapshot() ? swatchHexSnapshot : variant.getSwatchHex();
+    }
+
+    /** The photo it was ordered with; null for a line placed before photos were frozen (nothing is looked up live). */
+    public String soldImageUrl() {
+        return imageUrlSnapshot;
+    }
+
+    /** How a message names this line: "Gel Polish (Ruby Red)", or just "Gel Polish" when it has no option worth naming. */
+    public String soldLabel() {
+        String option = soldOptionLabel();
+        String product = soldProductName();
+        return option == null ? product : product + " (" + option + ")";
+    }
 }

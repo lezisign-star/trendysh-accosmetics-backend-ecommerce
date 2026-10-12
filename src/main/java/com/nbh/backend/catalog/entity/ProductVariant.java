@@ -158,6 +158,14 @@ public class ProductVariant extends BaseEntity {
      * the name as is. Null when the name says nothing (blank or "Default").
      */
     public String shortOption() {
+        return shortOptionOf(optionLabel, variantName, product.getName());
+    }
+
+    /**
+     * {@link #shortOption()} from its three inputs. An order line freezes those three when it is placed, so it works
+     * out the same text from what it froze instead of from the variant as it is now.
+     */
+    public static String shortOptionOf(String optionLabel, String variantName, String productName) {
         if (optionLabel != null && !optionLabel.isBlank()) {
             return optionLabel.trim();
         }
@@ -165,7 +173,7 @@ public class ProductVariant extends BaseEntity {
             return null;
         }
         String name = variantName.trim();
-        String title = product.getName() == null ? "" : product.getName().trim();
+        String title = productName == null ? "" : productName.trim();
         if (!title.isEmpty() && name.length() > title.length()
                 && name.toLowerCase(java.util.Locale.ROOT).startsWith(title.toLowerCase(java.util.Locale.ROOT))) {
             String rest = name.substring(title.length()).replaceFirst("^[\\s\\u2013\\u2014:|-]+", "").trim();

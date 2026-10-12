@@ -5,6 +5,11 @@ import com.nbh.backend.order.entity.CustomerOrderItem;
 import java.math.BigDecimal;
 import java.util.UUID;
 
+/**
+ * What was bought is described from what the line froze when the order was placed (see
+ * {@link CustomerOrderItem#rememberVariant}), so renaming or re-optioning a variant later never changes an old order.
+ * An order placed before that is described from the live variant instead.
+ */
 public record OrderItemDto(
         UUID variantId,
         String sku,
@@ -17,13 +22,21 @@ public record OrderItemDto(
         /** The catalogue product behind this line — what a customer review attaches to. */
         UUID productId,
         /** Which colour/size/shade was ordered, on its own ("Emerald Green"); null for a product with one option. */
-        String optionLabel
+        String optionLabel,
+        /** The ordered colour on its own, and the colour's dot ("#RRGGBB"); null when the variant has none. */
+        String optionColor,
+        String swatchHex,
+        /** The ordered size on its own ("50ml"); null when the variant has none. */
+        String optionSize,
+        /** The photo the variant had when it was ordered; null for an order placed before photos were frozen. */
+        String imageUrl
 ) {
     public static OrderItemDto from(CustomerOrderItem item) {
         return new OrderItemDto(
-                item.getVariant().getId(), item.getVariant().getSku(),
-                item.getVariant().getProduct().getName(), item.getVariant().getVariantName(),
+                item.getVariant().getId(), item.soldSku(),
+                item.soldProductName(), item.soldVariantName(),
                 item.getQty(), item.getUnitPrice(), item.getLineTotal(), item.isWholesaleApplied(),
-                item.getVariant().getProduct().getId(), item.getVariant().shortOption());
+                item.getVariant().getProduct().getId(), item.soldOptionLabel(),
+                item.soldOptionColor(), item.soldSwatchHex(), item.soldOptionSize(), item.soldImageUrl());
     }
 }
