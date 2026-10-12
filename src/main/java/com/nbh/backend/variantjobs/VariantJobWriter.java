@@ -180,10 +180,20 @@ public class VariantJobWriter {
         StaffUser by = job.getCreatedBy() == null ? null : staff.findById(job.getCreatedBy()).orElse(null);
 
         if (r.baseOption() != null && base.getOptionColor() == null && base.getOptionSize() == null) {
-            base.setOptionColor(ProductOptionsService.clean(r.baseOption().color()));
-            base.setOptionSize(ProductOptionsService.clean(r.baseOption().size()));
+            // Spelled as the wizard's lists spell them ("white" typed for the base is "White"), since the base, being
+            // first, would otherwise set the spelling every variant of that colour gets.
+            base.setOptionColor(spelled(nn(r.colors()).stream().map(VariantJobRequest.ColorIn::name).toList(),
+                    r.baseOption().color()));
+            base.setOptionSize(spelled(nn(r.sizes()).stream().map(VariantJobRequest.SizeIn::name).toList(),
+                    r.baseOption().size()));
             base.setSwatchHex(base.getOptionColor() == null ? null : hexOf(r, base.getOptionColor()));
             base.setColorFamily(base.getOptionColor() == null ? null : familyOf(r, base.getOptionColor()));
+            // A placeholder name ("Default", blank) becomes the generated one, like its new siblings'; a real name stays.
+            if ((base.getOptionColor() != null || base.getOptionSize() != null)
+                    && com.nbh.backend.catalog.dto.CatalogVariantCardDto.isMeaninglessName(base.getVariantName())) {
+                base.setVariantName(VariantCombos.variantName(product.getName(),
+                        new VariantCombos.Combo(base.getOptionColor(), base.getOptionSize()).label()));
+            }
             variants.save(base);
         }
         Set<String> existing = existingCombos(product.getId());
@@ -243,6 +253,7 @@ public class VariantJobWriter {
         productOptions.sync(product.getId());
         applyOptionDetails(product.getId(), r);
 
+        products.touch(product.getId(), Instant.now());
         job.setVariantsCreated(created);
         job.setStage(Stage.DESCRIPTIONS);
         job.setHeartbeatAt(Instant.now());
@@ -456,6 +467,14 @@ public class VariantJobWriter {
             }
         }
         return null;
+    }
+
+    /** The list's spelling of {@code value}, else {@code value} cleaned; null when blank. */
+    static String spelled(List<String> list, String value) {
+        String v = ProductOptionsService.clean(value);
+        if (v == null) return null;
+        return list.stream().map(ProductOptionsService::clean).filter(n -> n != null && n.equalsIgnoreCase(v))
+                .findFirst().orElse(v);
     }
 
     static boolean sameValue(String a, String b) {

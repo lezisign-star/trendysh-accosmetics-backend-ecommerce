@@ -256,8 +256,13 @@ class VariantJobIntegrationTest {
     @Test
     void aWholeJobMakesPricedNamedDescribedPhotographedVariantsWithStockAndOneRecolourPerColour() throws Exception {
         Made p = product(true);
+        String openedAt = ok(get("/api/v1/products/" + p.productId()), null).get("updatedAt").asText();
+        Thread.sleep(1100); // the editor compares to the second
         String id = start(lipstickRequest(p, false, null));
         JsonNode done = settled(id);
+        assertThat(ok(get("/api/v1/products/" + p.productId()), null).get("updatedAt").asText())
+                .as("an editor opened before the job must reload, not save its older variant list")
+                .isNotEqualTo(openedAt);
 
         JsonNode j = done.get("job");
         assertThat(j.get("status").asText()).isEqualTo("COMPLETED");
@@ -353,6 +358,21 @@ class VariantJobIntegrationTest {
         assertThat(published.get("job").get("status").asText()).isEqualTo("COMPLETED");
         assertThat(item(published, "Ruby Red / Full 3.5g").get("live").asBoolean()).isTrue();
         assertThat(attentionFor(attention(), id)).noneMatch(n -> n.get("actions").get(0).get("kind").asText().equals("PUBLISH_JOB"));
+    }
+
+    @Test
+    void theProductsOwnVariantTakesItsColourAndSizeAndLosesAPlaceholderName() throws Exception {
+        Made p = product(true);
+        String id = start("{\"productId\":\"" + p.productId() + "\",\"colors\":[{\"name\":\"White\"},{\"name\":\"Black\"}],"
+                + "\"everyCombination\":true,\"pricing\":{\"mode\":\"SAME\",\"price\":2600},"
+                + "\"baseOption\":{\"color\":\"white\",\"size\":null}}");
+        JsonNode done = settled(id);
+
+        assertThat(done.get("items")).as("White is the product itself, only Black is made").hasSize(1);
+        var base = variants.findById(UUID.fromString(p.baseId())).orElseThrow();
+        assertThat(base.getOptionColor()).isEqualTo("White");
+        assertThat(base.getVariantName()).isEqualTo(p.name() + " – White");
+        assertThat(base.getOptionLabel()).isEqualTo("White");
     }
 
     @Test

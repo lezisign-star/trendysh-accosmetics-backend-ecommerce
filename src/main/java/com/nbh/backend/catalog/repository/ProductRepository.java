@@ -27,6 +27,16 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     void updatePublishedState(@Param("id") UUID id, @Param("published") boolean published,
                                @Param("publishedAt") Instant publishedAt);
 
+    /**
+     * Marks the product as changed without loading it: for changes made to its variants from outside the product editor
+     * (a variant job, a colour renamed everywhere, several prices at once). The editor's Save compares this with the
+     * {@code updatedAt} it started from, so a page opened before the change is told to reload instead of saving its
+     * older list of variants over the new one (which would remove or rename them back).
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("UPDATE Product p SET p.updatedAt = :at WHERE p.id = :id")
+    void touch(@Param("id") UUID id, @Param("at") Instant at);
+
     Optional<Product> findBySlugAndIsPublishedTrueAndDeletedFalse(String slug);
 
     /**

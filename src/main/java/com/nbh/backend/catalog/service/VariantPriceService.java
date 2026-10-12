@@ -83,6 +83,7 @@ public class VariantPriceService {
             }
         }
         variants.saveAll(picked);
+        products.touch(productId, java.time.Instant.now());
         return new Result(picked.stream().map(ProductVariantDto::from).toList(), warnings);
     }
 

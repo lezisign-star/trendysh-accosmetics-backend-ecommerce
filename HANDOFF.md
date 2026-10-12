@@ -1,5 +1,28 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-12 (variants v2, phase 4, backend side) — an older editor can't undo a job; the product's own variant is named
+
+Found while live-testing the phase 4 screens (QA copy of the dev data, Gemini/Cloudinary stand-in; frontend HANDOFF same date).
+
+- **A stale editor could undo a job.** The editor's Save soft-deletes variants missing from its list and renames them back to its old names. Variant jobs, colour/size renames and bulk prices change variants without touching the product, so the editor's "someone else changed this product" check (`expectedUpdatedAt`) never fired.
+  - New `ProductRepository.touch(id, at)` (an `UPDATE`, no entity load). It's called by `VariantJobWriter.createAll`, `ProductOptionsService.update/reorder` and `VariantPriceService.apply`.
+  - A page opened before the change now gets 409 and reloads instead of saving an older list. The frontend also reloads a page that has nothing unsaved by itself.
+  - Tests:
+    - `anEditorOpenedBeforeAColourWasRenamedIsToldToReloadRatherThanSavingItsOlderVariants` (409, name kept)
+    - the first job test now checks that `updatedAt` moved
+  - The editor compares to the second, so a change in the same second as the page load still isn't caught (as before).
+- **The product's own variant ("This product itself is").**
+  - It now takes the wizard list's spelling ("white" typed for it becomes "White"). Being first, it otherwise set the spelling for every variant of that colour.
+  - A placeholder name ("Default", blank) becomes the generated "Product – White" like its new siblings; a real name stays.
+  - Test: `theProductsOwnVariantTakesItsColourAndSizeAndLosesAPlaceholderName`.
+- **Live check on the QA copy:**
+  - V61–V64 applied to a copy of the dev data (211 products, 652 variants; none had colours or sizes yet, so the V63 backfill had nothing to do).
+  - A 3-colour × 2-size job with one combination left out and the product as one cell made 4 variants with 3 AI photo calls and 3 uploads, as planned.
+  - Opening stock was posted, and the bell and dashboard listed the rest as "no stock" until added.
+  - A paused job (stand-in answering 429) showed "Paused: AI quota" and carried on once due.
+  - A source photo the test machine couldn't download failed those photos with a plain reason and listed them under Needs attention.
+
+
 
 ## 2026-10-12 (variants v2, phase 3) — variant jobs, the wizard's checks, colour/size management, bulk prices, Needs attention (V64)
 

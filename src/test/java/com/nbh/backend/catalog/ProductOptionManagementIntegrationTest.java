@@ -299,6 +299,22 @@ class ProductOptionManagementIntegrationTest {
     }
 
     @Test
+    void anEditorOpenedBeforeAColourWasRenamedIsToldToReloadRatherThanSavingItsOlderVariants() throws Exception {
+        String name = unique("Stale Editor");
+        JsonNode p = draft(name, v(name + " – Rubby / S", "650", "Rubby", "S", "#9B111E"));
+        String openedAt = p.get("updatedAt").asText();
+        Thread.sleep(1100); // the editor compares to the second
+        ok(patch(optionUrl(p, option(options(p), "COLOR", "Rubby"))), "{\"value\":\"Ruby\"}");
+
+        // The page still has the old name; its Save must not put it back.
+        refused(put("/api/v1/products/" + p.get("id").asText() + "/full"), "{\"expectedUpdatedAt\":\"" + openedAt
+                + "\",\"name\":\"" + name + "\",\"categoryIds\":[],\"published\":true,\"variants\":[{\"id\":\""
+                + p.get("variants").get(0).get("id").asText() + "\",\"variantName\":\"" + name
+                + " – Rubby / S\",\"sellingPrice\":\"650\",\"isActive\":true}]}", 409);
+        assertThat(variantsOf(p).get(0).get("variantName").asText()).isEqualTo(name + " – Ruby / S");
+    }
+
+    @Test
     void theListShowsColoursThenSizesInOrderWithHowManyVariantsHaveEach() throws Exception {
         JsonNode p = draft(unique("Bonnet"),
                 v("a", "550", "Black", "S", "#1F1A1C"), v("b", "650", "Black", "M", "#1F1A1C"),

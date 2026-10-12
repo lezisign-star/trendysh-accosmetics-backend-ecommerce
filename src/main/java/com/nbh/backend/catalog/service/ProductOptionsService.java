@@ -176,6 +176,7 @@ public class ProductOptionsService {
         options.save(row);
         variants.saveAll(having);
         sync(productId);
+        products.touch(productId, java.time.Instant.now());
         return toDto(options.findById(optionId).orElseThrow(),
                 variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId));
     }
@@ -205,6 +206,7 @@ public class ProductOptionsService {
         options.saveAll(rows);
         options.flush();
         sync(productId);
+        products.touch(productId, java.time.Instant.now());
         return list(productId);
     }
 
