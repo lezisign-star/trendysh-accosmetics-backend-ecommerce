@@ -286,6 +286,44 @@ Each item: `{key, severity: CRITICAL|ACTION|INFO, title, detail, productId?, job
 
 ---
 
+## 3.7 Phase 3 decisions added 2026-10-12, after Phases 1–2 shipped (read before starting Phase 3)
+
+- **Numbering:** Phase 1 took V62 and Phase 2 took V63 (`product_option_value`, `product_variant.color_family` / `size_position`, `ColorFamily`, `ProductOptionsService.sync`). The job tables are **V64**.
+- **Approve-first without photo drafts.** `image_draft.batch_id` is tied to `image_cleanup_batch`, and creating such rows would show variant jobs as photo studio runs and could trip its one-run lock. Instead:
+  - Approve-first creates the variants hidden (`is_active=false`) and attaches their photos directly. A hidden variant's photos never reach the shop.
+  - `POST /{id}/publish` makes them visible.
+  - Review = the job's variant list with thumbnails.
+  - Note this change from 3.2 in the HANDOFF.
+- **The pricing body needs the rule's numbers.** 3.4's `pricing` object lacks them. Use:
+  ```jsonc
+  "pricing": {"mode": "SAME|STEP_UP|STEP_DOWN|PER_SIZE|PER_CELL",
+              "price": 1100,                       // SAME
+              "start": 400, "step": 250,           // STEP_UP / STEP_DOWN, applied in size order
+              "sizePrices": {"50ml": 900},         // PER_SIZE
+              "colorAdjustments": [...], "cellOverrides": [...]}
+  ```
+  - **The server computes every cell's price:** cell override, else rule(size) + colour adjustment. For PER_CELL, `cells[].price` is required.
+  - A `cells[].price` that disagrees with the computed price gives 422.
+  - STEP modes need sizes.
+- **Colour and size management** (owner asked "are those colours manageable by staff and admins?"). These are new endpoints under `PERM_PRODUCT_MANAGE`; the screen comes in Phase 4.
+  - `GET /api/v1/products/{id}/options`: the product's list (rows from V63, with effective family).
+  - `PATCH /api/v1/products/{id}/options/{optionId}` with `{value?, swatchHex?, colorFamily?, sizeLabelText?, sizePhotoImageId?}`.
+    - **Renaming** updates every variant with that value: `optionColor`/`optionSize` and the label. A variant whose name is still the generated `VariantCombos.variantName(product, oldLabel)` gets the new name; a hand-written name is left alone.
+    - **A dot or family change** applies to all of that colour's variants.
+    - **Renaming to a value already on the list** gives 409, with no silent merge.
+  - `PUT /api/v1/products/{id}/options/order` `{kind, ids[]}` reorders. It refreshes each variant's `sizePosition` and keeps the list complete (missing or extra ids give 400).
+  - Removing a colour stays the editor's job (remove its variants); sync then drops it.
+  - The colour family list itself is fixed (`ColorFamily` enum). Adding a family needs a code change, so tell the owner if they ask.
+- **Pieces to reuse:**
+  - Descriptions: `VariantPlanner.details`.
+  - Photos: `VariantPhotoPromptBuilder`. Add a "change only the printed size to X" prompt for the label-text step.
+  - Gemini and storage: `GeminiImageClient.edit/download`, `GeminiTextClient.ask` (accepts a photo), `CloudinaryUploader.upload`, `WatermarkService.stamp`.
+  - Opening stock: `VariantStockService.addOnHand(productId, variantId, qty, unitCost, "Opening stock", allowUnknownCost=true, staff)`. It refuses kits; the job's staff user = `created_by`.
+  - SKUs: `ProductService.nextSku`.
+  - Live updates: publish `DataChangedEvent` with a new staff-only topic `VARIANT_JOBS` (add it to `Topic` and to `isPublic()`'s exclusions). Listeners use `fallbackExecution = true`, so publishing from the worker thread works.
+  - `@EnableScheduling` is already on. The test profile pushes sweepers' initial delays out an hour; do the same for the job poller and call it directly in tests.
+- **Local tests:** run with `DB_PASSWORD=janet-marketing` (see the HANDOFF). The full suite was 964 after Phase 2.
+
 ## 4. Phases
 
 Each phase ends with:
