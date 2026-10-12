@@ -151,6 +151,18 @@ public class SwatchSuggester {
         return out;
     }
 
+    /** A shade the built-in list knows, with its dot and family. */
+    public record Shade(String hex, ColorFamily family) {}
+
+    /** The built-in list's dot and family for a colour name ("Deep Ruby Red" → ruby), or null when it knows none. */
+    public static Shade knownShade(String name) {
+        Known k = name == null ? null : fromList(name);
+        if (k == null) {
+            return null;
+        }
+        return new Shade(k.hex(), k.family() != null ? k.family() : ColorFamily.fromHex(k.hex()));
+    }
+
     /** The longest known shade word in the name ("Deep Ruby Red" → "ruby"), as a whole word. */
     static Known fromList(String name) {
         String n = " " + name.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]", " ").replaceAll("\\s+", " ").trim() + " ";

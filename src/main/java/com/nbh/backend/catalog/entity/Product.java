@@ -100,4 +100,11 @@ public class Product extends BaseEntity {
      *  else in the codebase needs to know this flag exists. */
     @Column(nullable = false)
     private boolean isMockData = false;
+
+    /**
+     * When staff looked at this product's variants in "Tidy colours & sizes" (gave them colours/sizes, or left them as
+     * they are). Null = not looked at; see {@code TidyOptionsService}. V65.
+     */
+    @Column(name = "options_reviewed_at")
+    private Instant optionsReviewedAt;
 }

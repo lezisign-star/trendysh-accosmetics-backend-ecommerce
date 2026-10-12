@@ -33,7 +33,7 @@ public class AttentionService {
     public enum Severity { CRITICAL, ACTION, INFO }
 
     /** What a button does. The screen knows where each kind leads; ids say what it is about. */
-    public enum ActionKind { RETRY_JOB, OPEN_JOB, PUBLISH_JOB, UPLOAD_PHOTOS, ADD_STOCK }
+    public enum ActionKind { RETRY_JOB, OPEN_JOB, PUBLISH_JOB, UPLOAD_PHOTOS, ADD_STOCK, TIDY_OPTIONS }
 
     public record Action(String label, ActionKind kind) {}
 
@@ -51,15 +51,18 @@ public class AttentionService {
     private final ProductRepository products;
     private final ProductVariantRepository variants;
     private final StockAvailabilityService availability;
+    private final com.nbh.backend.variantjobs.TidyOptionsService tidy;
     private final Clock clock;
 
     public AttentionService(VariantJobRepository jobs, VariantJobItemRepository items, ProductRepository products,
-                            ProductVariantRepository variants, StockAvailabilityService availability, Clock clock) {
+                            ProductVariantRepository variants, StockAvailabilityService availability,
+                            com.nbh.backend.variantjobs.TidyOptionsService tidy, Clock clock) {
         this.jobs = jobs;
         this.items = items;
         this.products = products;
         this.variants = variants;
         this.availability = availability;
+        this.tidy = tidy;
         this.clock = clock;
     }
 
@@ -126,6 +129,15 @@ public class AttentionService {
             }
         }
         out.addAll(noStock(madeVariantIds, recent, itemsByJob, productNames));
+
+        // Products from before variants v2 whose variants have no colour or size: not urgent, so INFO (not counted).
+        int untidy = tidy.count();
+        if (untidy > 0) {
+            out.add(new Item("tidy-options", Severity.INFO,
+                    untidy + " product" + (untidy == 1 ? " has" : "s have") + " variants without a colour or size",
+                    "Give them colours and sizes so they show in the shop's colour and size picker and filters.",
+                    null, null, null, List.of(), List.of(new Action("Tidy them", ActionKind.TIDY_OPTIONS)), null));
+        }
 
         out.sort(Comparator.comparing(Item::severity)
                 .thenComparing(Item::since, Comparator.nullsLast(Comparator.reverseOrder())));

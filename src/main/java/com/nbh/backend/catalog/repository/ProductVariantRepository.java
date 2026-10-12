@@ -116,4 +116,12 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     List<ProductVariant> findGeneratedNeedingImages();
 
     List<ProductVariant> findByGenerationBatchId(UUID generationBatchId);
+
+    /** Live variants (not kits) of real products not yet looked at in "Tidy colours & sizes", with their product. */
+    @Query("""
+            SELECT v FROM ProductVariant v JOIN FETCH v.product p
+            WHERE v.deleted = false AND v.isKit = false AND p.deleted = false AND p.isMockData = false
+              AND p.optionsReviewedAt IS NULL
+            """)
+    List<ProductVariant> findForOptionsReview();
 }

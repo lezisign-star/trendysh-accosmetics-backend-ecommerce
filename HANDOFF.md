@@ -1,6 +1,32 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
 
+## 2026-10-12 (variants v2, phase 6) — "Tidy colours & sizes" for products from before colours and sizes (V65)
+
+Plan phase 6. Products made before variants v2 tell their variants apart only by name ("Clear 100g", "Chrome Mirror Gel Polish - Red"), so the shop's colour/size picker and filters can't use them. The QA copy of the dev data had 35 such products.
+
+- **V65:** `product.options_reviewed_at`. Null means not looked at yet.
+- **`variantjobs.TidyOptionsService`** + `TidyOptionsController`, under `PERM_PRODUCT_MANAGE` at `/api/v1/admin/tidy-options`:
+  - `GET ?limit=` returns {total, products: [{productId, productName, variants: [{variantId, name, option, color, size, swatchHex, colorFamily, alreadySet}]}]}.
+    - **Listed products:** real (not demo) products not reviewed yet, with 2+ live variants (not kits), where some variant has neither a colour nor a size. Sorted alphabetically.
+    - **Suggestions** come from the variant's option:
+      - The option is split on `/ | ,` and spaced dashes.
+      - A size is a whole part ("50ml", "Large", "Mini"), or a size written at the start or end of a part, which is split off ("Clear 100g" → 100g + Clear).
+      - The colour comes from the last part the built-in shade list knows ("Chrome Mirror Gel Polish - Red" → Red, not Chrome). Its dot and family come from that list (`SwatchSuggester.knownShade`, now public).
+      - Anything else gets no suggestion; staff fill it in.
+  - `POST /{productId}` {variants: [{variantId, color, size, swatchHex, colorFamily}]} applies them exactly (blank clears). A bad dot gives 400, and a variant not on the product gives 400 with nothing saved. It then syncs the colour/size list and marks the product reviewed. Saving the product moves `updatedAt`, so an open editor reloads.
+  - `POST /{productId}/leave` marks the product reviewed without changing its variants ("Pack of 3" is not a colour or size).
+- **Needs attention** gains an INFO item "N products have variants without a colour or size" with the action `TIDY_OPTIONS`. It isn't counted in the badge.
+- **Tests:** `TidyOptionsIntegrationTest` (6):
+  - suggestions, including unknown names left empty
+  - the real-data names ("Clear 100g", "… - Red")
+  - saving fills the variants and the list and removes the product
+  - leave
+  - one-variant and already-tidy products not listed
+  - a bad dot or a stranger variant gives 400 with nothing saved, plus the attention item
+  - Full suite: 1011/1011 before the real-data suggestion test was added; that class then passed 6/6. Verified live on the QA copy: 35 products listed, Acrylic Powder Set saved as Clear/Pink/White 100g (the shop then had its colours and size), Beauty Blender Sponge left as it is.
+
+
 ## 2026-10-12 (variants v2, phase 5, backend side) — basket lines say which colour and size
 
 - `CartItemDto` gained `optionLabel` (the short option), `optionColor`, `optionSize` and `swatchHex`, all at the end and nullable. They're the variant as it is now; the order freezes them at checkout (phase 1). The cart drawer and checkout show them as Colour / Size / SKU tags (frontend HANDOFF same date).
