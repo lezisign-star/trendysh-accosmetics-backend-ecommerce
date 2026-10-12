@@ -61,6 +61,10 @@ public class ProductService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.nbh.backend.imagecleanup.ImageDraftRepository drafts;
 
+    /** Keeps the product's colour and size list in step with its variants (V63); same optional injection, null = not kept. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ProductOptionsService productOptions;
+
     private final ProductRepository productRepository;
     private final ProductVariantRepository variantRepository;
     private final BrandRepository brandRepository;
@@ -201,6 +205,9 @@ public class ProductService {
             variant.setSellingPrice(parsePriceOrNull(in.sellingPrice()));
             variant.setActive(in.isActive());
             variant.setSortOrder(order++);
+            if (in.options() != null) {
+                applyOptions(variant, in.options());
+            }
             variant = variantRepository.save(variant);
             keep.add(variant.getId());
             kept.add(variant);
@@ -218,6 +225,34 @@ public class ProductService {
         if (kept.size() == 1) {
             fileLoosePhotosUnder(product, kept.get(0));
         }
+        if (productOptions != null) {
+            productOptions.sync(product.getId());
+        }
+    }
+
+    /**
+     * The editor's colour/size for one variant, exactly as sent. The short option the picker and orders show follows
+     * them ("Ruby Red / 50ml"); with neither it is cleared, so the name is used as before.
+     */
+    private static void applyOptions(ProductVariant variant, SaveProductRequest.VariantOptions o) {
+        String color = ProductOptionsService.clean(o.color());
+        String size = ProductOptionsService.clean(o.size());
+        String hex = null;
+        if (o.swatchHex() != null && !o.swatchHex().isBlank()) {
+            hex = com.nbh.backend.variantgen.VariantCombos.normaliseHex(o.swatchHex());
+            if (hex == null) {
+                throw new IllegalArgumentException("\"" + o.swatchHex().trim() + "\" is not a colour like #9B111E");
+            }
+        }
+        com.nbh.backend.catalog.entity.ColorFamily family = com.nbh.backend.catalog.entity.ColorFamily.parse(o.colorFamily());
+        variant.setOptionColor(color);
+        variant.setOptionSize(size);
+        variant.setSwatchHex(color == null ? null : hex);
+        variant.setColorFamily(color == null || family == null ? null : family.name());
+        if (color == null && size == null) {
+            variant.setOptionLabel(null);
+        }
+        // Otherwise ProductOptionsService.sync writes the label, once it has settled how the colour and size are spelled.
     }
 
     /**
@@ -320,8 +355,17 @@ public class ProductService {
             nv.setReorderLevel(sv.getReorderLevel());
             nv.setSortOrder(sv.getSortOrder());
             nv.setActive(sv.isActive());
+            nv.setOptionLabel(sv.getOptionLabel());
+            nv.setOptionColor(sv.getOptionColor());
+            nv.setOptionSize(sv.getOptionSize());
+            nv.setSwatchHex(sv.getSwatchHex());
+            nv.setColorFamily(sv.getColorFamily());
             variantRepository.save(nv);
             copiedOption.put(sv.getId(), nv);
+        }
+        if (productOptions != null) {
+            productOptions.copyList(productId, copy.getId());
+            productOptions.sync(copy.getId());
         }
 
         for (ProductImage si : imageRepository.findByProductIdOrderBySortOrderAsc(productId)) {

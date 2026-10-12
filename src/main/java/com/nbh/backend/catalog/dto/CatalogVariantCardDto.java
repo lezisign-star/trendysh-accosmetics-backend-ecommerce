@@ -69,7 +69,17 @@ public record CatalogVariantCardDto(
         /** The option on its own ("Emerald Green"), for the variant picker; null when the card shows only the product. */
         String optionLabel,
         /** The picker's colour dot "#RRGGBB", when the variant has a colour; null otherwise. */
-        String swatchHex
+        String swatchHex,
+        /** The variant's colour on its own ("Ruby Red"), sent even when the card hides the option; null = no colour (V63). */
+        String optionColor,
+        /** The variant's size on its own ("50ml"); null = no size. */
+        String optionSize,
+        /** The {@code ColorFamily} name the shop filters it under ("RED"): staff's choice, else from the dot; null = no colour. */
+        String colorFamily,
+        /** Where its size sits in the product's size order, 0 first; null = no size. */
+        Integer sizePosition,
+        /** The product's brand; null when it has none. */
+        String brandName
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */
     public static boolean isMeaninglessName(String variantName) {

@@ -54,6 +54,7 @@ class VariantGenerationIntegrationTest {
     @Autowired private ProductRepository products;
     @Autowired private ProductVariantRepository variants;
     @Autowired private ProductImageRepository images;
+    @Autowired private com.nbh.backend.catalog.repository.ProductOptionValueRepository optionRows;
 
     private HttpServer stub;
     private final AtomicInteger imageCalls = new AtomicInteger();
@@ -216,6 +217,11 @@ class VariantGenerationIntegrationTest {
 
         // The admin order line / label names the colour, not the title twice.
         assertThat(variants.findWithProductById(all.get(1).getId()).orElseThrow().displayLabel()).isEqualTo(made.name() + " (Green)");
+
+        // The product's colour list (V63) takes in the new colours in the order they were made; the base has none.
+        assertThat(optionRows.findByProductIdOrderByKindAscPositionAsc(UUID.fromString(made.productId())).stream()
+                .map(o -> o.getKind() + ":" + o.getValue() + ":" + o.getPosition() + ":" + o.getSwatchHex()).toList())
+                .containsExactly("COLOR:Green:0:#1A7F4B", "COLOR:Blue:1:null");
     }
 
     @Test

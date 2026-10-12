@@ -34,7 +34,17 @@ public record ProductVariantDto(
         BigDecimal dealPrice,
         Instant dealEndsAt,
         Integer wholesaleMinQty,
-        BigDecimal wholesalePrice
+        BigDecimal wholesalePrice,
+        /** The short option the picker and orders show ("Ruby Red / 50ml"); null = the name is used. */
+        String optionLabel,
+        String optionColor,
+        String optionSize,
+        String swatchHex,
+        /** Staff's choice of {@code ColorFamily} by name; null = none chosen (see {@code suggestedColorFamily}). */
+        String colorFamily,
+        /** The family the dot looks like, what the shop uses when staff chose none; null without a dot. */
+        String suggestedColorFamily,
+        Integer sizePosition
 ) {
     public static ProductVariantDto from(ProductVariant v) {
         return from(v, null);
@@ -46,6 +56,13 @@ public record ProductVariantDto(
                 v.getSellingPrice(), v.getCompareAtPrice(),
                 v.getStandardCost(), v.getUom(), v.getVatRate(), v.isVatExempt(), v.getReorderLevel(), v.isActive(),
                 availableQty, v.getDealPrice(), v.getDealEndsAt(),
-                v.getWholesaleMinQty(), v.getWholesalePrice());
+                v.getWholesaleMinQty(), v.getWholesalePrice(),
+                v.getOptionLabel(), v.getOptionColor(), v.getOptionSize(), v.getSwatchHex(), v.getColorFamily(),
+                v.getSwatchHex() == null ? null : nameOf(com.nbh.backend.catalog.entity.ColorFamily.fromHex(v.getSwatchHex())),
+                v.getSizePosition());
+    }
+
+    private static String nameOf(com.nbh.backend.catalog.entity.ColorFamily f) {
+        return f == null ? null : f.name();
     }
 }

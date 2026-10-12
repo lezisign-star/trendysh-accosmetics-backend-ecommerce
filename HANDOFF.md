@@ -1,6 +1,57 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
 
+## 2026-10-12 (variants v2, phase 2) — each product's own colour and size list; the shop gets colour, size, family and brand (V63)
+
+Plan section 3.1 / 3.6, `VARIANTS_PLAN.md`. Backend only; no frontend change was needed (every new field is optional, and the current editor keeps working, see below).
+
+- **V63** (`V63__product_options.sql`; Phase 1 took V62, so the job tables in Phase 3 become V64):
+  - New table `product_option_value`: one row per colour or size a product comes in, in shop order (`kind` COLOR/SIZE, `value`, `position`, `swatch_hex`, `color_family`, `size_label_text`, `size_photo_image_id`). It has a unique index on (product, kind, lower(value)).
+  - `product_variant` gains `color_family` and `size_position`.
+  - **Backfill** from the variants that already have a colour or size (the generated ones):
+    - one row per distinct value, ignoring case and spaces
+    - ordered and spelled as the product's first variant with it
+    - the dot comes from the first variant that has one
+    - removed variants are ignored
+    - each live variant's `size_position` is filled
+- **Colour family** (`catalog.entity.ColorFamily`: RED, PINK, CORAL, ORANGE, NUDE, BROWN, PURPLE, BLUE, GREEN, YELLOW, GOLD, SILVER, WHITE, BLACK, GREY, CLEAR, MULTI):
+  - **The column holds staff's choice only.** Null means "work it out from the dot" (`fromHex`, hue/saturation/lightness buckets tuned on the mockup's shades), so the migration needed no hue maths.
+  - `effectiveColorFamily()` on the variant and on the row gives staff's choice, else the dot's family.
+  - CLEAR, SILVER and MULTI can't be seen in a dot; only staff choose them.
+  - Sent by name ("RED").
+- **`ProductOptionsService.sync(productId)`** keeps the list in step with the variants. It's called by the editor's save, by duplicate (after `copyList`) and by the old generator (`VariantGenerationWriter.createVariants`).
+  - **What's listed:** a value is listed while a non-removed variant has it. Hidden ones count, so approve-first runs keep their options.
+  - **Spelling:** matching ignores case and spaces, and the variant is re-spelled as the list spells it.
+  - **Order:** stored order is kept, new values go at the end, and positions are renumbered.
+  - **Dots and families:** a colour's dot and family come from the list, else from the first variant that has one, and variants missing them take the list's.
+  - Each variant's `sizePosition` follows its size's place.
+  - A variant with a colour or size gets the label "Ruby Red / 50ml".
+- **Editor save** (`SaveProductRequest.VariantInput`) gains an optional `options` {color, size, swatchHex, colorFamily}.
+  - **Null means leave as is.** That's what today's editor sends, so saving from it never wipes a generated variant's colour or size. This is tested.
+  - **Sent means exactly these:** a blank clears that field, and clearing both also clears the label.
+  - A bad dot or a made-up family is refused with 400 and the value named.
+  - The old 5-argument constructor is kept (`MockDataSeederService` uses it).
+- **Duplicate** now copies each variant's label, colour, size, dot and family, plus the product's list. It used to drop the V61 fields. A size's photo isn't copied, because it's one of the source's photos.
+- **DTOs** (all fields added at the end and optional):
+  - `CatalogVariantCardDto` (cards and siblings) gains `optionColor`, `optionSize`, `colorFamily` (effective), `sizePosition` and `brandName`. These are sent even when the card hides the option, so a one-option product still filters by colour.
+  - `CatalogVariantDetailDto` gains `colors[]` and `sizes[]` (`CatalogOptionDto`: value, swatchHex, colorFamily, position).
+    - These are in the list's order, and only values a sellable variant has are included, so the shop never offers a colour that can't be bought. The hidden or unpriced ones stay on the list.
+    - A product with no list (made before V63 and never saved since, e.g. demo data) gets them from its sellable variants.
+  - `ProductVariantDto` (admin) gains `optionLabel`, `optionColor`, `optionSize`, `swatchHex`, `colorFamily` (staff's choice), `suggestedColorFamily` (from the dot) and `sizePosition`.
+- `CatalogService` takes `ProductOptionValueRepository` (the constructor's second-last parameter). `ProductService` has it optionally field-injected like its other optional collaborators, so the hand-built unit tests still work.
+- **Tests:**
+  - `ColorFamilyTest` (25): the mockup's shades and others, hex forms, parse/refuse, an unknown stored value is ignored.
+  - `ProductOptionsMigrationTest` (5): backfill on V62-shaped data, covering generator order, a second spelling, a dot only on a later variant, a removed variant, a plain product, and the case-insensitive unique index.
+  - `ProductOptionsIntegrationTest` (9): the editor list, spelling and dot/family spread; the card and detail fields; an old editor leaves options alone; order kept, unused values dropped and new ones appended; clearing; only buyable colours offered; fallback without a list; brand on the card; a bad dot or family gives 400; duplicate.
+  - `VariantGenerationIntegrationTest` (+1 assertion): the old generator fills the list.
+  - Full suite: 964/964 on the local test database (925 before).
+- **Not done / assumptions:**
+  - `brandName` lazy-loads each distinct brand on a page, at most one query per brand, which are few. Batch it if the card page ever shows up as slow.
+  - Nothing fills `size_label_text` or `size_photo_image_id` yet (Phase 3).
+  - The editor screen doesn't show or send colours and sizes yet (Phase 4), and the storefront doesn't read the new fields yet (Phase 5).
+  - The catalogue search `q` doesn't match colour or size words beyond what the variant name already contains; the plan puts that in the frontend's search (Phase 5).
+
+
 ## 2026-10-12 (variants v2, phase 1) — order lines remember what was bought (V62)
 
 Owner (plan requirement 10, `VARIANTS_PLAN.md`): "what the customer picked is exactly what staff see: name, colour (with its dot), size, SKU and price on the order. It's saved at checkout, so later edits never change old orders."

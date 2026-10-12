@@ -51,6 +51,14 @@ public class ProductVariant extends BaseEntity {
     @Column(name = "swatch_hex", length = 9)
     private String swatchHex;
 
+    /** Staff's choice of {@link ColorFamily} by name (V63); null = worked out from {@link #swatchHex}. See {@link #effectiveColorFamily()}. */
+    @Column(name = "color_family", length = 20)
+    private String colorFamily;
+
+    /** Where {@link #optionSize} sits in the product's size order, 0 first (V63); null = no size. Kept by {@code ProductOptionsService.sync}. */
+    @Column(name = "size_position")
+    private Integer sizePosition;
+
     /** Set on a variant the AI generated: the variant it was made from, and the run that made it. */
     @Column(name = "generated_from_variant_id")
     private java.util.UUID generatedFromVariantId;
@@ -135,6 +143,12 @@ public class ProductVariant extends BaseEntity {
      */
     @Column(name = "is_kit", nullable = false)
     private boolean isKit = false;
+
+    /** The colour family the shop filters this variant under: staff's choice, else what its dot looks like; null = no colour. */
+    public ColorFamily effectiveColorFamily() {
+        ColorFamily chosen = ColorFamily.ofStored(colorFamily);
+        return chosen != null ? chosen : ColorFamily.fromHex(swatchHex);
+    }
 
     /** Not deleted, not hidden, and has a price — the one definition of "can appear/be sold" everywhere. */
     public boolean isSellable() {

@@ -6,6 +6,7 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductImageRepository;
 import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.catalog.service.ProductOptionsService;
 import com.nbh.backend.catalog.service.ProductService;
 import com.nbh.backend.common.event.DataChangedEvent;
 import com.nbh.backend.imagecleanup.ImageCleanupBatch;
@@ -44,11 +45,12 @@ public class VariantGenerationWriter {
     private final ImageCleanupItemRepository items;
     private final ProductService productService;
     private final ApplicationEventPublisher events;
+    private final ProductOptionsService productOptions;
 
     public VariantGenerationWriter(ProductRepository products, ProductVariantRepository variants,
                                    ProductImageRepository images, ImageCleanupBatchRepository batches,
                                    ImageCleanupItemRepository items, ProductService productService,
-                                   ApplicationEventPublisher events) {
+                                   ApplicationEventPublisher events, ProductOptionsService productOptions) {
         this.products = products;
         this.variants = variants;
         this.images = images;
@@ -56,6 +58,7 @@ public class VariantGenerationWriter {
         this.items = items;
         this.productService = productService;
         this.events = events;
+        this.productOptions = productOptions;
     }
 
     /** The base variant (the chosen one, else the product's first live one) and the photo to work from. Empty if the product is gone. */
@@ -157,6 +160,8 @@ public class VariantGenerationWriter {
             v = variants.save(v);
             out.add(new NewVariant(v.getId(), v.displayLabel(), p.combo().color(), p.combo().size(), p.swatchHex()));
         }
+        // The product's colour/size list (V63) takes in the new options, so the shop's picker knows their order.
+        productOptions.sync(productId);
         batches.findById(batchId).ifPresent(b -> {
             b.setRequestedCount(planned.size());
             batches.save(b);

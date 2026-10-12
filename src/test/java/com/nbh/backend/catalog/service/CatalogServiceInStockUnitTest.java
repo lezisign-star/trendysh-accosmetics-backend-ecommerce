@@ -42,6 +42,7 @@ class CatalogServiceInStockUnitTest {
     @Mock private StockAvailabilityService availabilityService;
     @Mock private KitAvailabilityService kitAvailability;
     @Mock private PromoCampaignService promoCampaignService;
+    @Mock private com.nbh.backend.catalog.repository.ProductOptionValueRepository optionRepository;
 
     private CatalogService catalogService;
     private Product product;
@@ -59,7 +60,7 @@ class CatalogServiceInStockUnitTest {
         catalogService = new CatalogService(productRepository, variantRepository, imageRepository,
                 reviewRepository, saleEventRepository, viewEventRepository,
                 categoryRepository, availabilityService, kitAvailability, new EffectivePriceResolver(Clock.systemUTC()),
-                promoCampaignService, Clock.systemUTC());
+                promoCampaignService, optionRepository, Clock.systemUTC());
 
         product = new Product();
         product.setId(UUID.randomUUID());

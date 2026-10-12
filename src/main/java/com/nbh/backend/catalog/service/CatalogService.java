@@ -39,6 +39,7 @@ public class CatalogService {
     private final KitAvailabilityService kitAvailability;
     private final EffectivePriceResolver priceResolver;
     private final PromoCampaignService promoCampaignService;
+    private final ProductOptionValueRepository optionRepository;
     private final Clock clock;
 
     public CatalogService(ProductRepository productRepository,
@@ -52,6 +53,7 @@ public class CatalogService {
                            KitAvailabilityService kitAvailability,
                            EffectivePriceResolver priceResolver,
                            PromoCampaignService promoCampaignService,
+                           ProductOptionValueRepository optionRepository,
                            Clock clock) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
@@ -64,6 +66,7 @@ public class CatalogService {
         this.kitAvailability = kitAvailability;
         this.priceResolver = priceResolver;
         this.promoCampaignService = promoCampaignService;
+        this.optionRepository = optionRepository;
         this.clock = clock;
     }
 
@@ -143,7 +146,49 @@ public class CatalogService {
                 primaryParent != null ? primaryParent.getName() : null,
                 primaryParent != null ? primaryParent.getSlug() : null,
                 com.nbh.backend.imagecleanup.DescriptionCaps.splitHighlights(product.getHighlights()),
-                product.getSeoTitle(), product.getSeoDescription());
+                product.getSeoTitle(), product.getSeoDescription(),
+                pickerOptions(product.getId(), siblings, ProductOptionValue.Kind.COLOR),
+                pickerOptions(product.getId(), siblings, ProductOptionValue.Kind.SIZE));
+    }
+
+    /**
+     * The picker's colours or sizes, in the product's stored order (V63), keeping only those a sellable variant has, so
+     * the shop never offers a colour that cannot be bought. A product with no stored list (made before V63 and not
+     * saved since) gets them from its sellable variants in display order.
+     */
+    private List<CatalogOptionDto> pickerOptions(UUID productId, List<ProductVariant> sellable, ProductOptionValue.Kind kind) {
+        boolean color = kind == ProductOptionValue.Kind.COLOR;
+        java.util.function.Function<ProductVariant, String> valueOf = color ? ProductVariant::getOptionColor
+                : ProductVariant::getOptionSize;
+        Map<String, ProductVariant> firstWith = new java.util.LinkedHashMap<>();
+        for (ProductVariant v : sellable) {
+            String value = ProductOptionsService.clean(valueOf.apply(v));
+            if (value != null) {
+                firstWith.putIfAbsent(value.toLowerCase(java.util.Locale.ROOT), v);
+            }
+        }
+        if (firstWith.isEmpty()) {
+            return List.of();
+        }
+        List<ProductOptionValue> stored = optionRepository.findByProductIdOrderByKindAscPositionAsc(productId).stream()
+                .filter(o -> o.getKind() == kind)
+                .filter(o -> firstWith.containsKey(o.getValue().trim().toLowerCase(java.util.Locale.ROOT)))
+                .toList();
+        List<CatalogOptionDto> out = new java.util.ArrayList<>();
+        if (!stored.isEmpty()) {
+            for (ProductOptionValue o : stored) {
+                ColorFamily family = color ? o.effectiveColorFamily() : null;
+                out.add(new CatalogOptionDto(o.getValue(), color ? o.getSwatchHex() : null,
+                        family == null ? null : family.name(), out.size()));
+            }
+            return out;
+        }
+        for (ProductVariant v : firstWith.values()) {
+            ColorFamily family = color ? v.effectiveColorFamily() : null;
+            out.add(new CatalogOptionDto(ProductOptionsService.clean(valueOf.apply(v)), color ? v.getSwatchHex() : null,
+                    family == null ? null : family.name(), out.size()));
+        }
+        return out;
     }
 
     private CatalogVariantCardDto toCard(ProductVariant v, PromoCampaign activeCampaign,
@@ -175,7 +220,10 @@ public class CatalogService {
                 soldByVariant.getOrDefault(v.getId(), BigDecimal.ZERO),
                 availableQty, v.getSku(), p.getDescription(),
                 (int) Math.max(0, sellableCount - 1), v.getWholesaleMinQty(), v.getWholesalePrice(),
-                p.getShortDescription(), optionLabel, v.getSwatchHex());
+                p.getShortDescription(), optionLabel, v.getSwatchHex(),
+                v.getOptionColor(), v.getOptionSize(),
+                v.effectiveColorFamily() == null ? null : v.effectiveColorFamily().name(),
+                v.getSizePosition(), p.getBrand() == null ? null : p.getBrand().getName());
     }
 
     /**

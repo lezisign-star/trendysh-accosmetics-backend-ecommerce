@@ -37,6 +37,26 @@ public record SaveProductRequest(
             String description,
             /** A decimal string, or null/blank for "no price yet". */
             String sellingPrice,
-            boolean isActive
+            boolean isActive,
+            /**
+             * The variant's colour and size (V63). Null = leave them as they are, which is what an editor from before
+             * this field sends, so saving from it never wipes a generated variant's colour or size. Sent = exactly
+             * these (blank clears one).
+             */
+            VariantOptions options
+    ) {
+        /** The four-argument form editors and seeders used before options existed. */
+        public VariantInput(UUID id, String variantName, String description, String sellingPrice, boolean isActive) {
+            this(id, variantName, description, sellingPrice, isActive, null);
+        }
+    }
+
+    public record VariantOptions(
+            String color,
+            String size,
+            /** "#RRGGBB" (with or without the #); blank = none. Anything else is refused. */
+            String swatchHex,
+            /** A {@code ColorFamily} name, any case; blank = work it out from the dot. Anything else is refused. */
+            String colorFamily
     ) {}
 }

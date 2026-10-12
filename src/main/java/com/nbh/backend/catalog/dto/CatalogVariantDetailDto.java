@@ -28,5 +28,12 @@ public record CatalogVariantDetailDto(
         List<String> highlights,
         /** What a search result shows for this product; null when none was written (the page then falls back to its name). */
         String seoTitle,
-        String seoDescription
+        String seoDescription,
+        /**
+         * The product's colours in the picker's order, only those at least one sellable variant has (V63). Built from
+         * {@code siblings} for a product with no stored list. Empty = the product has no colours.
+         */
+        List<CatalogOptionDto> colors,
+        /** The product's sizes in order, same rules. Empty = no sizes. */
+        List<CatalogOptionDto> sizes
 ) {}
