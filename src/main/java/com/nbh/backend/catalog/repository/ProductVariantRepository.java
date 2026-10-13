@@ -111,9 +111,21 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             WHERE v.deleted = false AND p.deleted = false AND v.generatedFromVariantId IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM ProductImage i WHERE i.variant = v)
               AND NOT EXISTS (SELECT 1 FROM com.nbh.backend.imagecleanup.ImageDraft d WHERE d.variantId = v.id)
+              AND NOT EXISTS (SELECT 1 FROM com.nbh.backend.variantjobs.VariantJobItem ji WHERE ji.variantId = v.id)
             ORDER BY v.createdAt DESC
             """)
     List<ProductVariant> findGeneratedNeedingImages();
+
+    /**
+     * Of these variants, the ones whose "photo failed" no longer needs doing anything about: the variant was removed,
+     * or it now has a photo of its own (staff uploaded one, or another run made it).
+     */
+    @Query("""
+            SELECT v.id FROM ProductVariant v
+            WHERE v.id IN :ids
+              AND (v.deleted = true OR EXISTS (SELECT 1 FROM ProductImage i WHERE i.variant = v))
+            """)
+    List<UUID> findIdsRemovedOrWithOwnPhoto(@Param("ids") Collection<UUID> ids);
 
     List<ProductVariant> findByGenerationBatchId(UUID generationBatchId);
 

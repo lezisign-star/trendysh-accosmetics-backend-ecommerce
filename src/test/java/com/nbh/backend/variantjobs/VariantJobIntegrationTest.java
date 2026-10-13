@@ -62,6 +62,8 @@ class VariantJobIntegrationTest {
     @Autowired private VariantJobRepository jobs;
     @Autowired private VariantJobWriter writer;
     @Autowired private VariantJobPoller poller;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    @Autowired private org.springframework.transaction.PlatformTransactionManager txManager;
 
     private HttpServer stub;
     private final AtomicInteger imageCalls = new AtomicInteger();
@@ -252,6 +254,107 @@ class VariantJobIntegrationTest {
     }
 
     // ---------------------------------------------------------------- tests
+
+    private Instant versionOf(Made p) throws Exception {
+        return Instant.parse(ok(get("/api/v1/products/" + p.productId()), null).get("updatedAt").asText());
+    }
+
+    private java.math.BigDecimal standardCostOf(Made p, String colour, String size) {
+        return jdbc.queryForObject("SELECT standard_cost FROM product_variant WHERE product_id = ?::uuid "
+                + "AND option_color = ? AND option_size = ? AND deleted = false", java.math.BigDecimal.class,
+                p.productId(), colour, size);
+    }
+
+    private java.math.BigDecimal averageCostOf(Made p, String colour, String size) {
+        return jdbc.queryForObject("SELECT b.avg_cost FROM stock_balance b JOIN product_variant v ON v.id = b.variant_id "
+                + "WHERE v.product_id = ?::uuid AND v.option_color = ? AND v.option_size = ? AND b.account = 'SHOP'",
+                java.math.BigDecimal.class, p.productId(), colour, size);
+    }
+
+    @Test
+    void descriptionsAJobWritesMoveTheProductVersionSoAnOlderEditorFormIsNotPutBack() throws Exception {
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, null));
+        JsonNode done = settled(id);
+        String itemId = done.get("items").get(0).get("id").asText();
+        jdbc.update("UPDATE product SET updated_at = now() - interval '1 hour' WHERE id = ?::uuid", p.productId());
+
+        writer.saveDescriptions(UUID.fromString(id), Map.of(UUID.fromString(itemId), "Rewritten for the shop."));
+
+        assertThat(versionOf(p)).as("the version an open editor compares against moved")
+                .isAfter(Instant.now().minusSeconds(120));
+    }
+
+    @Test
+    void publishingAnApproveFirstJobMovesTheProductVersion() throws Exception {
+        Made p = product(true);
+        String id = start(lipstickRequest(p, true, null));
+        assertThat(settled(id).get("job").get("status").asText()).isEqualTo("AWAITING_APPROVAL");
+        jdbc.update("UPDATE product SET updated_at = now() - interval '1 hour' WHERE id = ?::uuid", p.productId());
+
+        ok(post("/api/v1/admin/variant-jobs/" + id + "/publish"), null);
+
+        assertThat(versionOf(p)).isAfter(Instant.now().minusSeconds(120));
+    }
+
+    @Test
+    void openingStockWithoutACostIsNotValuedAtAnotherSizesCost() throws Exception {
+        Made p = product(true);
+        jdbc.update("UPDATE product_variant SET standard_cost = 300 WHERE id = ?::uuid", p.baseId());
+        String body = "{\"productId\":\"" + p.productId() + "\","
+                + "\"colors\":[{\"name\":\"Ruby Red\",\"hex\":\"#9B111E\"},{\"name\":\"Gold Shimmer\",\"hex\":\"#C9A24A\"}],"
+                + "\"sizes\":[{\"name\":\"Mini 2g\"},{\"name\":\"Full 3.5g\"}],"
+                + "\"everyCombination\":true,"
+                + "\"cells\":[{\"color\":\"Gold Shimmer\",\"size\":\"Mini 2g\",\"openingStock\":5},"
+                + "{\"color\":\"Ruby Red\",\"size\":\"Full 3.5g\",\"openingStock\":5}],"
+                + "\"pricing\":{\"mode\":\"SAME\",\"price\":1000},"
+                + "\"baseOption\":{\"color\":\"Ruby Red\",\"size\":\"Mini 2g\"},\"approveFirst\":false}";
+        assertThat(settled(start(body)).get("job").get("status").asText()).isEqualTo("COMPLETED");
+
+        // A colour of the product's own size costs what the product costs...
+        assertThat(standardCostOf(p, "Gold Shimmer", "Mini 2g")).isEqualByComparingTo("300");
+        assertThat(averageCostOf(p, "Gold Shimmer", "Mini 2g")).isEqualByComparingTo("300");
+        // ...a new size's cost is not known, so it is neither given the other size's cost nor hidden: valued at 0.
+        assertThat(standardCostOf(p, "Ruby Red", "Full 3.5g")).isNull();
+        assertThat(averageCostOf(p, "Ruby Red", "Full 3.5g")).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void aCancelPressedWhileAWorkerHoldsAnOlderCopyOfTheJobIsNotWrittenBackOver() throws Exception {
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, null));
+        UUID jobId = UUID.fromString(id);
+        var worker = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        var staff = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        staff.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        worker.executeWithoutResult(s -> {
+            VariantJob mine = jobs.findById(jobId).orElseThrow(); // the worker's copy: not cancelled
+            staff.executeWithoutResult(t -> jdbc.update(
+                    "UPDATE variant_job SET cancel_requested = true WHERE id = ?::uuid", id)); // Cancel, committed
+            mine.setHeartbeatAt(Instant.now()); // the worker's later save of the job
+            jobs.save(mine);
+        });
+
+        assertThat(jdbc.queryForObject("SELECT cancel_requested FROM variant_job WHERE id = ?::uuid", Boolean.class, id))
+                .as("the worker's save must not write the old 'not cancelled' back").isTrue();
+    }
+
+    @Test
+    void aLateAttachForAnItemAnotherRunAlreadyFinishedAddsNoSecondPhoto() throws Exception {
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, null));
+        JsonNode first = settled(id).get("items").get(0);
+        UUID itemId = UUID.fromString(first.get("id").asText());
+        String variantId = first.get("variantId").asText();
+        Integer before = jdbc.queryForObject("SELECT count(*) FROM product_image WHERE variant_id = ?::uuid",
+                Integer.class, variantId);
+
+        writer.attachPhoto(UUID.fromString(id), itemId, "https://res.cloudinary.com/test/late-worker.png", true);
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM product_image WHERE variant_id = ?::uuid",
+                Integer.class, variantId)).isEqualTo(before).isEqualTo(1);
+    }
 
     @Test
     void aWholeJobMakesPricedNamedDescribedPhotographedVariantsWithStockAndOneRecolourPerColour() throws Exception {
@@ -455,6 +558,76 @@ class VariantJobIntegrationTest {
         assertThat(fixed.get("job").get("status").asText()).isEqualTo("COMPLETED");
         assertThat(fixed.get("job").get("photosFailed").asInt()).isZero();
         assertThat(attentionFor(attention(), id)).noneMatch(n -> n.get("title").asText().contains("photos failed"));
+    }
+
+    @Test
+    void aFailedPhotoStopsBeingListedOnceStaffGiveTheVariantAPhotoOfItsOwn() throws Exception {
+        imageMode = "FAIL_CORAL";
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, "Coral Kiss"));
+        JsonNode done = settled(id);
+        String mini = item(done, "Coral Kiss / Mini 2g").get("variantId").asText();
+        String full = item(done, "Coral Kiss / Full 3.5g").get("variantId").asText();
+        assertThat(attentionFor(attention(), id)).anyMatch(n -> n.get("title").asText().contains("2 photos failed"));
+
+        photo(p.productId(), mini); // staff upload one, the way the item's own button suggests
+        assertThat(attentionFor(attention(), id)).anyMatch(n -> n.get("title").asText().contains("1 photo failed"));
+
+        photo(p.productId(), full);
+        assertThat(attentionFor(attention(), id)).noneMatch(n -> n.get("title").asText().contains("photo"));
+    }
+
+    @Test
+    void dismissingAFinishedJobSetsItsFailuresAsideWithoutAnyAiCall() throws Exception {
+        imageMode = "FAIL_CORAL";
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, "Coral Kiss"));
+        assertThat(settled(id).get("job").get("status").asText()).isEqualTo("COMPLETED_WITH_ERRORS");
+        int calls = imageCalls.get();
+
+        JsonNode dismissed = ok(post("/api/v1/admin/variant-jobs/" + id + "/dismiss"), null);
+
+        assertThat(dismissed.get("job").get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(dismissed.get("job").get("photosFailed").asInt()).isZero();
+        assertThat(item(dismissed, "Coral Kiss / Mini 2g").get("photoStatus").asText()).isEqualTo("SKIPPED");
+        assertThat(attentionFor(attention(), id)).noneMatch(n -> n.get("title").asText().contains("photo"));
+        assertThat(imageCalls.get()).as("dismissing never asks the AI for anything").isEqualTo(calls);
+
+        // A job that is still waiting cannot be dismissed.
+        String waiting = start(lipstickRequest(product(true), false, null));
+        assertThat(call(post("/api/v1/admin/variant-jobs/" + waiting + "/dismiss"), null).getResponse().getStatus())
+                .isEqualTo(409);
+    }
+
+    @Test
+    void aJobWaitingForApprovalStaysInNeedsAttentionBehindFiftyNewerJobs() throws Exception {
+        Made p = product(true);
+        String id = start(lipstickRequest(p, true, null));
+        assertThat(settled(id).get("job").get("status").asText()).isEqualTo("AWAITING_APPROVAL");
+        try {
+            jdbc.update("INSERT INTO variant_job (product_id, status, request, summary, created_at) "
+                    + "SELECT ?::uuid, 'CANCELLED', '{}', 'attention-test-filler', now() FROM generate_series(1, 55)",
+                    p.productId());
+            assertThat(attentionFor(attention(), id))
+                    .as("55 newer jobs must not push an unresolved approval off the list")
+                    .anyMatch(n -> n.get("title").asText().contains("waiting for your approval"));
+        } finally {
+            jdbc.update("DELETE FROM variant_job WHERE summary = 'attention-test-filler'");
+        }
+    }
+
+    @Test
+    void theOldNeedsImagesListDoesNotOfferAJobsVariantsForASecondPhoto() throws Exception {
+        imageMode = "FAIL_CORAL";
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, "Coral Kiss"));
+        JsonNode done = settled(id);
+        String failedVariant = item(done, "Coral Kiss / Mini 2g").get("variantId").asText();
+
+        String list = ok(get("/api/v1/admin/variant-generation/needs-images"), null).toString();
+
+        assertThat(list).as("a job's own variants report through Needs attention, not the old panel")
+                .doesNotContain(failedVariant);
     }
 
     @Test

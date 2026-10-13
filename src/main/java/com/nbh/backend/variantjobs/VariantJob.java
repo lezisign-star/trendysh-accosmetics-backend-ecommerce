@@ -10,10 +10,17 @@ import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
 
-/** One "Generate" from the variant wizard, worked through in the background (V64, VARIANTS_PLAN.md 3.3). */
+/**
+ * One "Generate" from the variant wizard, worked through in the background (V64, VARIANTS_PLAN.md 3.3).
+ *
+ * <p>{@code @DynamicUpdate}: only the columns a writer changed are written. Without it every save rewrote the whole
+ * row from the copy that writer loaded, so a worker that loaded the job before staff pressed Cancel wrote
+ * {@code cancel_requested = false} back over it, and the job ran every photo anyway.
+ */
 @Getter
 @Setter
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(name = "variant_job")
 public class VariantJob extends BaseEntity {
 

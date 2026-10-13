@@ -222,6 +222,8 @@ public class VariantJobService {
         writer.recount(job);
         job.setStatus(job.getPhotosFailed() + job.getDescriptionsFailed() > 0 ? Status.COMPLETED_WITH_ERRORS : Status.COMPLETED);
         jobs.save(job);
+        // Variants going on sale changes what the product editor holds: move the version so an older form is refused.
+        products.touch(job.getProductId(), Instant.now());
         writer.announce();
         events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
         return get(jobId);
@@ -263,6 +265,44 @@ public class VariantJobService {
         job.setLastError(null);
         job.setFinishedAt(null);
         job.setCancelRequested(false);
+        jobs.save(job);
+        writer.announce();
+        return get(jobId);
+    }
+
+    /**
+     * Staff have looked at what a finished job could not do and want it off the list without retrying (no AI quota
+     * spent). The failed photos and descriptions are left as they are and marked as set aside; a job that stopped
+     * (FAILED) is ended. Variants already made stay.
+     */
+    @Transactional
+    public JobDetailDto dismiss(UUID jobId) {
+        VariantJob job = jobs.findById(jobId).orElseThrow(() -> new NotFoundException("No such job."));
+        if (job.getStatus().active()) {
+            throw new ConflictException("The job is still working. Wait for it to finish.");
+        }
+        if (job.getStatus() == Status.AWAITING_APPROVAL) {
+            throw new ConflictException("This job is waiting for your approval. Publish it first.");
+        }
+        List<VariantJobItem> its = items.findByJobIdOrderByPositionAsc(jobId);
+        for (VariantJobItem i : its) {
+            if (i.getPhotoStatus() == StepStatus.FAILED) {
+                i.setPhotoStatus(StepStatus.SKIPPED);
+            }
+            if (i.getDescriptionStatus() == StepStatus.FAILED) {
+                i.setDescriptionStatus(StepStatus.SKIPPED);
+            }
+        }
+        items.saveAll(its);
+        writer.recount(job);
+        if (job.getStatus() == Status.FAILED) {
+            job.setStatus(Status.CANCELLED);
+            if (job.getFinishedAt() == null) {
+                job.setFinishedAt(Instant.now());
+            }
+        } else if (job.getStatus() == Status.COMPLETED_WITH_ERRORS) {
+            job.setStatus(Status.COMPLETED);
+        }
         jobs.save(job);
         writer.announce();
         return get(jobId);

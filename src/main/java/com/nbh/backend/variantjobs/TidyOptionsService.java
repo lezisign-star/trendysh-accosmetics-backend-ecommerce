@@ -78,7 +78,7 @@ public class TidyOptionsService {
     /** How many products are waiting (for Needs attention). */
     @Transactional(readOnly = true)
     public int count() {
-        return waiting().size();
+        return (int) products.countWaitingForOptionsReview();
     }
 
     /** Saves staff's colours and sizes for a product's variants and takes the product off the list. */

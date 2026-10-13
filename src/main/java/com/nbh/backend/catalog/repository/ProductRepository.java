@@ -164,4 +164,21 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
               AND NOT EXISTS (SELECT 1 FROM ProductDescriptionDraft d WHERE d.productId = p.id)
             """)
     long countWithoutDescription();
+
+    /**
+     * How many real products "Tidy colours & sizes" still lists: not looked at yet, with two or more live (non-kit)
+     * variants of which at least one has neither a colour nor a size. The same rule as
+     * {@code TidyOptionsService.waiting}, as one COUNT so the dashboard does not load every variant of the catalogue
+     * on each refresh.
+     */
+    @Query("""
+            SELECT COUNT(p) FROM Product p
+            WHERE p.deleted = false AND p.isMockData = false AND p.optionsReviewedAt IS NULL
+              AND (SELECT COUNT(v) FROM ProductVariant v
+                   WHERE v.product = p AND v.deleted = false AND v.isKit = false) >= 2
+              AND EXISTS (SELECT 1 FROM ProductVariant w
+                          WHERE w.product = p AND w.deleted = false AND w.isKit = false
+                            AND w.optionColor IS NULL AND w.optionSize IS NULL)
+            """)
+    long countWaitingForOptionsReview();
 }

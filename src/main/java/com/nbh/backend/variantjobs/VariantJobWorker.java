@@ -198,11 +198,19 @@ public class VariantJobWorker {
                         writer.photoFailed(jobId, item.getId(), why);
                         continue;
                     }
-                    GeminiImageClient.Image source = downloaded.computeIfAbsent(sourceUrl, gemini::download);
+                    // Every call that can take a minute or more is preceded by a heartbeat, so a job is only
+                    // taken over when its worker has really gone (see stale-heartbeat-minutes).
+                    GeminiImageClient.Image source = downloaded.get(sourceUrl);
+                    if (source == null) {
+                        writer.heartbeat(jobId);
+                        source = gemini.download(sourceUrl);
+                        downloaded.put(sourceUrl, source);
+                    }
                     if (step.master().needsAi()) {
                         String prompt = prompts.build(product.getName(), item.getColor(),
                                 VariantJobWriter.hexOf(request, item.getColor()), null, request.prompt(),
                                 config.getBackgroundHex());
+                        writer.heartbeat(jobId);
                         GeminiImageClient.Image recoloured = gemini.edit(source, prompt);
                         String url = upload(recoloured, item.getVariantId(), jobId);
                         master = new MasterImage(recoloured, url, true);
@@ -212,6 +220,7 @@ public class VariantJobWorker {
                     masters.put(step.master(), master);
                 }
                 if (step.labelEdit()) {
+                    writer.heartbeat(jobId);
                     GeminiImageClient.Image relabelled = gemini.edit(master.image(),
                             prompts.labelOnly(product.getName(), step.labelText(), config.getBackgroundHex()));
                     writer.attachPhoto(jobId, item.getId(), upload(relabelled, item.getVariantId(), jobId), true);
@@ -236,6 +245,7 @@ public class VariantJobWorker {
     }
 
     private String upload(GeminiImageClient.Image image, UUID variantId, UUID jobId) {
+        writer.heartbeat(jobId);
         String publicId = variantId + "-job-" + jobId.toString().substring(0, 8) + "-" + UUID.randomUUID().toString().substring(0, 6);
         return cloudinary.upload(watermark.stamp(image.bytes()), "products", publicId).url();
     }

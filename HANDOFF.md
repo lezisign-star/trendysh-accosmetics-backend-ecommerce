@@ -1,5 +1,42 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-13 (audit fixes) — a job can't undo staff's edits, an unknown cost stays unknown, a hung upload can't hold a worker, Needs attention clears itself and can be dismissed
+
+The post-push audit of the variants release (three reviewers: the shop and product page; checkout, catalogue, migrations and Needs attention; the job engine, wizard checks and staff services) found 13 problems: 1 HIGH, 7 MEDIUM, 5 LOW. The HIGH was in the product editor, so it is frontend only (its Save now compares with the version the form was loaded from; frontend HANDOFF, same date). These are the backend fixes for the rest. **No migration.** One new endpoint and one new Needs-attention action; a frontend from before this change ignores both.
+
+- **A job's descriptions and publishing now move the product's version** (MEDIUM). The descriptions a job writes are part of what the product editor holds, but the editor's "someone else changed this product" check did not move when they were written. A Save from a form opened earlier put the base description back over every new variant's AI description, and the items still showed as done.
+  - `VariantJobWriter.saveDescriptions` and `VariantJobService.publish` now call `products.touch(...)`; `saveDescriptions` also publishes the PRODUCTS change event. An older form now gets 409 and reloads.
+  - Tests: `descriptionsAJobWritesMoveTheProductVersionSoAnOlderEditorFormIsNotPutBack`, `publishingAnApproveFirstJobMovesTheProductVersion`.
+- **Opening stock without a cost** (MEDIUM). The wizard said it would be counted at 0, but `createAll` gave every new variant the base variant's standard cost, so a new 250 ml size was valued at the 50 ml's cost.
+  - The base's cost is now copied only to a new variant of the **same size** as the product's own (a colour of the same size does cost the same). A new size has no cost until one is typed; its opening stock is posted at 0 and the stock document's note says "(cost not known, valued at 0)".
+  - The wizard's warning now says exactly this ("valued at the product's own cost when the size is the same as the product's and that cost is known, otherwise at 0, until a cost is added").
+  - Test: `openingStockWithoutACostIsNotValuedAtAnotherSizesCost`.
+- **A hung upload or a slow photo step can't hold a worker or hand the job to a second one** (MEDIUM, plausible; the live shop has no jobs with photos yet).
+  - `CloudinaryUploader`'s `RestTemplate` now has timeouts (connect 5 s, read 90 s, like the Gemini clients). It had none, so one hung upload held a worker for ever, and with three of them every later job sat queued with no error.
+  - `VariantJobWorker` sends a heartbeat before each call that can take long (downloading the source photo, the recolour, the label edit, the upload), so a job is taken over only when its worker has really gone (5 minutes without a heartbeat, as before).
+  - `VariantJobWriter.attachPhoto` ignores an item that is no longer PENDING and `photoFailed` ignores one already DONE, so a worker thought dead that comes back cannot add a second main photo or undo a finished one.
+  - Test: `aLateAttachForAnItemAnotherRunAlreadyFinishedAddsNoSecondPhoto`.
+- **Cancel can't be undone by a worker's older copy of the job** (LOW). `VariantJob` is now `@DynamicUpdate`: a save writes only the columns that changed. Before, every save wrote the whole row from the copy the writer had loaded, so a worker that loaded the job before staff pressed Cancel wrote `cancel_requested = false` back and the job ran every photo.
+  - Test: `aCancelPressedWhileAWorkerHoldsAnOlderCopyOfTheJobIsNotWrittenBackOver`.
+- **A cost or stock value the stock tables can't hold is refused before Generate** (LOW). `VariantJobValidator` now refuses a cost above KSh 10,000,000 ("that cost is too much") and stock × cost above KSh 1,000,000,000. Before, the job failed after Generate on `NUMERIC(14,4)`.
+  - Test: `aStockValueOrCostTheStockTablesCannotHoldIsRefusedBeforeGenerate` (`VariantJobValidatorTest`).
+- **The old "Needs images" list no longer offers a job's variants** (MEDIUM, plausible). `findGeneratedNeedingImages` skips variants that are on a job item. Before, a running job's variants were listed there and "Make photos for all" paid for a second AI photo for each.
+  - Test: `theOldNeedsImagesListDoesNotOfferAJobsVariantsForASecondPhoto`.
+- **Needs attention clears itself and can be dismissed** (MEDIUM).
+  - A "photos failed" line leaves the list once the variant has a photo of its own (staff uploaded one) or was removed (`ProductVariantRepository.findIdsRemovedOrWithOwnPhoto`). Before, it stayed in the badge for 30 days.
+  - **New `POST /api/v1/admin/variant-jobs/{id}/dismiss`** (`PERM_PRODUCT_MANAGE`) and action kind `DISMISS_JOB` ("Dismiss" on the generation-stopped, photos-failed and descriptions-not-written lines). It sets the failed photos and descriptions aside as SKIPPED (no retry, no AI spend) and recounts. A job that stopped (FAILED) becomes CANCELLED; one finished with errors becomes COMPLETED. 409 while the job is working or waiting for approval. Variants already made stay.
+  - Until the new frontend is live, an older screen shows the "Dismiss" button and it does nothing.
+  - Test: `dismissingAFinishedJobSetsItsFailuresAsideWithoutAnyAiCall` (also checks that no AI call is made).
+- **An unresolved job isn't lost behind newer ones** (LOW). Needs attention read only the 50 newest jobs, so an approve-first job (its variants are hidden until published) dropped off the list after 50 newer jobs. It now reads those 50 plus every job waiting for approval or failed (`VariantJobRepository.findByStatusIn`); a job waiting for approval stays however old, the others still follow the 30-day rule.
+  - Test: `aJobWaitingForApprovalStaysInNeedsAttentionBehindFiftyNewerJobs`.
+- **The Tidy count is one COUNT query** (LOW). `ProductRepository.countWaitingForOptionsReview()` replaces loading every variant of the catalogue on each Needs-attention read (which also re-runs on every stock or product event). Same rule as the Tidy list; `TidyOptionsIntegrationTest` is unchanged and green.
+- **Tests:** 10 new (9 in `VariantJobIntegrationTest`, 1 in `VariantJobValidatorTest`). Each was run against a copy with its fix taken out and failed there. Full suite 1026/1026.
+- **Not done, on purpose:**
+  - A per-claim ownership token for a job. The timeouts, heartbeats and the attach/fail guards remove the practical damage; a token would need a migration.
+  - The photo source URL is still not checked against an allow-list of hosts (was like this before; the QA stand-ins use `http://127.0.0.1`).
+  - The one-call 40-option description timeout needs a measurement against the real Gemini.
+- **Deploy order:** backend first, then the frontend (which has the Dismiss button and the editor fix). The backend alone is safe with the frontend that is live.
+
 
 ## 2026-10-13 — reusing colours and sizes from other products
 

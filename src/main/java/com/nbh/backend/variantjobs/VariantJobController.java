@@ -77,6 +77,12 @@ public class VariantJobController {
         return service.retry(id);
     }
 
+    /** Sets the failed photos/descriptions aside (no retry) and ends a job that stopped; see the service. */
+    @PostMapping("/{id}/dismiss")
+    public VariantJobService.JobDetailDto dismiss(@PathVariable UUID id) {
+        return service.dismiss(id);
+    }
+
     @PostMapping("/{id}/cancel")
     public VariantJobService.JobDetailDto cancel(@PathVariable UUID id) {
         return service.cancel(id);

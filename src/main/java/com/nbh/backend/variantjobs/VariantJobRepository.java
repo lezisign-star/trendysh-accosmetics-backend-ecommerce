@@ -36,5 +36,8 @@ public interface VariantJobRepository extends JpaRepository<VariantJob, UUID> {
 
     List<VariantJob> findTop50ByOrderByCreatedAtDesc();
 
+    /** Jobs in these states, whatever their age: Needs attention must not lose an unresolved one behind newer jobs. */
+    List<VariantJob> findByStatusIn(Collection<VariantJob.Status> statuses);
+
     List<VariantJob> findByProductIdOrderByCreatedAtDesc(UUID productId);
 }

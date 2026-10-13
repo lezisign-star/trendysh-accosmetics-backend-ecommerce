@@ -33,7 +33,7 @@ public class AttentionService {
     public enum Severity { CRITICAL, ACTION, INFO }
 
     /** What a button does. The screen knows where each kind leads; ids say what it is about. */
-    public enum ActionKind { RETRY_JOB, OPEN_JOB, PUBLISH_JOB, UPLOAD_PHOTOS, ADD_STOCK, TIDY_OPTIONS }
+    public enum ActionKind { RETRY_JOB, OPEN_JOB, PUBLISH_JOB, UPLOAD_PHOTOS, ADD_STOCK, TIDY_OPTIONS, DISMISS_JOB }
 
     public record Action(String label, ActionKind kind) {}
 
@@ -69,9 +69,16 @@ public class AttentionService {
     @Transactional(readOnly = true)
     public Attention list() {
         Instant cutoff = Instant.now(clock).minus(RECENT);
-        List<VariantJob> recent = jobs.findTop50ByOrderByCreatedAtDesc().stream()
+        // The newest 50 jobs, plus every job still waiting on a person: an approve-first job must not drop off the list
+        // (leaving its variants hidden with nothing to remind staff) just because 50 newer jobs were made after it.
+        Map<UUID, VariantJob> candidates = new LinkedHashMap<>();
+        jobs.findTop50ByOrderByCreatedAtDesc().forEach(j -> candidates.put(j.getId(), j));
+        jobs.findByStatusIn(EnumSet.of(Status.AWAITING_APPROVAL, Status.FAILED)).forEach(j -> candidates.putIfAbsent(j.getId(), j));
+        List<VariantJob> recent = candidates.values().stream()
                 .filter(j -> j.getStatus() != Status.CANCELLED)
-                .filter(j -> j.getStatus().active() || j.getFinishedAt() == null || j.getFinishedAt().isAfter(cutoff))
+                .filter(j -> j.getStatus() == Status.AWAITING_APPROVAL || j.getStatus().active()
+                        || j.getFinishedAt() == null || j.getFinishedAt().isAfter(cutoff))
+                .sorted(Comparator.comparing(VariantJob::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
         Map<UUID, String> productNames = new HashMap<>();
         products.findAllById(recent.stream().map(VariantJob::getProductId).collect(Collectors.toSet()))
@@ -79,6 +86,13 @@ public class AttentionService {
         Map<UUID, List<VariantJobItem>> itemsByJob = items.findByJobIdInOrderByPositionAsc(
                 recent.stream().map(VariantJob::getId).toList()).stream()
                 .collect(Collectors.groupingBy(VariantJobItem::getJobId, LinkedHashMap::new, Collectors.toList()));
+
+        // A failed photo stops being a problem once staff have given the variant a photo themselves (or removed it).
+        Set<UUID> failedPhotoVariants = itemsByJob.values().stream().flatMap(List::stream)
+                .filter(i -> i.getPhotoStatus() == StepStatus.FAILED && i.getVariantId() != null)
+                .map(VariantJobItem::getVariantId).collect(Collectors.toSet());
+        Set<UUID> photoResolved = failedPhotoVariants.isEmpty() ? Set.of()
+                : new HashSet<>(variants.findIdsRemovedOrWithOwnPhoto(failedPhotoVariants));
 
         List<Item> out = new ArrayList<>();
         List<UUID> madeVariantIds = new ArrayList<>();
@@ -91,7 +105,8 @@ public class AttentionService {
             if (job.getStatus() == Status.FAILED) {
                 out.add(new Item("job-failed-" + job.getId(), Severity.CRITICAL, product + ": generation stopped",
                         job.getLastError(), job.getProductId(), product, job.getId(), List.of(),
-                        List.of(new Action("See what happened", ActionKind.OPEN_JOB), new Action("Retry", ActionKind.RETRY_JOB)),
+                        List.of(new Action("See what happened", ActionKind.OPEN_JOB), new Action("Retry", ActionKind.RETRY_JOB),
+                                new Action("Dismiss", ActionKind.DISMISS_JOB)),
                         job.getFinishedAt()));
             }
             if (job.getStatus() == Status.PAUSED_QUOTA) {
@@ -108,20 +123,25 @@ public class AttentionService {
                         List.of(new Action("Review & publish", ActionKind.PUBLISH_JOB)), job.getFinishedAt()));
             }
             if (finished) {
-                List<VariantJobItem> noPhoto = its.stream().filter(i -> i.getPhotoStatus() == StepStatus.FAILED).toList();
+                List<VariantJobItem> noPhoto = its.stream()
+                        .filter(i -> i.getPhotoStatus() == StepStatus.FAILED
+                                && (i.getVariantId() == null || !photoResolved.contains(i.getVariantId())))
+                        .toList();
                 if (!noPhoto.isEmpty()) {
                     out.add(new Item("job-photos-" + job.getId(), Severity.ACTION,
                             noPhoto.size() + " photo" + (noPhoto.size() == 1 ? "" : "s") + " failed for " + product,
                             "Without one: " + labels(noPhoto) + ".", job.getProductId(), product, job.getId(),
                             ids(noPhoto), List.of(new Action("Retry photos", ActionKind.RETRY_JOB),
-                            new Action("Upload my own", ActionKind.UPLOAD_PHOTOS)), job.getFinishedAt()));
+                            new Action("Upload my own", ActionKind.UPLOAD_PHOTOS),
+                            new Action("Dismiss", ActionKind.DISMISS_JOB)), job.getFinishedAt()));
                 }
                 List<VariantJobItem> noText = its.stream().filter(i -> i.getDescriptionStatus() == StepStatus.FAILED).toList();
                 if (!noText.isEmpty()) {
                     out.add(new Item("job-descriptions-" + job.getId(), Severity.ACTION,
                             product + ": " + noText.size() + " description" + (noText.size() == 1 ? "" : "s") + " not written",
                             "They show the product's own description until then.", job.getProductId(), product,
-                            job.getId(), ids(noText), List.of(new Action("Retry", ActionKind.RETRY_JOB)), job.getFinishedAt()));
+                            job.getId(), ids(noText), List.of(new Action("Retry", ActionKind.RETRY_JOB),
+                            new Action("Dismiss", ActionKind.DISMISS_JOB)), job.getFinishedAt()));
                 }
                 if (job.getStatus() == Status.COMPLETED || job.getStatus() == Status.COMPLETED_WITH_ERRORS) {
                     its.stream().map(VariantJobItem::getVariantId).filter(Objects::nonNull).forEach(madeVariantIds::add);

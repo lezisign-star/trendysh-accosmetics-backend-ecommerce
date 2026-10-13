@@ -36,7 +36,19 @@ public class CloudinaryUploader {
 
     private final ImageCleanupConfig config;
     private final IntegrationSettingsService settings;
-    private final RestTemplate http = new RestTemplate();
+    /**
+     * With timeouts: a hung upload used to wait forever, so the variant-job worker running it was never given back
+     * (three of those and every later job sat queued with no error). Same limits as the Gemini clients.
+     */
+    private final RestTemplate http = withTimeouts();
+
+    private static RestTemplate withTimeouts() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(90_000);
+        return new RestTemplate(factory);
+    }
 
     public CloudinaryUploader(ImageCleanupConfig config, IntegrationSettingsService settings) {
         this.config = config;

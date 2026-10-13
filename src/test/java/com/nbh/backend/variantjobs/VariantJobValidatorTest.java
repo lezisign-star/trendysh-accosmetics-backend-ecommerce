@@ -227,6 +227,17 @@ class VariantJobValidatorTest {
     }
 
     @Test
+    void aStockValueOrCostTheStockTablesCannotHoldIsRefusedBeforeGenerate() {
+        Plan plan = VariantJobValidator.plan(req(colors("Red", "Blue", "Green"), List.of(), true,
+                List.of(new CellIn("Red", null, null, null, d("1000000"), d("10000")),
+                        new CellIn("Blue", null, null, null, d("5"), d("20000000")),
+                        new CellIn("Green", null, null, null, d("100"), d("500"))), same("100"), null), CTX);
+        assertThat(plan.errors()).anyMatch(e -> e.startsWith("Red: that stock at that cost is worth more than"));
+        assertThat(plan.errors()).anyMatch(e -> e.startsWith("Blue: that cost is too much"));
+        assertThat(plan.errors()).noneMatch(e -> e.startsWith("Green:"));
+    }
+
+    @Test
     void photoCallsCountOneRecolourPerColourPlusOneLabelEditPerVariant() {
         UUID bigPhoto = UUID.randomUUID();
         Context ctx = new Context("P", Set.of(), true, Set.of(bigPhoto), true);

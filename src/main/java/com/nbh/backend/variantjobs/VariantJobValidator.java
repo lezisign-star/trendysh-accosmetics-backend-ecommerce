@@ -20,6 +20,8 @@ public final class VariantJobValidator {
     public static final int MAX_NEW = VariantCombos.MAX_VARIANTS;
     private static final BigDecimal MAX_PRICE = new BigDecimal("10000000");
     private static final BigDecimal MAX_STOCK = new BigDecimal("1000000");
+    /** Stock times cost: well under what NUMERIC(14,4) in the stock tables can hold. */
+    private static final BigDecimal MAX_STOCK_VALUE = new BigDecimal("1000000000");
     /** Descriptions per Gemini call (VariantPlanner's chunk). */
     static final int DESCRIPTION_CHUNK = 40;
 
@@ -193,11 +195,20 @@ public final class VariantJobValidator {
                 } else if (ctx.wholeUnits() && row.openingStock().stripTrailingZeros().scale() > 0) {
                     errors.add(row.label() + ": opening stock must be a whole number.");
                 } else if (row.openingStock().signum() > 0 && row.unitCost() == null) {
-                    warnings.add(row.label() + ": opening stock without a cost. Stock value reports will count it at 0.");
+                    warnings.add(row.label() + ": opening stock without a cost. It is valued at the product's own cost when the size is "
+                            + "the same as the product's and that cost is known, otherwise at 0, until a cost is added.");
                 }
             }
             if (row.unitCost() != null && row.unitCost().signum() < 0) {
                 errors.add(row.label() + ": cost can't be negative.");
+            } else if (row.unitCost() != null && row.unitCost().compareTo(MAX_PRICE) > 0) {
+                errors.add(row.label() + ": that cost is too much. Check the number.");
+            } else if (row.unitCost() != null && row.openingStock() != null
+                    && row.openingStock().compareTo(MAX_STOCK) <= 0
+                    && row.openingStock().multiply(row.unitCost()).compareTo(MAX_STOCK_VALUE) > 0) {
+                // The stock tables hold a value below 10^10; refuse here rather than failing the whole job after Generate.
+                errors.add(row.label() + ": that stock at that cost is worth more than " + money(MAX_STOCK_VALUE)
+                        + ". Check the numbers.");
             }
         }
         if (errors.isEmpty() && toMake.isEmpty()) {

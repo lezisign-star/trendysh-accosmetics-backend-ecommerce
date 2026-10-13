@@ -227,7 +227,10 @@ public class VariantJobWriter {
             v.setColorFamily(item.getColor() == null ? null : familyOf(r, item.getColor()));
             v.setDescription(base.getDescription());
             v.setSellingPrice(item.getPrice());
-            v.setStandardCost(item.getUnitCost() != null ? item.getUnitCost() : base.getStandardCost());
+            // An unknown cost stays unknown for a NEW size: the base's cost belongs to the base's own size (a 250 ml
+            // does not cost what the 50 ml does). A colour of the base's size does cost what the base costs.
+            v.setStandardCost(item.getUnitCost() != null ? item.getUnitCost()
+                    : sameSize(item.getSize(), base.getOptionSize()) ? base.getStandardCost() : null);
             v.setUom(base.getUom());
             v.setWeightGrams(base.getWeightGrams());
             v.setVolumeMl(base.getVolumeMl());
@@ -313,6 +316,10 @@ public class VariantJobWriter {
         recount(job);
         job.setHeartbeatAt(Instant.now());
         jobs.save(job);
+        // The variants' descriptions are part of what the product editor holds. Moving the product's version makes an
+        // editor opened before this refuse its save (or reload) instead of putting its older descriptions back.
+        products.touch(job.getProductId(), Instant.now());
+        events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
         announce();
     }
 
@@ -331,6 +338,11 @@ public class VariantJobWriter {
     @Transactional
     public void attachPhoto(UUID jobId, UUID itemId, String url, boolean madeByAi) {
         VariantJobItem item = items.findById(itemId).orElseThrow();
+        if (item.getPhotoStatus() != StepStatus.PENDING) {
+            // Already done (or failed and handed back) by another run of this job: a worker that was thought dead and
+            // came back must not add a second main photo or spend the item again.
+            return;
+        }
         ProductVariant v = variants.findById(item.getVariantId()).orElse(null);
         if (v != null && !v.isDeleted()) {
             List<ProductImage> own = images.findByVariantIdOrderBySortOrderAsc(v.getId());
@@ -363,6 +375,9 @@ public class VariantJobWriter {
     @Transactional
     public void photoFailed(UUID jobId, UUID itemId, String error) {
         VariantJobItem item = items.findById(itemId).orElseThrow();
+        if (item.getPhotoStatus() == StepStatus.DONE) {
+            return; // another run of this job already made it; a late failure report must not undo that
+        }
         item.setPhotoStatus(StepStatus.FAILED);
         item.setPhotoAttempts(item.getPhotoAttempts() + 1);
         item.setLastError(trim(error));
@@ -481,6 +496,13 @@ public class VariantJobWriter {
         String x = ProductOptionsService.clean(a);
         String y = ProductOptionsService.clean(b);
         return x != null && y != null && x.equalsIgnoreCase(y);
+    }
+
+    /** Same size, ignoring case and spacing; two missing sizes count as the same (a colour-only job). */
+    static boolean sameSize(String a, String b) {
+        String x = ProductOptionsService.clean(a);
+        String y = ProductOptionsService.clean(b);
+        return x == null ? y == null : y != null && x.equalsIgnoreCase(y);
     }
 
     static <T> List<T> nn(List<T> list) {
