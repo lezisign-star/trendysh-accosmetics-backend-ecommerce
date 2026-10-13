@@ -21,7 +21,8 @@ import java.util.*;
 @Service
 public class SwatchSuggester {
 
-    public enum Source { LIST, AI, NONE }
+    /** SHOP = a colour the shop already uses on a product, with the dot it was given there. */
+    public enum Source { SHOP, LIST, AI, NONE }
 
     public record Suggestion(String name, String hex, String colorFamily, Source source) {}
 
@@ -112,6 +113,10 @@ public class SwatchSuggester {
     private final GeminiTextClient gemini;
     private final ImageCleanupConfig config;
 
+    /** The shop's own colours; optional so hand-built instances still work (then only the list and the AI are used). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ColourLibraryService library;
+
     public SwatchSuggester(GeminiTextClient gemini, ImageCleanupConfig config) {
         this.gemini = gemini;
         this.config = config;
@@ -130,6 +135,11 @@ public class SwatchSuggester {
             String name = ProductOptionsService.clean(names.get(i));
             if (name == null) {
                 out.set(i, new Suggestion(names.get(i), null, null, Source.NONE));
+                continue;
+            }
+            ColourLibraryService.LibraryColour shop = library == null ? null : library.known(name);
+            if (shop != null && shop.swatchHex() != null) {
+                out.set(i, new Suggestion(name, shop.swatchHex(), shop.colorFamily(), Source.SHOP));
                 continue;
             }
             Known k = fromList(name);

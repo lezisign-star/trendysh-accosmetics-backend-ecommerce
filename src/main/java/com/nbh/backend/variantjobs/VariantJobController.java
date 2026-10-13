@@ -19,10 +19,26 @@ public class VariantJobController {
 
     private final VariantJobService service;
     private final SwatchSuggester swatches;
+    private final ColourLibraryService library;
 
-    public VariantJobController(VariantJobService service, SwatchSuggester swatches) {
+    public VariantJobController(VariantJobService service, SwatchSuggester swatches, ColourLibraryService library) {
         this.service = service;
         this.swatches = swatches;
+        this.library = library;
+    }
+
+    /** Colours the shop already uses (matching {@code q}), with their usual dot and family, most used first. */
+    @GetMapping("/colour-library")
+    public List<ColourLibraryService.LibraryColour> colourLibrary(@RequestParam(required = false) String q,
+                                                                  @RequestParam(defaultValue = "40") int limit) {
+        return library.colours(q, limit);
+    }
+
+    /** Products with colours or sizes (matching {@code q}), each with its lists, to copy into the wizard. */
+    @GetMapping("/option-sets")
+    public List<ColourLibraryService.OptionSet> optionSets(@RequestParam(required = false) String q,
+                                                           @RequestParam(defaultValue = "20") int limit) {
+        return library.sets(q, limit);
     }
 
     /** Everything the request would make, its errors, warnings, exceptions summary and estimate. Writes nothing. */

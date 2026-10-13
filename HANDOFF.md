@@ -1,6 +1,18 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
 
+## 2026-10-13 — reusing colours and sizes from other products
+
+Owner: "can we have a way that the staff can reuse the colors used from one product variants addition such that the next time we don't have to type them all over again?"
+
+- **`variantjobs.ColourLibraryService`** reads the products' colour/size lists (V63) of real, live products, so there is nothing separate to keep up to date. New endpoints, under `PERM_PRODUCT_MANAGE`:
+  - `GET /api/v1/admin/variant-jobs/colour-library?q=&limit=` lists every colour the shop uses, once whatever its case, with its commonest spelling, dot and family (staff's choice, else from the dot) and how many products use it. Most used first; `q` matches any part of the name.
+  - `GET /api/v1/admin/variant-jobs/option-sets?q=&limit=` lists products with colours or sizes (name matches `q`), each with its colours (dot, family) and sizes (label text) in its own order, to copy into the wizard.
+- **`SwatchSuggester`** now gives a colour the shop already uses its shop dot first (source `SHOP`), before the built-in list and the AI, so "Ruby Red" looks the same on every product.
+- `ProductOptionValueRepository.findOfLiveProducts()`.
+- **Tests:** `ColourLibraryIntegrationTest` (4): one entry per colour with its usual dot and most-used first; copying a product's lists in order; a typed colour gets the shop's dot; a removed product's colours are not offered. Full suite 1016/1016.
+
+
 ## 2026-10-12 (variants v2, phase 6) — "Tidy colours & sizes" for products from before colours and sizes (V65)
 
 Plan phase 6. Products made before variants v2 tell their variants apart only by name ("Clear 100g", "Chrome Mirror Gel Polish - Red"), so the shop's colour/size picker and filters can't use them. The QA copy of the dev data had 35 such products.
