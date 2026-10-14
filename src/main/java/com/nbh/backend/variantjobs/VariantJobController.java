@@ -20,11 +20,16 @@ public class VariantJobController {
     private final VariantJobService service;
     private final SwatchSuggester swatches;
     private final ColourLibraryService library;
+    private final PhotoColourReader reader;
+    private final VariantPhotoEditor editor;
 
-    public VariantJobController(VariantJobService service, SwatchSuggester swatches, ColourLibraryService library) {
+    public VariantJobController(VariantJobService service, SwatchSuggester swatches, ColourLibraryService library,
+                                PhotoColourReader reader, VariantPhotoEditor editor) {
         this.service = service;
         this.swatches = swatches;
         this.library = library;
+        this.reader = reader;
+        this.editor = editor;
     }
 
     /** Colours the shop already uses (matching {@code q}), with their usual dot and family, most used first. */
@@ -94,5 +99,31 @@ public class VariantJobController {
     @PostMapping("/suggest-swatches")
     public List<SwatchSuggester.Suggestion> suggestSwatches(@RequestBody SwatchRequest request) {
         return swatches.suggest(request.names());
+    }
+
+    /** {@code image} is the picture as base64 (JPEG, PNG or WebP). */
+    public record ReadPhotoRequest(String image, String mimeType, String productName) {}
+
+    /**
+     * The colours (and printed codes and sizes) in a picture of variants placed together. Writes nothing: staff look
+     * through the answer and tick what to add to the wizard.
+     */
+    @PostMapping("/read-photo")
+    public PhotoColourReader.Reading readPhoto(@RequestBody ReadPhotoRequest request) {
+        return reader.read(request.image(), request.mimeType(), request.productName());
+    }
+
+    public record EditPhotoRequest(UUID productId, UUID variantId, UUID imageId, String note) {}
+
+    /**
+     * Changes a variant's photo as described: the AI edits the variant's current photo (or {@code imageId}), and the
+     * result becomes its main photo with the old one kept behind it.
+     */
+    @PostMapping("/photo-edit")
+    public VariantPhotoEditor.Edited editPhoto(@RequestBody EditPhotoRequest request) {
+        if (request.productId() == null || request.variantId() == null) {
+            throw new com.nbh.backend.common.exception.UnprocessableException("Say which variant's photo to change.");
+        }
+        return editor.edit(request.productId(), request.variantId(), request.imageId(), request.note());
     }
 }

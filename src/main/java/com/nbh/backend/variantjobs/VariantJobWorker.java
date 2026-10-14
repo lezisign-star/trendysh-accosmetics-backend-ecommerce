@@ -143,8 +143,35 @@ public class VariantJobWorker {
 
     // ---------------------------------------------------------------- photos
 
-    /** A colour master once made in this run: the raw image (for label edits) and its uploaded file (for copies). */
-    private record MasterImage(GeminiImageClient.Image image, String url, boolean madeByAi) {}
+    /**
+     * A colour master once made in this run: the raw image (for label edits) and its stored file (for the variants that
+     * use it as their photo). The file is only stored when a variant actually uses the master as its photo: a variant
+     * whose size has label text gets its own edited photo, and the master is then only a means to it. So every stored
+     * photo of a job is some variant's one photo; none is left over.
+     */
+    private static final class MasterImage {
+        private final GeminiImageClient.Image image;
+        private String url;
+        private final boolean madeByAi;
+
+        MasterImage(GeminiImageClient.Image image, String url, boolean madeByAi) {
+            this.image = image;
+            this.url = url;
+            this.madeByAi = madeByAi;
+        }
+
+        GeminiImageClient.Image image() {
+            return image;
+        }
+
+        String url() {
+            return url;
+        }
+
+        boolean madeByAi() {
+            return madeByAi;
+        }
+    }
 
     private void photos(UUID jobId, VariantJobRequest request, Product product) {
         VariantJob job = jobs.findById(jobId).orElseThrow();
@@ -212,8 +239,8 @@ public class VariantJobWorker {
                                 config.getBackgroundHex());
                         writer.heartbeat(jobId);
                         GeminiImageClient.Image recoloured = gemini.edit(source, prompt);
-                        String url = upload(recoloured, item.getVariantId(), jobId);
-                        master = new MasterImage(recoloured, url, true);
+                        // Not stored yet: only if a variant ends up using the master itself (below).
+                        master = new MasterImage(recoloured, null, true);
                     } else {
                         master = new MasterImage(source, sourceUrl, false);
                     }
@@ -225,6 +252,10 @@ public class VariantJobWorker {
                             prompts.labelOnly(product.getName(), step.labelText(), config.getBackgroundHex()));
                     writer.attachPhoto(jobId, item.getId(), upload(relabelled, item.getVariantId(), jobId), true);
                 } else {
+                    if (master.url() == null) {
+                        // The first variant to use this master stores it; the others of the colour share the file.
+                        master.url = upload(master.image(), item.getVariantId(), jobId);
+                    }
                     writer.attachPhoto(jobId, item.getId(), master.url(), master.madeByAi());
                 }
             } catch (GeminiException e) {

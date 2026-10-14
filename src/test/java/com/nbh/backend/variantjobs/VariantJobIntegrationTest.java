@@ -67,6 +67,8 @@ class VariantJobIntegrationTest {
 
     private HttpServer stub;
     private final AtomicInteger imageCalls = new AtomicInteger();
+    /** Files stored on the Cloudinary stand-in by this test (the job's photos). */
+    private final AtomicInteger uploads = new AtomicInteger();
     private final List<String> imagePrompts = Collections.synchronizedList(new ArrayList<>());
     /** What the Gemini photo stand-in does: OK, QUOTA (429 every time) or FAIL_CORAL (400 for prompts naming Coral). */
     private volatile String imageMode = "OK";
@@ -133,7 +135,8 @@ class VariantJobIntegrationTest {
                         "content", Map.of("parts", List.of(Map.of("text", answer)))))));
             } else if (path.endsWith("/image/upload")) {
                 String id = "j-" + UUID.randomUUID();
-                reply = ("{\"secure_url\":\"https://res.cloudinary.com/test/" + id + ".png\",\"public_id\":\"" + id + "\"}")
+                uploads.incrementAndGet();
+                reply =("{\"secure_url\":\"https://res.cloudinary.com/test/" + id + ".png\",\"public_id\":\"" + id + "\"}")
                         .getBytes(StandardCharsets.UTF_8);
             } else {
                 reply = "{}".getBytes(StandardCharsets.UTF_8);
@@ -424,6 +427,39 @@ class VariantJobIntegrationTest {
         assertThat(imagePrompts).anyMatch(prompt -> prompt.contains("change that text to exactly \\\"2 g\\\""));
         assertThat(optionRows.findByProductIdOrderByKindAscPositionAsc(UUID.fromString(p.productId())).stream()
                 .filter(o -> o.getValue().equals("Mini 2g")).findFirst().orElseThrow().getSizeLabelText()).isEqualTo("2 g");
+    }
+
+    /** Photo rows of the variants a settled job made: how many each has, in item order. */
+    private List<Integer> photoRowsPerVariant(JsonNode done) {
+        List<Integer> out = new ArrayList<>();
+        for (JsonNode i : done.get("items")) {
+            out.add(jdbc.queryForObject("SELECT count(*) FROM product_image WHERE variant_id = ?::uuid",
+                    Integer.class, i.get("variantId").asText()));
+        }
+        return out;
+    }
+
+    @Test
+    void everyVariantAJobMakesEndsWithExactlyOnePhotoAndNoStoredFileIsLeftOver() throws Exception {
+        // Two colours x two sizes, no label text: one master per colour, shared, so two files for four variants.
+        Made p = product(true);
+        int before = uploads.get();
+        JsonNode plain = settled(start(lipstickRequest(p, false, null)));
+        assertThat(plain.get("items")).hasSize(4);
+        assertThat(photoRowsPerVariant(plain)).as("one photo row per variant").containsOnly(1);
+        assertThat(uploads.get() - before).as("one stored file per colour, shared by its sizes").isEqualTo(2);
+
+        // One colour, a size with label text and a size with its own photo: the label edit stores ITS file and the
+        // colour master is not stored at all, so the two variants have two files between them (it used to be three).
+        Made q = product(true);
+        UUID bigPhoto = photo(q.productId(), null);
+        int beforeLabel = uploads.get();
+        JsonNode labelled = settled(start("{\"productId\":\"" + q.productId() + "\",\"colors\":[{\"name\":\"Ruby Red\"}],"
+                + "\"sizes\":[{\"name\":\"Mini 2g\",\"labelText\":\"2 g\"},{\"name\":\"Full 3.5g\",\"photoImageId\":\""
+                + bigPhoto + "\"}],\"everyCombination\":true,\"pricing\":{\"mode\":\"SAME\",\"price\":900}}"));
+        assertThat(labelled.get("items")).hasSize(2);
+        assertThat(photoRowsPerVariant(labelled)).containsOnly(1);
+        assertThat(uploads.get() - beforeLabel).as("a stored file for each variant's photo and nothing else").isEqualTo(2);
     }
 
     @Test
