@@ -105,7 +105,17 @@ class PhotoToolsIntegrationTest {
                     status = 429;
                     reply = "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}".getBytes(StandardCharsets.UTF_8);
                 } else {
-                    String answer = "MESS".equals(textMode)
+                    String answer = "SECTIONS".equals(textMode)
+                            // The same answer for each section of a 1600 x 900 picture (two sections, own cells split
+                            // at x = 800, each reaching 96 px past it). Positions are 0-1000 across the section.
+                            ? "{\"colours\":["
+                            + "{\"name\":\"Baby Pink\",\"hex\":\"#F4C2C2\",\"code\":\"\",\"x\":100,\"y\":500},"
+                            + "{\"name\":\"Baby Pink\",\"hex\":\"#F5C4C3\",\"code\":\"\",\"x\":950,\"y\":500},"
+                            + "{\"name\":\"Blush Pink\",\"hex\":\"#E8A0A8\",\"code\":\"\",\"x\":500,\"y\":500},"
+                            + "{\"name\":\"Light Pink\",\"hex\":\"#FFB6C1\",\"code\":\"\",\"x\":300,\"y\":500},"
+                            + "{\"name\":\"Light Pink\",\"hex\":\"#C71585\",\"code\":\"\",\"x\":600,\"y\":500}],"
+                            + "\"sizes\":[\"15ml\"]}"
+                            : "MESS".equals(textMode)
                             ? "{\"colours\":[{\"name\":\"\",\"hex\":\"red\",\"code\":\"No. 7\",\"count\":0}],\"sizes\":[]}"
                             : "{\"colours\":["
                             + "{\"name\":\"Ruby Red\",\"hex\":\"#9b111e\",\"code\":\"DH 03\",\"count\":2},"
@@ -226,6 +236,25 @@ class PhotoToolsIntegrationTest {
         // the picture itself went to the AI, with the product's name for context only
         assertThat(textRequests).hasSize(1);
         assertThat(textRequests.get(0)).contains("inlineData").contains("image/png").contains("Roniki Gel Pink");
+    }
+
+    @Test
+    void aBigPictureIsReadInSectionsEachItemOnceAndCloseShadesApart() throws Exception {
+        textMode = "SECTIONS";
+        BufferedImage wide = new BufferedImage(1600, 900, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        ImageIO.write(wide, "jpeg", bytes);
+        JsonNode out = readPhoto(Base64.getEncoder().encodeToString(bytes.toByteArray()), "image/jpeg", 200);
+
+        // Each section was looked at on its own, as a JPEG part of the picture.
+        assertThat(textRequests).hasSize(2);
+        assertThat(textRequests.get(0)).contains("part of a display");
+        // An item seen by both sections near the cut is kept once (by the section owning its centre); the same name
+        // with a close dot is one shade with a count; the same name with a far dot is a second shade, numbered.
+        List<String> got = new ArrayList<>();
+        out.get("colours").forEach(c -> got.add(c.get("name").asText() + " x" + c.get("count").asInt()));
+        assertThat(got).containsExactly("Baby Pink x2", "Light Pink x2", "Blush Pink x2", "Light Pink 2 x2");
+        assertThat(out.get("sizes")).hasSize(1);
     }
 
     @Test

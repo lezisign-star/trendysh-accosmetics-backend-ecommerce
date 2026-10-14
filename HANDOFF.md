@@ -1,5 +1,16 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-14 (colours from a picture, every shade) — a big display is read in parts and close shades are listed apart
+
+Owner's first real try: a picture of a counter of about 200 gel polish bottles came back with 19 colours (the prompt said "each distinct colour once", so the AI lumped every light pink into one). Owner chose: **every shade separately**, and **read in parts** (up to 6 AI calls per picture). No migration, same endpoint and answer shape.
+
+- **`PictureSections`** cuts a picture into a grid of cells near 800 px (at most 6; a 3200 × 1800 picture is 3 × 2, a 1600 × 900 one 2 × 1, a small one is sent whole). Each part reaches 12 % past its cell so an item on a cut line is seen whole; parts go to the AI as JPEG. A picture Java can't open (WebP) is sent whole.
+- **The ask** (`PhotoColourReader.prompt`): one entry per item, with its centre (`x`, `y`, 0–1000 in that part); the same name only for items that look exactly the same, different names for shades that differ even a little.
+- **Putting it together** (`combine`): an item is kept only by the part whose cell holds its centre (seen by two neighbours, counted once; no position = kept). Items with the same printed code, or the same name and dots within CIE76 15 (or one dot unknown), are one shade with a count. Two far-apart dots the AI gave one name become "Light Pink" and "Light Pink 2". Reading order: top to bottom, left to right. At most 300 shades (was 80).
+- Parts are read side by side (virtual threads; the shared `GeminiLimiter` keeps the pace). If some parts fail, the rest is returned with a note saying how many parts couldn't be read; if all fail, the old plain-words 422.
+- **Test:** `PhotoToolsIntegrationTest.aBigPictureIsReadInSectionsEachItemOnceAndCloseShadesApart` (1600 × 900: 2 calls, an item near the cut kept once, close and far "same name" shades). The class 10/10.
+- **Not run against the real Gemini** here (no key): how well it places items and tells shades apart on a real display is the thing to watch. A tighter or looser `SAME_SHADE`, or a different `TARGET`, are the knobs.
+
 ## 2026-10-14 — read the colours in a picture, change a variant's photo with a prompt, and a job stores exactly one photo per variant
 
 Owner: "a way to just take a picture of product variants placed together, especially those of the same size but varying colours"; "after a variant has been generated we need to be able to edit the image by taking another image or by prompting edits on it"; "on clicking create variants … the image generation must only generate one image per variant". No migration. Both new endpoints are under `/api/v1/admin/variant-jobs` and need `PRODUCT_MANAGE`, like the rest of that controller.
