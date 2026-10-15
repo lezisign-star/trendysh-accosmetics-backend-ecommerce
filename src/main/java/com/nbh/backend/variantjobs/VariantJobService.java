@@ -38,7 +38,7 @@ public class VariantJobService {
                          List<String> summary, int variantsTotal, int variantsCreated, int descriptionsDone,
                          int descriptionsFailed, int photosDone, int photosFailed, String lastError,
                          Instant nextAttemptAt, UUID createdBy, String createdByName, Instant createdAt,
-                         Instant startedAt, Instant finishedAt) {}
+                         Instant startedAt, Instant finishedAt, boolean redo) {}
 
     public record ItemDto(UUID id, int position, UUID variantId, String color, String size, String label,
                           BigDecimal price, String sku, Boolean live, String imageUrl, String swatchHex,
@@ -57,11 +57,13 @@ public class VariantJobService {
     private final CloudinaryUploader cloudinary;
     private final ObjectMapper json;
     private final ApplicationEventPublisher events;
+    private final ProductOptionsService productOptions;
 
     public VariantJobService(VariantJobRepository jobs, VariantJobItemRepository items, VariantJobWriter writer,
                              ProductRepository products, ProductVariantRepository variants, ProductImageRepository images,
                              StaffUserRepository staff, ImageCleanupConfig config, CloudinaryUploader cloudinary,
-                             ObjectMapper json, ApplicationEventPublisher events) {
+                             ObjectMapper json, ApplicationEventPublisher events, ProductOptionsService productOptions) {
+        this.productOptions = productOptions;
         this.jobs = jobs;
         this.items = items;
         this.writer = writer;
@@ -135,6 +137,10 @@ public class VariantJobService {
         if (!cloudinary.configured()) {
             throw new UnprocessableException("Cloudinary isn't set up yet, so the photos can't be stored.");
         }
+        if (r.isRedo()) {
+            throw new UnprocessableException("Use Redo photos for variants that already exist.");
+        }
+        r.guides().check(cloudinary::isOwnUrl);
         VariantJob job = new VariantJob();
         job.setProductId(r.productId());
         job.setStatus(Status.QUEUED);
@@ -161,6 +167,111 @@ public class VariantJobService {
             item.setPrice(row.price());
             item.setOpeningStock(row.openingStock() != null && row.openingStock().signum() > 0 ? row.openingStock() : null);
             item.setUnitCost(row.unitCost());
+            rows.add(item);
+        }
+        items.saveAll(rows);
+        events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.VARIANT_JOBS));
+        return dto(job, names(List.of(job)), productNames(List.of(job)));
+    }
+
+    /** "Redo photos": which existing variants, made from which variant's photo, following which instructions. */
+    public record RedoRequest(UUID productId, UUID baseVariantId, List<UUID> variantIds,
+                              VariantJobRequest.PhotoGuide photoGuide, List<VariantJobRequest.PhotoGroup> photoGroups,
+                              List<VariantJobRequest.TrialPhoto> trialPhotos, String prompt) {}
+
+    /**
+     * Queues new photos for existing variants (owner, 2026-10-15: a whole job of gel polish photos came out painted
+     * all over). A photo-only job: nothing is created and no description is written; each variant's AI-made photos are
+     * replaced by the new one (photos staff uploaded stay). Each variant needs a colour, and the variant the photos are
+     * made from is left as it is.
+     */
+    @Transactional
+    public JobDto redo(RedoRequest r, StaffUser by) {
+        if (r == null || r.productId() == null) {
+            throw new UnprocessableException("Say which product's photos to redo.");
+        }
+        if (!config.geminiConfigured()) {
+            throw new UnprocessableException("Gemini isn't set up yet. Add the GEMINI_API_KEY in Settings, Integrations.");
+        }
+        if (!cloudinary.configured()) {
+            throw new UnprocessableException("Cloudinary isn't set up yet, so the photos can't be stored.");
+        }
+        Product product = products.findById(r.productId()).filter(p -> !p.isDeleted())
+                .orElseThrow(() -> new NotFoundException("No such product."));
+        ProductVariant base = writer.base(product.getId(), r.baseVariantId())
+                .orElseThrow(() -> new NotFoundException("Pick the variant whose photo the new ones are made from."));
+        if (writer.basePhoto(product.getId(), base.getId()) == null) {
+            throw new UnprocessableException("That variant has no photo to make the others from. Add one first.");
+        }
+        if (jobs.findByStatusInOrderByCreatedAtDesc(EnumSet.of(Status.QUEUED, Status.RUNNING, Status.PAUSED_QUOTA))
+                .stream().anyMatch(j -> j.getProductId().equals(product.getId()))) {
+            throw new ConflictException("A job for this product is still working. Wait for it to finish.");
+        }
+        Set<UUID> wanted = new LinkedHashSet<>(r.variantIds() == null ? List.of() : r.variantIds());
+        wanted.remove(base.getId());
+        if (wanted.isEmpty()) {
+            throw new UnprocessableException("Tick the variants whose photos should be made again.");
+        }
+        Map<UUID, ProductVariant> live = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(product.getId())
+                .stream().collect(Collectors.toMap(ProductVariant::getId, v -> v, (a, b) -> a, LinkedHashMap::new));
+        List<ProductVariant> chosen = new ArrayList<>();
+        for (ProductVariant v : live.values()) {
+            if (!wanted.contains(v.getId())) continue;
+            if (ProductOptionsService.clean(v.getOptionColor()) == null) {
+                throw new UnprocessableException("\"" + v.displayLabel() + "\" has no colour, so there is nothing to "
+                        + "make its photo from. Untick it.");
+            }
+            chosen.add(v);
+        }
+        if (chosen.size() != wanted.size()) {
+            throw new NotFoundException("Some of the ticked variants aren't on this product any more. Reload and try again.");
+        }
+
+        // The job carries the product's colour and size lists (dots, size label text and photos), as a Generate does,
+        // so the photo step works exactly the same.
+        List<VariantJobRequest.ColorIn> colors = new ArrayList<>();
+        List<VariantJobRequest.SizeIn> sizes = new ArrayList<>();
+        for (ProductOptionsService.OptionDto o : productOptions.list(product.getId())) {
+            if (o.kind() == com.nbh.backend.catalog.entity.ProductOptionValue.Kind.COLOR) {
+                colors.add(new VariantJobRequest.ColorIn(o.value(), o.swatchHex(), o.colorFamily()));
+            } else {
+                sizes.add(new VariantJobRequest.SizeIn(o.value(), o.sizeLabelText(), o.sizePhotoImageId()));
+            }
+        }
+        VariantJobRequest request = new VariantJobRequest(product.getId(), base.getId(), colors, sizes, null, null,
+                null, null, null, false, r.prompt(), r.photoGuide(), r.photoGroups(), r.trialPhotos(),
+                chosen.stream().map(ProductVariant::getId).toList());
+        request.guides().check(cloudinary::isOwnUrl);
+
+        VariantJob job = new VariantJob();
+        job.setProductId(product.getId());
+        job.setStatus(Status.QUEUED);
+        job.setStage(Stage.PHOTOS);
+        job.setApproveFirst(false);
+        job.setCreatedBy(by == null ? null : by.getId());
+        try {
+            job.setRequest(json.writeValueAsString(request));
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("The request can't be saved: " + e.getMessage());
+        }
+        job.setSummary("Redo the photos of " + chosen.size() + " variant" + (chosen.size() == 1 ? "" : "s")
+                + ", made from the photo of " + (base.getOptionColor() != null || base.getOptionSize() != null
+                ? new com.nbh.backend.variantgen.VariantCombos.Combo(base.getOptionColor(), base.getOptionSize()).label()
+                : base.getVariantName()) + ".");
+        job.setVariantsTotal(chosen.size());
+        job.setVariantsCreated(chosen.size());
+        job = jobs.saveAndFlush(job);
+        int position = 0;
+        List<VariantJobItem> rows = new ArrayList<>();
+        for (ProductVariant v : chosen) {
+            VariantJobItem item = new VariantJobItem();
+            item.setJobId(job.getId());
+            item.setPosition(position++);
+            item.setVariantId(v.getId());
+            item.setColor(ProductOptionsService.clean(v.getOptionColor()));
+            item.setSize(ProductOptionsService.clean(v.getOptionSize()));
+            item.setPrice(v.getSellingPrice() == null ? BigDecimal.ZERO : v.getSellingPrice());
+            item.setDescriptionStatus(StepStatus.SKIPPED);
             rows.add(item);
         }
         items.saveAll(rows);
@@ -336,7 +447,12 @@ public class VariantJobService {
                 j.isApproveFirst(), summary, j.getVariantsTotal(), j.getVariantsCreated(), j.getDescriptionsDone(),
                 j.getDescriptionsFailed(), j.getPhotosDone(), j.getPhotosFailed(), j.getLastError(), j.getNextAttemptAt(),
                 j.getCreatedBy(), j.getCreatedBy() == null ? null : names.get(j.getCreatedBy()), j.getCreatedAt(),
-                j.getStartedAt(), j.getFinishedAt());
+                j.getStartedAt(), j.getFinishedAt(), isRedo(j));
+    }
+
+    /** A "Redo photos" job (its saved request names the variants to redo); read without parsing the whole request. */
+    static boolean isRedo(VariantJob j) {
+        return j.getRequest() != null && j.getRequest().contains("\"redoVariantIds\":[\"");
     }
 
     private Map<UUID, String> names(List<VariantJob> js) {

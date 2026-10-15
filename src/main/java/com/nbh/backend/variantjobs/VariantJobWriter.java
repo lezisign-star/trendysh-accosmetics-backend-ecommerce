@@ -1,5 +1,6 @@
 package com.nbh.backend.variantjobs;
 
+import com.nbh.backend.catalog.service.ImageAssetCleaner;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nbh.backend.catalog.entity.ColorFamily;
@@ -47,12 +48,14 @@ public class VariantJobWriter {
     private final StaffUserRepository staff;
     private final ObjectMapper json;
     private final ApplicationEventPublisher events;
+    private final ImageAssetCleaner assetCleaner;
 
     public VariantJobWriter(VariantJobRepository jobs, VariantJobItemRepository items, ProductRepository products,
                             ProductVariantRepository variants, ProductImageRepository images,
                             ProductOptionValueRepository optionRows, ProductOptionsService productOptions,
                             ProductService productService, VariantStockService stock, StaffUserRepository staff,
-                            ObjectMapper json, ApplicationEventPublisher events) {
+                            ObjectMapper json, ApplicationEventPublisher events, ImageAssetCleaner assetCleaner) {
+        this.assetCleaner = assetCleaner;
         this.jobs = jobs;
         this.items = items;
         this.products = products;
@@ -337,6 +340,15 @@ public class VariantJobWriter {
      */
     @Transactional
     public void attachPhoto(UUID jobId, UUID itemId, String url, boolean madeByAi) {
+        attachPhoto(jobId, itemId, url, madeByAi, false);
+    }
+
+    /**
+     * {@code replaceAiPhotos}: a "Redo photos" job. The variant's AI-made photos (the wrong ones being redone) are
+     * removed, and their files once nothing else shows them; photos staff uploaded themselves stay, behind the new one.
+     */
+    @Transactional
+    public void attachPhoto(UUID jobId, UUID itemId, String url, boolean madeByAi, boolean replaceAiPhotos) {
         VariantJobItem item = items.findById(itemId).orElseThrow();
         if (item.getPhotoStatus() != StepStatus.PENDING) {
             // Already done (or failed and handed back) by another run of this job: a worker that was thought dead and
@@ -345,7 +357,18 @@ public class VariantJobWriter {
         }
         ProductVariant v = variants.findById(item.getVariantId()).orElse(null);
         if (v != null && !v.isDeleted()) {
-            List<ProductImage> own = images.findByVariantIdOrderBySortOrderAsc(v.getId());
+            List<ProductImage> own = new ArrayList<>(images.findByVariantIdOrderBySortOrderAsc(v.getId()));
+            if (replaceAiPhotos) {
+                List<ProductImage> wrong = own.stream()
+                        .filter(e -> e.getSource() == ProductImage.ImageSource.AI_CLEANED && !url.equals(e.getUrl()))
+                        .toList();
+                if (!wrong.isEmpty()) {
+                    images.deleteAll(wrong);
+                    images.flush();
+                    own.removeAll(wrong);
+                    assetCleaner.releaseAfterCommit(wrong.stream().map(ProductImage::getUrl).toList());
+                }
+            }
             for (ProductImage e : own) {
                 e.setSortOrder(e.getSortOrder() + 1);
                 e.setPrimary(false);

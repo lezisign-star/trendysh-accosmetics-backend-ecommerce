@@ -28,8 +28,32 @@ public record VariantJobRequest(
         BaseOption baseOption,
         boolean approveFirst,
         /** Extra notes for the descriptions and label text, as the old generator's prompt. */
-        String prompt
+        String prompt,
+        /** How the photos should look: where the colour shows, and a real photo to follow (all colours). Optional. */
+        PhotoGuide photoGuide,
+        /** Colours that look different from the rest (a black-bottle series): their own note and real photo. */
+        List<PhotoGroup> photoGroups,
+        /** Photos staff tried and approved before Generate, reused as that colour's photo instead of a new AI call. */
+        List<TrialPhoto> trialPhotos,
+        /** Set only on a "Redo photos" job: these existing variants get new photos; nothing else is made. */
+        List<UUID> redoVariantIds
 ) {
+    /** {@code note}: staff's words, e.g. "only the round top of the cap shows the colour; the bottle stays white". */
+    public record PhotoGuide(String note, String referenceUrl) {}
+
+    public record PhotoGroup(List<String> colors, String note, String referenceUrl) {}
+
+    public record TrialPhoto(String color, String url) {}
+
+    /** The guide, groups and approved photos together, as the photo steps use them. */
+    public PhotoGuides guides() {
+        return new PhotoGuides(photoGuide, photoGroups, trialPhotos);
+    }
+
+    public boolean isRedo() {
+        return redoVariantIds != null && !redoVariantIds.isEmpty();
+    }
+
     public record ColorIn(String name, String hex, String family) {}
 
     public record SizeIn(String name, String labelText, UUID photoImageId) {}

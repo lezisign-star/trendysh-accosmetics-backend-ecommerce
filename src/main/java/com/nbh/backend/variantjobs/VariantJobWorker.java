@@ -41,12 +41,14 @@ public class VariantJobWorker {
     private final WatermarkService watermark;
     private final ImageCleanupConfig config;
     private final Duration quotaPause;
+    private final VariantPhotoMaker maker;
 
     public VariantJobWorker(VariantJobWriter writer, VariantJobItemRepository items, VariantJobRepository jobs,
                             ProductRepository products, VariantPlanner planner, VariantPhotoPromptBuilder prompts,
                             GeminiImageClient gemini, CloudinaryUploader cloudinary, WatermarkService watermark,
-                            ImageCleanupConfig config,
+                            ImageCleanupConfig config, VariantPhotoMaker maker,
                             @Value("${app.variant-jobs.quota-pause-minutes:15}") long quotaPauseMinutes) {
+        this.maker = maker;
         this.writer = writer;
         this.items = items;
         this.jobs = jobs;
@@ -203,6 +205,9 @@ public class VariantJobWorker {
         Map<UUID, String> sizePhotoUrls = writer.imageUrls(sizePhotoIds);
 
         Map<String, GeminiImageClient.Image> downloaded = new HashMap<>();
+        PhotoGuides guides = request.guides();
+        // A "Redo photos" job replaces the AI-made photos it is redoing instead of keeping them behind the new one.
+        boolean replace = request.isRedo();
         Map<PhotoPlan.Master, MasterImage> masters = new HashMap<>();
         Map<PhotoPlan.Master, String> masterFailures = new HashMap<>();
 
@@ -216,6 +221,14 @@ public class VariantJobWorker {
                     continue;
                 }
                 MasterImage master = masters.get(step.master());
+                // A colour staff tried and approved before Generate: that photo is the colour's photo, no new call.
+                String approved = master == null && step.master().needsAi() && step.master().sourcePhotoId() == null
+                        ? guides.trialFor(item.getColor()) : null;
+                if (approved != null) {
+                    writer.heartbeat(jobId);
+                    master = new MasterImage(null, approved, true); // fetched only if a label edit needs it
+                    masters.put(step.master(), master);
+                }
                 if (master == null) {
                     String sourceUrl = step.master().sourcePhotoId() != null
                             ? sizePhotoUrls.get(step.master().sourcePhotoId()) : (base == null ? null : base.url());
@@ -234,11 +247,9 @@ public class VariantJobWorker {
                         downloaded.put(sourceUrl, source);
                     }
                     if (step.master().needsAi()) {
-                        String prompt = prompts.build(product.getName(), item.getColor(),
-                                VariantJobWriter.hexOf(request, item.getColor()), null, request.prompt(),
-                                config.getBackgroundHex());
                         writer.heartbeat(jobId);
-                        GeminiImageClient.Image recoloured = gemini.edit(source, prompt);
+                        GeminiImageClient.Image recoloured = maker.recolour(product.getName(), source, item.getColor(),
+                                VariantJobWriter.hexOf(request, item.getColor()), request.prompt(), guides, downloaded);
                         // Not stored yet: only if a variant ends up using the master itself (below).
                         master = new MasterImage(recoloured, null, true);
                     } else {
@@ -248,15 +259,16 @@ public class VariantJobWorker {
                 }
                 if (step.labelEdit()) {
                     writer.heartbeat(jobId);
-                    GeminiImageClient.Image relabelled = gemini.edit(master.image(),
+                    GeminiImageClient.Image from = master.image() != null ? master.image() : maker.download(master.url(), downloaded);
+                    GeminiImageClient.Image relabelled = gemini.edit(from,
                             prompts.labelOnly(product.getName(), step.labelText(), config.getBackgroundHex()));
-                    writer.attachPhoto(jobId, item.getId(), upload(relabelled, item.getVariantId(), jobId), true);
+                    writer.attachPhoto(jobId, item.getId(), upload(relabelled, item.getVariantId(), jobId), true, replace);
                 } else {
                     if (master.url() == null) {
                         // The first variant to use this master stores it; the others of the colour share the file.
                         master.url = upload(master.image(), item.getVariantId(), jobId);
                     }
-                    writer.attachPhoto(jobId, item.getId(), master.url(), master.madeByAi());
+                    writer.attachPhoto(jobId, item.getId(), master.url(), master.madeByAi(), replace);
                 }
             } catch (GeminiException e) {
                 if (e.isQuotaExceeded()) {

@@ -34,7 +34,7 @@ class VariantJobValidatorTest {
     private static VariantJobRequest req(List<ColorIn> colors, List<SizeIn> sizes, Boolean every, List<CellIn> cells,
                                          Pricing pricing, List<SizeAvailability> availability) {
         return new VariantJobRequest(UUID.randomUUID(), null, colors, sizes, every, cells, pricing, availability, null,
-                false, null);
+                false, null, null, null, null, null);
     }
 
     private static Pricing same(String price) {

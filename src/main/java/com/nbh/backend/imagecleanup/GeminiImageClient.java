@@ -72,14 +72,26 @@ public class GeminiImageClient {
     }
 
     public Image edit(Image reference, String prompt) {
+        return edit(reference, java.util.List.of(), prompt);
+    }
+
+    /**
+     * As {@link #edit(Image, String)}, with more photos after the one being edited (a real product to look like); the
+     * prompt says what each is for.
+     */
+    public Image edit(Image reference, java.util.List<Image> extras, String prompt) {
         if (!config.geminiConfigured()) {
             throw new GeminiException("Gemini isn't configured — set GEMINI_API_KEY.", false);
         }
-        Object[] parts = {
-                Map.of("text", prompt),
-                Map.of("inlineData", Map.of("mimeType", reference.mimeType(),
-                        "data", Base64.getEncoder().encodeToString(reference.bytes())))
-        };
+        java.util.List<Object> list = new java.util.ArrayList<>();
+        list.add(Map.of("text", prompt));
+        list.add(Map.of("inlineData", Map.of("mimeType", reference.mimeType(),
+                "data", Base64.getEncoder().encodeToString(reference.bytes()))));
+        for (Image extra : extras) {
+            list.add(Map.of("inlineData", Map.of("mimeType", extra.mimeType(),
+                    "data", Base64.getEncoder().encodeToString(extra.bytes()))));
+        }
+        Object[] parts = list.toArray();
         try {
             return attempt(parts);
         } catch (HttpServerErrorException | ResourceAccessException first) {

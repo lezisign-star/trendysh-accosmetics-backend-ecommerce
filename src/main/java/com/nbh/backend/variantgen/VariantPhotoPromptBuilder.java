@@ -16,17 +16,51 @@ public class VariantPhotoPromptBuilder {
 
     public String build(String productName, String color, String swatchHex, String size, String labelNote,
                         String backgroundHex) {
+        return build(productName, color, swatchHex, size, labelNote, backgroundHex, null, null, false);
+    }
+
+    /**
+     * @param whereNote     staff's words for every colour: where the shade shows and how the product looks
+     * @param groupNote     staff's words for this colour's group (a series that looks different, e.g. black bottles)
+     * @param withReference a second photo is attached: a real product of this range, to look like
+     */
+    public String build(String productName, String color, String swatchHex, String size, String labelNote,
+                        String backgroundHex, String whereNote, String groupNote, boolean withReference) {
         StringBuilder p = new StringBuilder();
         p.append("The attached image is a real, unedited photo of a product a shop sells: \"").append(productName)
                 .append("\". Make the photo of ANOTHER VARIANT of this exact product.\n\n");
         p.append("THE ONLY THINGS THAT CHANGE FOR THIS VARIANT:\n");
         if (color != null) {
-            p.append("- Colour: recolour the product (every part that shares its main colour: body, lid, handles, ")
-                    .append("trim that is the same colour) to \"").append(color).append("\"")
+            // Owner, 2026-10-15: "every part that shares its main colour" painted white gel polish bottles all over,
+            // when the real ones show the shade only on the top of the cap. Only the part that shows the shade changes.
+            p.append("- Colour: this variant's shade is \"").append(color).append("\"")
                     .append(swatchHex != null ? " (about " + swatchHex + ")" : "")
-                    .append(". Keep the real material, finish, speckle or pattern, reflections and shading, so it looks ")
-                    .append("like the same product made in that colour. Do not recolour parts that are clearly a ")
-                    .append("different material (glass, metal, clear plastic).\n");
+                    .append(". First find the part of the product in the photo that shows its shade. Often only part ")
+                    .append("of a product does (for example the top of a cap, a small window, a swatch, or the liquid ")
+                    .append("seen through clear glass) while the bottle, cap, box or label is white, black, clear, ")
+                    .append("silver or printed. Change ONLY the part that shows the shade to the new shade; every ")
+                    .append("other part keeps exactly its own colour (a white bottle stays white, a black one stays ")
+                    .append("black). Only when the whole product is plainly one colour, recolour all of it. Keep the ")
+                    .append("real material, finish, shimmer or glitter, reflections and shading, so it looks like the ")
+                    .append("same product in that shade.\n");
+            String where = clean(whereNote);
+            if (where != null) {
+                p.append("- The shop's own words on where the shade shows and how the product looks (follow them ")
+                        .append("exactly, over your own judgement): \"").append(where).append("\"\n");
+            }
+            String group = clean(groupNote);
+            if (group != null) {
+                p.append("- This variant is one of a series that looks different from the photo. The shop says: \"")
+                        .append(group).append("\". Make the product look like that (for example the colour of ")
+                        .append("its bottle or cap), keeping its shape, label, logo and framing. Where these words ")
+                        .append("and the shop's words for every colour disagree, these win for this variant.\n");
+            }
+            if (withReference) {
+                p.append("- A SECOND photo is attached after the first: a real, unedited photo of a product from ")
+                        .append("this same range as it really looks. Match it for which parts are white, black or ")
+                        .append("clear and where the shade shows, but use THIS variant's shade, and edit the FIRST ")
+                        .append("photo (its framing and angle), not the second.\n");
+            }
         }
         if (size != null) {
             p.append("- Size: this variant is the \"").append(size).append("\" size. Where the product or its packaging ")
@@ -50,11 +84,19 @@ public class VariantPhotoPromptBuilder {
                 .append(" Use a seamless solid creamy studio backdrop, hex ").append(backgroundHex)
                 .append(", no gradient or texture, soft even studio lighting, a soft realistic ground shadow and a ")
                 .append("subtle reflection. Keep the product centred with a clear margin.\n\n");
-        p.append("Before finalising, compare with the attached photo: only the colour")
+        p.append("Before finalising, compare with the ").append(withReference ? "first " : "")
+                .append("attached photo: only the colour of the part that shows the shade")
                 .append(size != null ? ", the size wording" : "")
                 .append(" and label wording named above may differ.\n\n");
         p.append("Square 1:1 composition, 1024x1024 pixels.");
         return p.toString();
+    }
+
+    private static String clean(String text) {
+        if (text == null) return null;
+        String t = text.replaceAll("\\s+", " ").trim();
+        if (t.isEmpty()) return null;
+        return t.length() > MAX_LABEL_NOTE ? t.substring(0, MAX_LABEL_NOTE) : t;
     }
 
     /**

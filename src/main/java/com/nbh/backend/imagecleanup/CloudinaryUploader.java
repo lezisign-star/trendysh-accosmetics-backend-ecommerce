@@ -60,6 +60,33 @@ public class CloudinaryUploader {
         return settings.get(IntegrationKey.CLOUDINARY_CLOUD_NAME);
     }
 
+    /**
+     * Whether {@code url} is a file in this shop's own Cloudinary account. Photos named in staff's instructions to the
+     * AI are downloaded by the server, so only these are accepted. A stand-in upload address (tests, QA) counts its own
+     * files as the shop's.
+     */
+    public boolean isOwnUrl(String url) {
+        if (url == null || url.isBlank()) {
+            return false;
+        }
+        String cloud = cloudName();
+        if (cloud != null && !cloud.isBlank() && url.startsWith("https://res.cloudinary.com/" + cloud + "/")) {
+            return true;
+        }
+        String base = config.getCloudinaryUploadBaseUrl();
+        if (base == null || base.contains("api.cloudinary.com")) {
+            return false;
+        }
+        try {
+            java.net.URI b = java.net.URI.create(base);
+            java.net.URI u = java.net.URI.create(url.trim());
+            return b.getHost() != null && b.getHost().equals(u.getHost()) && b.getPort() == u.getPort()
+                    && java.util.Objects.equals(b.getScheme(), u.getScheme());
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     private String apiKey() {
         return settings.get(IntegrationKey.CLOUDINARY_API_KEY);
     }

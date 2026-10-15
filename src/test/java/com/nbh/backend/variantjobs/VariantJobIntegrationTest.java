@@ -707,4 +707,116 @@ class VariantJobIntegrationTest {
         assertThat(s.get(2).get("hex").asText()).isEqualTo("#7A2E8E");
         assertThat(s.get(3).get("colorFamily").asText()).isEqualTo("CLEAR");
     }
+
+    // ---------------------------------------------------------------- photo instructions, trial, redo (2026-10-15)
+
+    private String stubUrl(String name) {
+        return "http://127.0.0.1:" + stub.getAddress().getPort() + "/" + name + ".png";
+    }
+
+    /** The photo-edit requests the AI was sent that make this shade. */
+    private List<String> promptsFor(String shade) {
+        synchronized (imagePrompts) {
+            return imagePrompts.stream().filter(r -> r.contains("shade is \\\"" + shade + "\\\"")).toList();
+        }
+    }
+
+    private static int count(String text, String part) {
+        int n = 0;
+        for (int i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) n++;
+        return n;
+    }
+
+    @Test
+    void onlyThePartShowingTheShadeChangesAndStaffsWordsAndAGroupsOwnWordsAndPhotoReachTheAi() throws Exception {
+        Made p = product(true);
+        String body = lipstickRequest(p, false, null);
+        body = body.substring(0, body.length() - 1)
+                + ",\"photoGuide\":{\"note\":\"Only the round top of the cap shows the colour; the bottle stays white.\"},"
+                + "\"photoGroups\":[{\"colors\":[\"gold shimmer\"],\"note\":\"Black bottle, white cap.\","
+                + "\"referenceUrl\":\"" + stubUrl("real-black-bottle") + "\"}]}";
+        settled(start(body));
+
+        String ruby = promptsFor("Ruby Red").get(0);
+        assertThat(ruby).contains("Change ONLY the part that shows the shade")
+                .contains("Only the round top of the cap shows the colour").doesNotContain("Black bottle")
+                .doesNotContain("every part that shares its main colour");
+        assertThat(count(ruby, "inlineData")).as("the product's photo alone").isEqualTo(1);
+        String gold = promptsFor("Gold Shimmer").get(0);
+        assertThat(gold).contains("Only the round top of the cap").contains("Black bottle, white cap.")
+                .contains("A SECOND photo is attached");
+        assertThat(count(gold, "inlineData")).as("the product's photo and the group's real photo").isEqualTo(2);
+    }
+
+    @Test
+    void aPhotoTriedAndApprovedBeforeGenerateIsThatColoursPhotoWithoutAnotherAiCall() throws Exception {
+        Made p = product(true);
+        JsonNode trial = ok(post("/api/v1/admin/variant-jobs/photo-trial"), "{\"productId\":\"" + p.productId() + "\","
+                + "\"colors\":[{\"name\":\"Ruby Red\",\"hex\":\"#9B111E\"}],"
+                + "\"photoGuide\":{\"note\":\"Only the top of the cap shows the colour.\"}}");
+        assertThat(trial.get("original").asText()).startsWith("http://127.0.0.1:");
+        String approved = trial.get("photos").get(0).get("url").asText();
+        assertThat(approved).startsWith("https://res.cloudinary.com/test/");
+        assertThat(promptsFor("Ruby Red")).singleElement().asString().contains("Only the top of the cap");
+
+        String body = lipstickRequest(p, false, null);
+        body = body.substring(0, body.length() - 1)
+                + ",\"photoGuide\":{\"note\":\"Only the top of the cap shows the colour.\"},"
+                + "\"trialPhotos\":[{\"color\":\"Ruby Red\",\"url\":\"" + approved + "\"}]}";
+        JsonNode done = settled(start(body));
+        assertThat(done.get("job").get("photosDone").asInt()).isEqualTo(4);
+        assertThat(item(done, "Ruby Red / Mini 2g").get("imageUrl").asText()).isEqualTo(approved);
+        assertThat(item(done, "Ruby Red / Full 3.5g").get("imageUrl").asText()).isEqualTo(approved);
+        assertThat(promptsFor("Ruby Red")).as("the approved photo was not made again").hasSize(1);
+        assertThat(promptsFor("Gold Shimmer")).hasSize(1);
+    }
+
+    @Test
+    void redoPhotosReplacesTheWrongAiPhotosKeepsStaffsOwnAndWritesNoDescriptions() throws Exception {
+        Made p = product(true);
+        settled(start(lipstickRequest(p, false, null)));
+        JsonNode variantList = ok(get("/api/v1/products/" + p.productId()), null).get("variants");
+        List<String> ids = StreamSupport.stream(variantList.spliterator(), false).map(v -> v.get("id").asText()).toList();
+        String rubyMini = StreamSupport.stream(variantList.spliterator(), false)
+                .filter(v -> "Ruby Red / Mini 2g".equals(v.path("optionLabel").asText()))
+                .findFirst().orElseThrow().get("id").asText();
+        String wrong = images.findByVariantIdOrderBySortOrderAsc(UUID.fromString(rubyMini)).get(0).getUrl();
+        UUID staffsOwn = photo(p.productId(), rubyMini);
+        int before = imagePrompts.size();
+
+        String list = String.join(",", ids.stream().map(i -> "\"" + i + "\"").toList());
+        JsonNode job = ok(post("/api/v1/admin/variant-jobs/redo-photos"), "{\"productId\":\"" + p.productId() + "\","
+                + "\"baseVariantId\":\"" + p.baseId() + "\",\"variantIds\":[" + list + "],"
+                + "\"photoGuide\":{\"note\":\"Only the top of the cap shows the colour.\"}}");
+        assertThat(job.get("variantsTotal").asInt()).as("the variant the photos are made from is left out").isEqualTo(4);
+        JsonNode done = settled(job.get("id").asText());
+        assertThat(done.get("job").get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(done.get("job").get("photosDone").asInt()).isEqualTo(4);
+        assertThat(done.get("items").get(0).get("descriptionStatus").asText()).isEqualTo("SKIPPED");
+        assertThat(imagePrompts.size() - before).as("one new photo per colour, shared by its sizes").isEqualTo(2);
+        assertThat(imagePrompts.get(before)).contains("Only the top of the cap shows the colour");
+
+        List<ProductImage> now = images.findByVariantIdOrderBySortOrderAsc(UUID.fromString(rubyMini));
+        assertThat(now).extracting(ProductImage::getUrl).doesNotContain(wrong);
+        assertThat(now.get(0).isPrimary()).isTrue();
+        assertThat(now.get(0).getSource()).isEqualTo(ProductImage.ImageSource.AI_CLEANED);
+        assertThat(now).as("the new photo first, staff's own upload kept behind it").hasSize(2);
+        assertThat(now.get(1).getId()).isEqualTo(staffsOwn);
+        assertThat(images.findByVariantIdOrderBySortOrderAsc(UUID.fromString(p.baseId())))
+                .as("the photo the others are made from is untouched").hasSize(1);
+    }
+
+    @Test
+    void instructionsNamingAPhotoThatIsNotTheShopsOwnAreRefused() throws Exception {
+        Made p = product(true);
+        String body = lipstickRequest(p, false, null);
+        body = body.substring(0, body.length() - 1)
+                + ",\"photoGuide\":{\"note\":\"x\",\"referenceUrl\":\"https://elsewhere.example/a.png\"}}";
+        MvcResult r = call(post("/api/v1/admin/variant-jobs"), body);
+        assertThat(r.getResponse().getStatus()).isEqualTo(422);
+        assertThat(r.getResponse().getContentAsString()).contains("one of the shop");
+        MvcResult t = call(post("/api/v1/admin/variant-jobs/photo-trial"), "{\"productId\":\"" + p.productId() + "\","
+                + "\"colors\":[{\"name\":\"Ruby Red\"},{\"name\":\"Nude\"},{\"name\":\"Gold\"}]}");
+        assertThat(t.getResponse().getStatus()).as("two at a time at most").isEqualTo(422);
+    }
 }

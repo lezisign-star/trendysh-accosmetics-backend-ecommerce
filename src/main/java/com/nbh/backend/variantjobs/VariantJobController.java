@@ -22,9 +22,11 @@ public class VariantJobController {
     private final ColourLibraryService library;
     private final PhotoColourReader reader;
     private final VariantPhotoEditor editor;
+    private final PhotoTrialService trials;
 
     public VariantJobController(VariantJobService service, SwatchSuggester swatches, ColourLibraryService library,
-                                PhotoColourReader reader, VariantPhotoEditor editor) {
+                                PhotoColourReader reader, VariantPhotoEditor editor, PhotoTrialService trials) {
+        this.trials = trials;
         this.service = service;
         this.swatches = swatches;
         this.library = library;
@@ -75,6 +77,29 @@ public class VariantJobController {
     @PostMapping("/{id}/publish")
     public VariantJobService.JobDetailDto publish(@PathVariable UUID id) {
         return service.publish(id);
+    }
+
+    /** New photos for existing variants, following new instructions; the wrong AI-made photos are replaced. */
+    @PostMapping("/redo-photos")
+    public VariantJobService.JobDto redoPhotos(@RequestBody VariantJobService.RedoRequest request,
+                                               @AuthenticationPrincipal StaffUser staff) {
+        return service.redo(request, staff);
+    }
+
+    /** "Try 2 first": one or two colours' photos made now, to look at before a whole job is run. */
+    @PostMapping("/photo-trial")
+    public PhotoTrialService.TrialResult photoTrial(@RequestBody PhotoTrialService.TrialRequest request) {
+        return trials.trial(request);
+    }
+
+    public record ReferenceRequest(String image, String mimeType) {}
+
+    public record ReferenceStored(String url) {}
+
+    /** Stores a real photo of the product for the AI to follow (never shown in the shop). */
+    @PostMapping("/reference-photo")
+    public ReferenceStored referencePhoto(@RequestBody ReferenceRequest request) {
+        return new ReferenceStored(trials.uploadReference(request.image(), request.mimeType()));
     }
 
     @PostMapping("/{id}/retry")
