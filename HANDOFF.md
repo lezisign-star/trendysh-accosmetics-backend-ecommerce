@@ -1,5 +1,12 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-16 — live streams no longer log a security stack trace each time a screen closes
+
+Owner's Railway logs (pasted 10-10) showed an ERROR "AuthorizationDeniedException: Access Denied ... response is already committed" next to "Broken pipe" every minute or so. It was the container's second (ASYNC) dispatch of a live-event stream (`SseEmitter`) when it ended or the client went away: that dispatch has no login (the token filter runs once, on the original request), so the authorization filter refused it and logged a stack trace. Harmless to shoppers and staff, but it flooded the logs and could hide real errors.
+
+- `SecurityConfig`: `dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()` first in `authorizeHttpRequests`. The original request is still authorised as before, and `@PreAuthorize` still guards every endpoint.
+- Live-stream, architecture and staff-session tests pass.
+
 ## 2026-10-15 — photos follow where the colour really shows: staff's words, groups with their own words and real photo, try 2 first, Redo photos
 
 Owner's first real job (about 85 Roniki gel polish variants): the photos came back painted all over in the shade, when the real bottles are white and show the shade only on the top of the cap; and the CA series, which has black bottles, came back white. Cause: the recolour prompt said "recolour the product (every part that shares its main colour: body, lid, handles…)", and the AI only ever saw the one product photo. Owner chose: a group note + real photo for series like CA, try 2 photos before Generate and reuse the approved ones, and replace (remove) the wrong AI photos when redoing. **No migration**; every new request field is optional.

@@ -54,6 +54,11 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // A live-event stream (SseEmitter) is re-dispatched by the container when it ends or the client goes
+                // away. That second dispatch carries no login (the token filter runs once, on the original request), so
+                // it was refused and logged as an ERROR stack trace each time a screen closed. The original request was
+                // already authorised; method-level @PreAuthorize still guards every endpoint.
+                .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC).permitAll()
                 .requestMatchers(
                     // Only the login itself is public; /auth/me and /auth/change-password are
                     // staff-only and need a token (they read the staff principal).
