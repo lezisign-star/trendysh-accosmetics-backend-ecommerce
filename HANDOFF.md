@@ -1,5 +1,15 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-16 — a variant's photo is the product's own photo except the part staff marked
+
+Owner: the variants drifted from the main photo (another background, a repainted bottle) when only the cap colour should differ.
+
+- `PhotoGuide` has `maskUrl`: a stored picture the shape of the product's photo, white where the colour may change. `VariantPhotoMaker.recolour` (used by both the trial and the job) lets the AI paint as it likes, then `MaskComposer` puts the product's own pixels back everywhere outside the mask with a soft edge (box blur about 0.6 percent of the long side). No mask, or pictures that do not line up (mask or AI photo a different shape, empty mask, unreadable file): the AI's photo is used as before.
+- A size's own photo that is a different shape from the mask is likewise left as the AI made it.
+- `GET /api/v1/admin/variant-jobs/base-photo?productId=&baseVariantId=` returns the photo a job starts from (for the painter). The mask is stored through the existing `/reference-photo`.
+- Tests: `MaskComposerTest` (5), `VariantPhotoMakerMaskTest` (2); the variant job suites pass.
+
+
 ## 2026-10-16 — live streams no longer log a security stack trace each time a screen closes
 
 Owner's Railway logs (pasted 10-10) showed an ERROR "AuthorizationDeniedException: Access Denied ... response is already committed" next to "Broken pipe" every minute or so. It was the container's second (ASYNC) dispatch of a live-event stream (`SseEmitter`) when it ended or the client went away: that dispatch has no login (the token filter runs once, on the original request), so the authorization filter refused it and logged a stack trace. Harmless to shoppers and staff, but it flooded the logs and could hide real errors.

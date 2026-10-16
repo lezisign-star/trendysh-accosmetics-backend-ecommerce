@@ -94,6 +94,19 @@ public class PhotoTrialService {
         return cloudinary.upload(bytes, "products/references", "ref-" + UUID.randomUUID()).url();
     }
 
+    /** The photo a job would start from (the base variant's main photo), so staff can mark the part that changes on it. */
+    public String basePhotoUrl(java.util.UUID productId, java.util.UUID baseVariantId) {
+        Product product = products.findById(productId).filter(p -> !p.isDeleted())
+                .orElseThrow(() -> new NotFoundException("No such product."));
+        ProductVariant base = writer.base(product.getId(), baseVariantId)
+                .orElseThrow(() -> new NotFoundException("The product has no variant to start from."));
+        VariantJobWriter.Source source = writer.basePhoto(product.getId(), base.getId());
+        if (source == null) {
+            throw new UnprocessableException("The product has no photo to start from. Add one first.");
+        }
+        return source.url();
+    }
+
     public TrialResult trial(TrialRequest r) {
         if (r == null || r.productId() == null) {
             throw new UnprocessableException("Say which product the photos are for.");

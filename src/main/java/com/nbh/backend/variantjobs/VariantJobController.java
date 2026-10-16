@@ -92,6 +92,15 @@ public class VariantJobController {
         return trials.trial(request);
     }
 
+    public record BasePhoto(String url) {}
+
+    /** The photo a job starts from; the wizard shows it so staff can mark the part that changes. */
+    @GetMapping("/base-photo")
+    public BasePhoto basePhoto(@RequestParam java.util.UUID productId,
+                               @RequestParam(required = false) java.util.UUID baseVariantId) {
+        return new BasePhoto(trials.basePhotoUrl(productId, baseVariantId));
+    }
+
     public record ReferenceRequest(String image, String mimeType) {}
 
     public record ReferenceStored(String url) {}

@@ -60,6 +60,11 @@ public record PhotoGuides(PhotoGuide guide, List<PhotoGroup> groups, List<TrialP
         return guide == null ? null : blankToNull(guide.referenceUrl());
     }
 
+    /** The picture marking the part of the photo that may change, or null when staff marked none. */
+    public String maskUrl() {
+        return guide == null ? null : blankToNull(guide.maskUrl());
+    }
+
     /** The photo staff tried and approved for this colour, or null. */
     public String trialFor(String color) {
         if (trials == null || color == null) {
@@ -77,6 +82,7 @@ public record PhotoGuides(PhotoGuide guide, List<PhotoGroup> groups, List<TrialP
     public void check(Predicate<String> ownUrl) {
         List<String> urls = new ArrayList<>();
         if (guide != null && blankToNull(guide.referenceUrl()) != null) urls.add(guide.referenceUrl().trim());
+        if (maskUrl() != null) urls.add(maskUrl());
         if (groups != null) {
             if (groups.size() > MAX_GROUPS) {
                 throw new UnprocessableException("Keep it to " + MAX_GROUPS + " groups of colours at most.");

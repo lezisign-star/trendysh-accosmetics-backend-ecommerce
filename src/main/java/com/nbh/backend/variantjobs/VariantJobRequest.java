@@ -39,7 +39,11 @@ public record VariantJobRequest(
         List<UUID> redoVariantIds
 ) {
     /** {@code note}: staff's words, e.g. "only the round top of the cap shows the colour; the bottle stays white". */
-    public record PhotoGuide(String note, String referenceUrl) {}
+    /**
+     * @param maskUrl a stored picture the shape of the product's photo, white where the colour may change; the rest of
+     *                the photo is put back as the product's own ({@link MaskComposer})
+     */
+    public record PhotoGuide(String note, String referenceUrl, String maskUrl) {}
 
     public record PhotoGroup(List<String> colors, String note, String referenceUrl) {}
 
