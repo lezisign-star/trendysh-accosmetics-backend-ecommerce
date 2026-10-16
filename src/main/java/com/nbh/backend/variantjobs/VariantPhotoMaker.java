@@ -40,7 +40,7 @@ public class VariantPhotoMaker {
         GeminiImageClient.Image made = gemini.edit(source, extras, prompt);
         // Staff marked the part that may change: everything else is the product's own photo again, so the variant
         // differs from the main photo only there. Without a mark (or if the pictures do not line up) it is the AI's.
-        String maskUrl = guides.maskUrl();
+        String maskUrl = guides.maskFor(color);
         return maskUrl == null ? made : MaskComposer.apply(source, made, download(maskUrl, downloaded));
     }
 

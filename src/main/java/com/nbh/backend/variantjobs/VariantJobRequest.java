@@ -45,7 +45,11 @@ public record VariantJobRequest(
      */
     public record PhotoGuide(String note, String referenceUrl, String maskUrl) {}
 
-    public record PhotoGroup(List<String> colors, String note, String referenceUrl) {}
+    /**
+     * @param maskUrl the part of the photo that may change for this group's colours, replacing the general one (a
+     *                black-bottle series changes the whole bottle, not only the cap)
+     */
+    public record PhotoGroup(List<String> colors, String note, String referenceUrl, String maskUrl) {}
 
     public record TrialPhoto(String color, String url) {}
 

@@ -1,5 +1,10 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-16 (later) — a group's own marked part
+
+`PhotoGroup` has `maskUrl`; `PhotoGuides.maskFor(color)` is the group's own marked part, else the general one. `VariantPhotoMaker` uses it, so a black-bottle series can have the whole bottle marked while the other colours change only the cap. Tests: `PhotoGuidesMaskTest`.
+
+
 ## 2026-10-16 — a variant's photo is the product's own photo except the part staff marked
 
 Owner: the variants drifted from the main photo (another background, a repainted bottle) when only the cap colour should differ.

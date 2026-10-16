@@ -60,9 +60,18 @@ public record PhotoGuides(PhotoGuide guide, List<PhotoGroup> groups, List<TrialP
         return guide == null ? null : blankToNull(guide.referenceUrl());
     }
 
-    /** The picture marking the part of the photo that may change, or null when staff marked none. */
+    /** The picture marking the part of the photo that may change for every colour, or null when staff marked none. */
     public String maskUrl() {
         return guide == null ? null : blankToNull(guide.maskUrl());
+    }
+
+    /** The marked part for this colour: its group's own, else the general one; null when none. */
+    public String maskFor(String color) {
+        PhotoGroup g = groupOf(color);
+        if (g != null && blankToNull(g.maskUrl()) != null) {
+            return g.maskUrl().trim();
+        }
+        return maskUrl();
     }
 
     /** The photo staff tried and approved for this colour, or null. */
@@ -91,6 +100,7 @@ public record PhotoGuides(PhotoGuide guide, List<PhotoGroup> groups, List<TrialP
             for (PhotoGroup g : groups) {
                 if (g == null) continue;
                 if (blankToNull(g.referenceUrl()) != null) urls.add(g.referenceUrl().trim());
+                if (blankToNull(g.maskUrl()) != null) urls.add(g.maskUrl().trim());
                 for (String c : g.colors() == null ? List.<String>of() : g.colors()) {
                     if (c != null && !seen.add(key(c))) {
                         throw new UnprocessableException("\"" + c.trim() + "\" is in two groups. Keep each colour in one.");
