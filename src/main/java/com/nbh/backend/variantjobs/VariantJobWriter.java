@@ -125,6 +125,8 @@ public class VariantJobWriter {
             String s = ProductOptionsService.clean(v.getOptionSize());
             if (c != null || s != null) {
                 out.add(VariantJobValidator.cellKey(c, s));
+                // The same colour as the wizard now sends it back (tidied): a re-run must not make it again.
+                out.add(VariantJobValidator.cellKey(c == null ? null : VariantCombos.tidyColour(c), s));
             }
         }
         return out;

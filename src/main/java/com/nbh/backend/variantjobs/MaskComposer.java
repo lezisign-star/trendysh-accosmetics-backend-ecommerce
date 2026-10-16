@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import javax.imageio.ImageIO;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -18,9 +19,13 @@ import java.io.IOException;
  * cap should differ). The AI repaints the photo as it likes; this puts the product's own pixels back everywhere outside
  * the marked part, with a soft edge so the join does not show.
  *
- * <p>The mask is a picture the shape of the product's photo, white where the colour may change. If the three pictures
- * do not line up (the AI changed the shape of the photo, or the mask is for another photo) nothing is guessed: the AI's
- * photo is returned as it is, as if no part had been marked.
+ * <p>The AI often moves or resizes the product by a few pixels. Before pasting, its photo is lined up with the
+ * product's (a small shift and zoom, found by comparing the outlines outside the marked part), so the new colour lands
+ * exactly where the old one was.
+ *
+ * <p>The mask is a picture the shape of the product's photo, white where the colour may change. If the pictures do not
+ * line up (the AI changed the shape of the photo, or the mask is for another shape of photo) nothing is guessed: the
+ * AI's photo is returned as it is, with a note saying why, so staff are told rather than left wondering.
  */
 public final class MaskComposer {
 
@@ -32,37 +37,54 @@ public final class MaskComposer {
     static final double AI_ASPECT_TOLERANCE = 0.06;
     /** A mask with nothing marked is no mask. */
     private static final float EMPTY = 0.01f;
+    /** The made photo is never bigger than the shop's own photos (the browser shrinks uploads to this). */
+    static final int MAX_EDGE = 1600;
+    /** Lining up is worked out on a small copy, this long on its longer side. */
+    private static final int ALIGN_EDGE = 120;
+    /** Shifts tried, in small-copy pixels each way (about 5 percent of the photo), and zooms tried. */
+    private static final int MAX_SHIFT = 6;
+    private static final double[] ZOOMS = {0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0, 1.01, 1.02, 1.03, 1.04, 1.05, 1.06};
 
     private MaskComposer() {}
 
-    public static GeminiImageClient.Image apply(GeminiImageClient.Image source, GeminiImageClient.Image edited,
-                                                GeminiImageClient.Image mask) {
+    /**
+     * @param image the photo to use
+     * @param note  null when the marked part was used; otherwise why it was not, in staff's words
+     */
+    public record Result(GeminiImageClient.Image image, String note) {}
+
+    public static Result apply(GeminiImageClient.Image source, GeminiImageClient.Image edited, GeminiImageClient.Image mask) {
         try {
             BufferedImage src = read(source);
             BufferedImage ai = read(edited);
             BufferedImage marked = read(mask);
             if (src == null || ai == null || marked == null) {
-                log.info("Photo mask not used: a picture could not be read.");
-                return edited;
+                return skipped(edited, "The marked part was not used: a picture could not be read.");
             }
-            if (!similarShape(src, marked, MASK_ASPECT_TOLERANCE) || !similarShape(src, ai, AI_ASPECT_TOLERANCE)) {
-                log.info("Photo mask not used: the pictures are not the same shape ({}x{}, {}x{}, {}x{}).",
-                        src.getWidth(), src.getHeight(), ai.getWidth(), ai.getHeight(),
-                        marked.getWidth(), marked.getHeight());
-                return edited;
+            if (!similarShape(src, marked, MASK_ASPECT_TOLERANCE)) {
+                return skipped(edited, "The marked part was not used: it was marked on a photo of another shape. Mark it again.");
             }
-            int w = src.getWidth();
-            int h = src.getHeight();
-            int[] base = pixels(src, w, h);
-            int[] paint = pixels(ai, w, h);
+            if (!similarShape(src, ai, AI_ASPECT_TOLERANCE)) {
+                return skipped(edited, "The marked part was not used: the AI changed the shape of the photo. Try this one again.");
+            }
+            double scale = Math.min(1.0, (double) MAX_EDGE / Math.max(src.getWidth(), src.getHeight()));
+            int w = Math.max(1, (int) Math.round(src.getWidth() * scale));
+            int h = Math.max(1, (int) Math.round(src.getHeight() * scale));
             float[] m = maskValues(marked, w, h);
             float peak = 0;
             for (float v : m) {
                 peak = Math.max(peak, v);
             }
             if (peak < EMPTY) {
-                return edited;
+                return new Result(edited, null);
             }
+            BufferedImage base = draw(src, w, h, null);
+            BufferedImage aiScaled = draw(ai, w, h, null);
+            Fit fit = lineUp(base, aiScaled, m, w, h);
+            BufferedImage aligned = fit.identity() ? aiScaled : draw(ai, w, h, fit.transform(w, h));
+
+            int[] basePx = base.getRGB(0, 0, w, h, null, 0, w);
+            int[] paintPx = aligned.getRGB(0, 0, w, h, null, 0, w);
             soften(m, w, h, Math.max(2, Math.round(Math.max(w, h) * 0.006f)));
 
             BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
@@ -70,17 +92,22 @@ public final class MaskComposer {
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
                     int i = y * w + x;
-                    row[x] = mix(base[i], paint[i], m[i]);
+                    row[x] = mix(basePx[i], paintPx[i], m[i]);
                 }
                 out.setRGB(0, y, w, 1, row, 0, w);
             }
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             ImageIO.write(out, "png", bytes);
-            return new GeminiImageClient.Image(bytes.toByteArray(), "image/png");
+            return new Result(new GeminiImageClient.Image(bytes.toByteArray(), "image/png"), null);
         } catch (IOException | RuntimeException e) {
             log.warn("Photo mask not used: {}", e.getMessage());
-            return edited;
+            return skipped(edited, "The marked part was not used: " + e.getMessage());
         }
+    }
+
+    private static Result skipped(GeminiImageClient.Image edited, String note) {
+        log.info(note);
+        return new Result(edited, note);
     }
 
     private static BufferedImage read(GeminiImageClient.Image image) throws IOException {
@@ -93,20 +120,23 @@ public final class MaskComposer {
         return Math.abs(ra - rb) / ra <= tolerance;
     }
 
-    /** The picture drawn at w x h, as plain RGB over white (a transparent background reads as white). */
-    private static int[] pixels(BufferedImage image, int w, int h) {
-        BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = scaled.createGraphics();
+    /** The picture drawn at w x h (moved by {@code at} when given), as plain RGB over white. */
+    private static BufferedImage draw(BufferedImage image, int w, int h, AffineTransform at) {
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
         try {
             g.setColor(java.awt.Color.WHITE);
             g.fillRect(0, 0, w, h);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
             g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            if (at != null) {
+                g.transform(at);
+            }
             g.drawImage(image, 0, 0, w, h, null);
         } finally {
             g.dispose();
         }
-        return scaled.getRGB(0, 0, w, h, null, 0, w);
+        return out;
     }
 
     /** 0..1 for every pixel: how bright the mask is there, times how opaque (so white-on-clear and white-on-black both work). */
@@ -129,6 +159,129 @@ public final class MaskComposer {
         }
         return out;
     }
+
+    // ------------------------------------------------------------------ lining up
+
+    /** A zoom about the centre and a shift, both in full-size pixels; identity when nothing better was found. */
+    record Fit(double zoom, double dx, double dy) {
+        boolean identity() {
+            return zoom == 1.0 && dx == 0 && dy == 0;
+        }
+
+        AffineTransform transform(int w, int h) {
+            AffineTransform at = new AffineTransform();
+            at.translate(w / 2.0 + dx, h / 2.0 + dy);
+            at.scale(zoom, zoom);
+            at.translate(-w / 2.0, -h / 2.0);
+            return at;
+        }
+    }
+
+    /**
+     * Finds the zoom and shift that make the AI's photo match the product's best, comparing outlines (so a repainted
+     * background or bottle colour does not mislead it) outside the marked part only (that part is meant to differ).
+     */
+    static Fit lineUp(BufferedImage base, BufferedImage ai, float[] mask, int w, int h) {
+        double f = (double) ALIGN_EDGE / Math.max(w, h);
+        int sw = Math.max(8, (int) Math.round(w * f));
+        int sh = Math.max(8, (int) Math.round(h * f));
+        float[] gb = edges(gray(draw(base, sw, sh, null), sw, sh), sw, sh);
+        float[] ga = edges(gray(draw(ai, sw, sh, null), sw, sh), sw, sh);
+        float[] weight = outsideMask(mask, w, h, sw, sh);
+
+        double best = cost(gb, ga, weight, sw, sh, 1.0, 0, 0);
+        double identity = best;
+        double bz = 1.0;
+        int bx = 0;
+        int by = 0;
+        for (double z : ZOOMS) {
+            for (int dy = -MAX_SHIFT; dy <= MAX_SHIFT; dy++) {
+                for (int dx = -MAX_SHIFT; dx <= MAX_SHIFT; dx++) {
+                    if (z == 1.0 && dx == 0 && dy == 0) continue;
+                    double c = cost(gb, ga, weight, sw, sh, z, dx, dy);
+                    if (c < best) {
+                        best = c;
+                        bz = z;
+                        bx = dx;
+                        by = dy;
+                    }
+                }
+            }
+        }
+        // Only move it when that is clearly better: noise must not nudge a photo that was already in place.
+        if (best > identity * 0.97) {
+            return new Fit(1.0, 0, 0);
+        }
+        return new Fit(bz, bx / f, by / f);
+    }
+
+    /** Mean difference of outlines where the AI's photo, zoomed by z and shifted, is compared with the product's. */
+    private static double cost(float[] gb, float[] ga, float[] weight, int w, int h, double z, int dx, int dy) {
+        double cx = w / 2.0;
+        double cy = h / 2.0;
+        double sum = 0;
+        double wsum = 0;
+        for (int y = 0; y < h; y++) {
+            double sy = (y - cy - dy) / z + cy;
+            int iy = (int) Math.round(sy);
+            if (iy < 0 || iy >= h) continue;
+            for (int x = 0; x < w; x++) {
+                float wt = weight[y * w + x];
+                if (wt <= 0) continue;
+                double sx = (x - cx - dx) / z + cx;
+                int ix = (int) Math.round(sx);
+                if (ix < 0 || ix >= w) continue;
+                sum += wt * Math.abs(gb[y * w + x] - ga[iy * w + ix]);
+                wsum += wt;
+            }
+        }
+        return wsum == 0 ? Double.MAX_VALUE : sum / wsum;
+    }
+
+    private static float[] gray(BufferedImage image, int w, int h) {
+        int[] px = image.getRGB(0, 0, w, h, null, 0, w);
+        float[] out = new float[w * h];
+        for (int i = 0; i < px.length; i++) {
+            int p = px[i];
+            out[i] = 0.299f * ((p >> 16) & 0xFF) + 0.587f * ((p >> 8) & 0xFF) + 0.114f * (p & 0xFF);
+        }
+        return out;
+    }
+
+    private static float[] edges(float[] g, int w, int h) {
+        float[] out = new float[w * h];
+        for (int y = 1; y < h - 1; y++) {
+            for (int x = 1; x < w - 1; x++) {
+                int i = y * w + x;
+                out[i] = Math.abs(g[i + 1] - g[i - 1]) + Math.abs(g[i + w] - g[i - w]);
+            }
+        }
+        return out;
+    }
+
+    /** 1 where the photos should match (well away from the marked part), 0 inside it and just around it. */
+    private static float[] outsideMask(float[] mask, int w, int h, int sw, int sh) {
+        float[] out = new float[sw * sh];
+        int rx = Math.max(1, w / sw);
+        int ry = Math.max(1, h / sh);
+        for (int y = 0; y < sh; y++) {
+            for (int x = 0; x < sw; x++) {
+                int x0 = Math.min(w - 1, (int) ((long) x * w / sw));
+                int y0 = Math.min(h - 1, (int) ((long) y * h / sh));
+                float max = 0;
+                // The marked part grown by about two small-copy pixels: its edge is meant to differ too.
+                for (int yy = Math.max(0, y0 - 2 * ry); yy <= Math.min(h - 1, y0 + 3 * ry); yy += Math.max(1, ry / 2)) {
+                    for (int xx = Math.max(0, x0 - 2 * rx); xx <= Math.min(w - 1, x0 + 3 * rx); xx += Math.max(1, rx / 2)) {
+                        max = Math.max(max, mask[yy * w + xx]);
+                    }
+                }
+                out[y * sw + x] = max > 0.05f ? 0f : 1f;
+            }
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------ soft edge and mixing
 
     /** Two passes of a box blur each way: a soft, even edge. */
     static void soften(float[] m, int w, int h, int radius) {

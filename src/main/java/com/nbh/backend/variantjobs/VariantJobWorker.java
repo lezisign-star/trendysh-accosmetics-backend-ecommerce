@@ -248,8 +248,13 @@ public class VariantJobWorker {
                     }
                     if (step.master().needsAi()) {
                         writer.heartbeat(jobId);
-                        GeminiImageClient.Image recoloured = maker.recolour(product.getName(), source, item.getColor(),
-                                VariantJobWriter.hexOf(request, item.getColor()), request.prompt(), guides, downloaded);
+                        VariantPhotoMaker.Made made = maker.recolour(product.getName(), source, sourceUrl,
+                                item.getColor(), VariantJobWriter.hexOf(request, item.getColor()), request.prompt(), guides,
+                                downloaded);
+                        if (made.note() != null) {
+                            log.info("Job {} {}: {}", jobId, item.getColor(), made.note());
+                        }
+                        GeminiImageClient.Image recoloured = made.image();
                         // Not stored yet: only if a variant ends up using the master itself (below).
                         master = new MasterImage(recoloured, null, true);
                     } else {

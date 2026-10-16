@@ -695,6 +695,26 @@ class VariantJobIntegrationTest {
         assertThat(variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(UUID.fromString(p.productId()))).hasSize(5);
     }
 
+    /**
+     * 2026-10-16: the wizard now tidies colour names ("candy Colors 17 candy Colors 17" is sent as "Candy Colors 17").
+     * A product whose colour was saved before that, the messy way, must still count as already having it.
+     */
+    @Test
+    void aColourSavedBeforeNamesWereTidiedIsStillRecognisedAndNotMadeTwice() throws Exception {
+        Made p = product(true);
+        ok(put("/api/v1/products/" + p.productId() + "/full"), "{\"name\":\"" + p.name() + "\",\"categoryIds\":[],"
+                + "\"published\":true,\"variants\":[{\"id\":\"" + p.baseId() + "\",\"variantName\":\"Default\","
+                + "\"sellingPrice\":\"1000\",\"isActive\":true},{\"variantName\":\"Candy\",\"sellingPrice\":\"600\","
+                + "\"isActive\":true,\"options\":{\"color\":\"candy Colors 17 candy Colors 17\",\"size\":null}}]}");
+
+        JsonNode plan = ok(post("/api/v1/admin/variant-jobs/preview"), "{\"productId\":\"" + p.productId() + "\","
+                + "\"colors\":[{\"name\":\"Candy Colors 17\",\"hex\":\"#B9E1EF\"},{\"name\":\"Hot Pink PU30\",\"hex\":\"#CF4D88\"}],"
+                + "\"sizes\":[],\"everyCombination\":true,\"pricing\":{\"mode\":\"SAME\",\"price\":600},"
+                + "\"baseOption\":{\"color\":null,\"size\":null},\"approveFirst\":false}");
+
+        assertThat(plan.toString()).contains("Already on this product, will be skipped: Candy Colors 17");
+    }
+
     @Test
     void colourNamesGetDotsFromTheListAndTheRestFromTheAi() throws Exception {
         JsonNode s = ok(post("/api/v1/admin/variant-jobs/suggest-swatches"),

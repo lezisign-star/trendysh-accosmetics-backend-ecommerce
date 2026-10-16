@@ -65,13 +65,21 @@ public record PhotoGuides(PhotoGuide guide, List<PhotoGroup> groups, List<TrialP
         return guide == null ? null : blankToNull(guide.maskUrl());
     }
 
+    /** A marked part and the photo it was marked on (null when not known). */
+    public record Mask(String url, String photoUrl) {
+        /** Whether it may be used on this starting photo: the one it was marked on (or any, when not known). */
+        public boolean fits(String sourceUrl) {
+            return photoUrl == null || sourceUrl == null || photoUrl.equals(sourceUrl.trim());
+        }
+    }
+
     /** The marked part for this colour: its group's own, else the general one; null when none. */
-    public String maskFor(String color) {
+    public Mask maskFor(String color) {
         PhotoGroup g = groupOf(color);
         if (g != null && blankToNull(g.maskUrl()) != null) {
-            return g.maskUrl().trim();
+            return new Mask(g.maskUrl().trim(), blankToNull(g.maskPhotoUrl()));
         }
-        return maskUrl();
+        return maskUrl() == null ? null : new Mask(maskUrl(), blankToNull(guide.maskPhotoUrl()));
     }
 
     /** The photo staff tried and approved for this colour, or null. */

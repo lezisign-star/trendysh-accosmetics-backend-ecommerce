@@ -49,7 +49,8 @@ public class PhotoTrialService {
                                String prompt) {}
 
     /** {@code url} null and {@code error} set when that colour's photo couldn't be made. */
-    public record TrialPhoto(String color, String url, String error) {}
+    /** {@code note}: something staff should know about a photo that was made (the marked part was not used, say). */
+    public record TrialPhoto(String color, String url, String error, String note) {}
 
     /** {@code original}: the photo the new ones were made from, to compare side by side. */
     public record TrialResult(String original, List<TrialPhoto> photos) {}
@@ -146,19 +147,21 @@ public class PhotoTrialService {
         List<TrialPhoto> out = new ArrayList<>();
         boolean busy = false;
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<String>> calls = new ArrayList<>();
+            List<Future<String[]>> calls = new ArrayList<>();
             for (TrialColor c : colors) {
                 calls.add(pool.submit(() -> {
-                    GeminiImageClient.Image made = maker.recolour(product.getName(), start, c.name().trim(),
-                            c.hex(), r.prompt(), guides, downloaded);
+                    VariantPhotoMaker.Made made = maker.recolour(product.getName(), start, source.url(),
+                            c.name().trim(), c.hex(), r.prompt(), guides, downloaded);
                     String publicId = "trial-" + UUID.randomUUID().toString().substring(0, 12);
-                    return cloudinary.upload(watermark.stamp(made.bytes()), "products", publicId).url();
+                    String url = cloudinary.upload(watermark.stamp(made.image().bytes()), "products", publicId).url();
+                    return new String[] {url, made.note()};
                 }));
             }
             for (int i = 0; i < calls.size(); i++) {
                 String name = colors.get(i).name().trim();
                 try {
-                    out.add(new TrialPhoto(name, calls.get(i).get(), null));
+                    String[] made = calls.get(i).get();
+                    out.add(new TrialPhoto(name, made[0], null, made[1]));
                 } catch (ExecutionException e) {
                     Throwable why = e.getCause();
                     if (why instanceof GeminiImageClient.GeminiException g && g.isQuotaExceeded()) {
@@ -167,7 +170,7 @@ public class PhotoTrialService {
                     log.info("Trial photo for {} failed: {}", name, why.getMessage());
                     out.add(new TrialPhoto(name, null, why instanceof GeminiImageClient.GeminiException g && g.isQuotaExceeded()
                             ? "The AI is busy at the moment. Try again in a few minutes."
-                            : "Couldn't make this one: " + why.getMessage()));
+                            : "Couldn't make this one: " + why.getMessage(), null));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new UnprocessableException("That didn't finish. Try again.");

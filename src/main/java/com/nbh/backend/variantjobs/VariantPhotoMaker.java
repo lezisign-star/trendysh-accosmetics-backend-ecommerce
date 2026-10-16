@@ -29,7 +29,16 @@ public class VariantPhotoMaker {
     /**
      * @param downloaded photos already fetched in this run, by URL (a reference shared by many colours is fetched once)
      */
-    public GeminiImageClient.Image recolour(String productName, GeminiImageClient.Image source, String color, String hex,
+    /**
+     * @param image the photo made
+     * @param note  null, or why the part staff marked was not used (shown with a trial photo)
+     */
+    public record Made(GeminiImageClient.Image image, String note) {}
+
+    /**
+     * @param sourceUrl where {@code source} came from: a marked part is used only on the photo it was marked on
+     */
+    public Made recolour(String productName, GeminiImageClient.Image source, String sourceUrl, String color, String hex,
                                             String labelNote, PhotoGuides guides,
                                             Map<String, GeminiImageClient.Image> downloaded) {
         String referenceUrl = guides.referenceFor(color);
@@ -40,8 +49,15 @@ public class VariantPhotoMaker {
         GeminiImageClient.Image made = gemini.edit(source, extras, prompt);
         // Staff marked the part that may change: everything else is the product's own photo again, so the variant
         // differs from the main photo only there. Without a mark (or if the pictures do not line up) it is the AI's.
-        String maskUrl = guides.maskFor(color);
-        return maskUrl == null ? made : MaskComposer.apply(source, made, download(maskUrl, downloaded));
+        PhotoGuides.Mask mask = guides.maskFor(color);
+        if (mask == null) {
+            return new Made(made, null);
+        }
+        if (!mask.fits(sourceUrl)) {
+            return new Made(made, "The marked part was not used: it was marked on another photo. Mark it again on this one.");
+        }
+        MaskComposer.Result r = MaskComposer.apply(source, made, download(mask.url(), downloaded));
+        return new Made(r.image(), r.note());
     }
 
     public GeminiImageClient.Image download(String url, Map<String, GeminiImageClient.Image> downloaded) {

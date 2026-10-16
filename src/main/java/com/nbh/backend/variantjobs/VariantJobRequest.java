@@ -42,14 +42,16 @@ public record VariantJobRequest(
     /**
      * @param maskUrl a stored picture the shape of the product's photo, white where the colour may change; the rest of
      *                the photo is put back as the product's own ({@link MaskComposer})
+     * @param maskPhotoUrl the photo the part was marked on; the mark is used only on that photo
      */
-    public record PhotoGuide(String note, String referenceUrl, String maskUrl) {}
+    public record PhotoGuide(String note, String referenceUrl, String maskUrl, String maskPhotoUrl) {}
 
     /**
      * @param maskUrl the part of the photo that may change for this group's colours, replacing the general one (a
      *                black-bottle series changes the whole bottle, not only the cap)
      */
-    public record PhotoGroup(List<String> colors, String note, String referenceUrl, String maskUrl) {}
+    public record PhotoGroup(List<String> colors, String note, String referenceUrl, String maskUrl,
+                             String maskPhotoUrl) {}
 
     public record TrialPhoto(String color, String url) {}
 

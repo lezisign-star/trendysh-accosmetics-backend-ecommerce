@@ -2,6 +2,7 @@ package com.nbh.backend.variantjobs;
 
 import com.nbh.backend.imagecleanup.GeminiImageClient;
 import com.nbh.backend.imagecleanup.ImageCleanupConfig;
+import com.nbh.backend.variantgen.VariantCombos;
 import com.nbh.backend.variantgen.VariantPhotoPromptBuilder;
 import org.junit.jupiter.api.Test;
 
@@ -42,27 +43,50 @@ class VariantPhotoMakerMaskTest {
         return new GeminiImageClient.Image(bytes.toByteArray(), "image/png");
     }
 
+    private static final String MAIN = "https://example.test/main.jpg";
+    private static final String MASK = "https://example.test/mask.png";
+
     private final GeminiImageClient gemini = mock(GeminiImageClient.class);
     private final VariantPhotoMaker maker =
             new VariantPhotoMaker(gemini, new VariantPhotoPromptBuilder(), new ImageCleanupConfig());
 
+    private PhotoGuides marked() {
+        return new PhotoGuides(new VariantJobRequest.PhotoGuide("Only the cap shows the colour", null, MASK, MAIN),
+                List.of(), List.of());
+    }
+
+    private Map<String, GeminiImageClient.Image> downloadedWithMask() throws IOException {
+        Map<String, GeminiImageClient.Image> downloaded = new HashMap<>();
+        downloaded.put(MASK, solid(200, 300, Color.BLACK, Color.WHITE, 70, 20, 130, 80));
+        return downloaded;
+    }
+
     @Test
     void withAMarkedPartTheVariantIsTheProductsPhotoExceptThere() throws Exception {
         GeminiImageClient.Image source = solid(200, 300, Color.WHITE, null, 0, 0, 0, 0);
-        GeminiImageClient.Image ai = solid(200, 300, Color.RED, null, 0, 0, 0, 0); // repainted everywhere
-        GeminiImageClient.Image mask = solid(200, 300, Color.BLACK, Color.WHITE, 70, 20, 130, 80);
-        when(gemini.edit(any(GeminiImageClient.Image.class), anyList(), anyString())).thenReturn(ai);
-        Map<String, GeminiImageClient.Image> downloaded = new HashMap<>();
-        downloaded.put("https://example.test/mask.png", mask);
+        when(gemini.edit(any(GeminiImageClient.Image.class), anyList(), anyString()))
+                .thenReturn(solid(200, 300, Color.RED, null, 0, 0, 0, 0));
 
-        PhotoGuides guides = new PhotoGuides(
-                new VariantJobRequest.PhotoGuide("Only the cap shows the colour", null, "https://example.test/mask.png"),
-                List.of(), List.of());
-        BufferedImage out = ImageIO.read(new ByteArrayInputStream(
-                maker.recolour("Roniki Gel", source, "Hot Pink PU30", "#CF4D88", null, guides, downloaded).bytes()));
+        VariantPhotoMaker.Made made = maker.recolour("Roniki Gel", source, MAIN, "Hot Pink PU30", "#CF4D88", null,
+                marked(), downloadedWithMask());
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(made.image().bytes()));
 
+        assertThat(made.note()).isNull();
         assertThat(out.getRGB(100, 50) & 0xFF).isLessThan(40);          // the marked part: the AI's red
         assertThat(out.getRGB(20, 250) & 0xFFFFFF).isEqualTo(0xFFFFFF); // everywhere else: the original's white
+    }
+
+    @Test
+    void aMarkMadeOnAnotherPhotoIsNotUsedAndStaffAreTold() throws Exception {
+        GeminiImageClient.Image source = solid(200, 300, Color.WHITE, null, 0, 0, 0, 0);
+        GeminiImageClient.Image ai = solid(200, 300, Color.RED, null, 0, 0, 0, 0);
+        when(gemini.edit(any(GeminiImageClient.Image.class), anyList(), anyString())).thenReturn(ai);
+
+        VariantPhotoMaker.Made made = maker.recolour("Roniki Gel", source, "https://example.test/50ml.jpg",
+                "Hot Pink PU30", "#CF4D88", null, marked(), downloadedWithMask());
+
+        assertThat(made.image()).isSameAs(ai);
+        assertThat(made.note()).contains("another photo");
     }
 
     @Test
@@ -71,9 +95,21 @@ class VariantPhotoMakerMaskTest {
         GeminiImageClient.Image ai = solid(200, 300, Color.RED, null, 0, 0, 0, 0);
         when(gemini.edit(any(GeminiImageClient.Image.class), anyList(), anyString())).thenReturn(ai);
 
-        GeminiImageClient.Image made = maker.recolour("Roniki Gel", source, "Hot Pink PU30", "#CF4D88", null,
+        VariantPhotoMaker.Made made = maker.recolour("Roniki Gel", source, MAIN, "Hot Pink PU30", "#CF4D88", null,
                 PhotoGuides.none(), new HashMap<>());
 
-        assertThat(made).isSameAs(ai);
+        assertThat(made.image()).isSameAs(ai);
+        assertThat(made.note()).isNull();
+    }
+
+    @Test
+    void colourNamesAreTidiedTheSameWayAsTheWizardDoes() {
+        // Keep in step with variantWizard.test.ts "a colour's name is tidied the same way for every variant".
+        assertThat(VariantCombos.tidyColour("candy Colors 17 candy Colors 17")).isEqualTo("Candy Colors 17");
+        assertThat(VariantCombos.tidyColour("Ice green 02 Ice green 02")).isEqualTo("Ice Green 02");
+        assertThat(VariantCombos.tidyColour("  hot   pink  PU30 ")).isEqualTo("Hot Pink PU30");
+        assertThat(VariantCombos.tidyColour("Rose Gold DH 03")).isEqualTo("Rose Gold DH 03");
+        assertThat(VariantCombos.tidyColour("ZC26")).isEqualTo("ZC26");
+        assertThat(VariantCombos.tidyColour("Pink Pink Panther")).isEqualTo("Pink Pink Panther");
     }
 }

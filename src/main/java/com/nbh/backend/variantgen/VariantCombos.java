@@ -76,6 +76,46 @@ public final class VariantCombos {
         return title + suffix;
     }
 
+    /**
+     * A colour name tidied the way the wizard tidies it (variantWizard.ts tidyColourWords; keep the two the same): a first
+     * capital on every plain lower-case word, codes left as they are, and a phrase typed twice in a row kept once
+     * ("candy Colors 17 candy Colors 17" is "Candy Colors 17").
+     */
+    public static String tidyColour(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String t = raw.replaceAll("\\s+", " ").trim();
+        if (t.isEmpty()) {
+            return t;
+        }
+        String[] words = t.split(" ");
+        int n = words.length;
+        if (n % 2 == 0) {
+            int half = n / 2;
+            boolean doubled = true;
+            for (int i = 0; i < half; i++) {
+                if (!words[i].equalsIgnoreCase(words[half + i])) {
+                    doubled = false;
+                    break;
+                }
+            }
+            if (doubled) {
+                n = half;
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            String w = words[i];
+            if (w.matches("[a-z][a-z'’-]*")) {
+                w = Character.toUpperCase(w.charAt(0)) + w.substring(1);
+            }
+            if (out.length() > 0) out.append(' ');
+            out.append(w);
+        }
+        return out.toString();
+    }
+
     /** "#RRGGBB" in upper case when {@code hex} is one (with or without the #); otherwise null. */
     public static String normaliseHex(String hex) {
         if (hex == null) {

@@ -11,24 +11,33 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PhotoGuidesMaskTest {
 
     private final PhotoGuides guides = new PhotoGuides(
-            new VariantJobRequest.PhotoGuide("Only the cap top", null, "https://x.test/cap.png"),
+            new VariantJobRequest.PhotoGuide("Only the cap top", null, "https://x.test/cap.png", "https://x.test/main.jpg"),
             List.of(new VariantJobRequest.PhotoGroup(List.of("Nude Pink CA1538"), "Black bottle", null,
-                    "https://x.test/bottle.png")),
+                    "https://x.test/bottle.png", "https://x.test/main.jpg")),
             List.of());
 
     @Test
     void aGroupsOwnMarkedPartIsUsedForItsColoursAndTheGeneralOneForTheRest() {
-        assertThat(guides.maskFor("Nude Pink CA1538")).isEqualTo("https://x.test/bottle.png");
-        assertThat(guides.maskFor("nude pink ca1538")).isEqualTo("https://x.test/bottle.png");
-        assertThat(guides.maskFor("Hot Pink PU30")).isEqualTo("https://x.test/cap.png");
+        assertThat(guides.maskFor("Nude Pink CA1538").url()).isEqualTo("https://x.test/bottle.png");
+        assertThat(guides.maskFor("nude pink ca1538").url()).isEqualTo("https://x.test/bottle.png");
+        assertThat(guides.maskFor("Hot Pink PU30").url()).isEqualTo("https://x.test/cap.png");
     }
 
     @Test
     void aGroupWithoutItsOwnMarkedPartUsesTheGeneralOne() {
         PhotoGuides g = new PhotoGuides(
-                new VariantJobRequest.PhotoGuide(null, null, "https://x.test/cap.png"),
-                List.of(new VariantJobRequest.PhotoGroup(List.of("Rose RE1"), "Black", null, null)), List.of());
-        assertThat(g.maskFor("Rose RE1")).isEqualTo("https://x.test/cap.png");
+                new VariantJobRequest.PhotoGuide(null, null, "https://x.test/cap.png", null),
+                List.of(new VariantJobRequest.PhotoGroup(List.of("Rose RE1"), "Black", null, null, null)), List.of());
+        assertThat(g.maskFor("Rose RE1").url()).isEqualTo("https://x.test/cap.png");
+    }
+
+    @Test
+    void aMarkIsUsedOnlyOnThePhotoItWasMarkedOn() {
+        PhotoGuides.Mask m = guides.maskFor("Hot Pink PU30");
+        assertThat(m.fits("https://x.test/main.jpg")).isTrue();
+        assertThat(m.fits("https://x.test/50ml-bottle.jpg")).isFalse();
+        // A mark from before the photo was recorded is used as it is (the shape check still guards it).
+        assertThat(new PhotoGuides.Mask("u", null).fits("anything")).isTrue();
     }
 
     @Test
