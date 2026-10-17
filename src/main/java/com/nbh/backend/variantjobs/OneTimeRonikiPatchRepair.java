@@ -59,11 +59,14 @@ public class OneTimeRonikiPatchRepair {
     private final CloudinaryUploader cloudinary;
     private final ImageCleanupConfig config;
     private final VariantJobRepository jobs;
+    private final com.nbh.backend.catalog.repository.ProductVariantRepository variants;
 
     public OneTimeRonikiPatchRepair(JdbcTemplate jdbc, ProductRepository products, ProductImageRepository images,
                                     VariantJobWriter writer, GeminiImageClient gemini, CloudinaryUploader cloudinary,
-                                    ImageCleanupConfig config, VariantJobRepository jobs) {
+                                    ImageCleanupConfig config, VariantJobRepository jobs,
+                                    com.nbh.backend.catalog.repository.ProductVariantRepository variants) {
         this.jobs = jobs;
+        this.variants = variants;
         this.jdbc = jdbc;
         this.products = products;
         this.images = images;
@@ -88,7 +91,7 @@ public class OneTimeRonikiPatchRepair {
                 log.info("One-time Roniki repair waits: Cloudinary isn't set up here.");
                 return;
             }
-            String result = repairAll();
+            String result = repairAll(PRODUCT_SLUG);
             jdbc.update("INSERT INTO one_time_task (name, done_at, result) VALUES (?, now(), ?) ON CONFLICT (name) DO NOTHING",
                     TASK, result);
             log.info("One-time Roniki repair: {}", result);
@@ -98,27 +101,33 @@ public class OneTimeRonikiPatchRepair {
         }
     }
 
-    String repairAll() {
+    String repairAll(String slug) {
         Product product = products.findAll().stream()
-                .filter(p -> !p.isDeleted() && PRODUCT_SLUG.equals(p.getSlug())).findFirst().orElse(null);
-        if (product == null) return "no product " + PRODUCT_SLUG;
+                .filter(p -> !p.isDeleted() && slug.equals(p.getSlug())).findFirst().orElse(null);
+        if (product == null) return "no product " + slug;
         ProductVariant base = writer.base(product.getId(), null).orElse(null);
         VariantJobWriter.Source source = base == null ? null : writer.basePhoto(product.getId(), base.getId());
         if (source == null) return "no starting photo";
         GeminiImageClient.Image start = gemini.download(source.url());
 
-        // Each variant's main AI-made photo.
+        // Each live variant's main AI-made photo.
+        Map<UUID, ProductVariant> live = new LinkedHashMap<>();
+        for (ProductVariant v : variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(product.getId())) {
+            live.put(v.getId(), v);
+        }
         Map<UUID, ProductImage> made = new LinkedHashMap<>();
         for (ProductImage i : images.findByProductIdInOrderBySortOrderAsc(List.of(product.getId()))) {
+            // Outside a database session the image's variant is only a reference: its id is known, nothing else is,
+            // so the variants are looked up from the list loaded above (found live 2026-10-17: "no session").
             if (i.getVariant() == null || i.getSource() != ProductImage.ImageSource.AI_CLEANED) continue;
-            if (i.getVariant().isDeleted() || i.getVariant().getId().equals(base.getId())) continue;
+            if (!live.containsKey(i.getVariant().getId()) || i.getVariant().getId().equals(base.getId())) continue;
             ProductImage held = made.get(i.getVariant().getId());
             if (held == null || (i.isPrimary() && !held.isPrimary())) made.put(i.getVariant().getId(), i);
         }
         List<String> repaired = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
         for (ProductImage image : made.values()) {
-            ProductVariant v = image.getVariant();
+            ProductVariant v = live.get(image.getVariant().getId());
             String name = v.getOptionColor() != null ? v.getOptionColor() : v.getVariantName();
             try {
                 String hex = v.getSwatchHex();
