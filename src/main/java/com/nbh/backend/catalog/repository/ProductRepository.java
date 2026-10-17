@@ -83,7 +83,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
 
     /**
      * Staff product list: every optional filter short-circuits when null. {@code q} also matches a
-     * variant SKU or name. {@code stock} is IN (something sellable) or OUT (nothing sellable); the
+     * variant SKU or name. With {@code among}, only the products in {@code ids} (the search box's
+     * matches from {@link com.nbh.backend.catalog.service.ProductSearch}; {@code q} is then null). {@code stock} is IN (something sellable) or OUT (nothing sellable); the
      * same sellable definition as the public catalogue (on hand minus reserved, at SHOP — branches/
      * locations were removed 2026-09-24, founder decision, see HANDOFF.md). {@code categoryId}
      * matches a product tagged with that category directly, or with one of its subcategories
@@ -107,6 +108,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                               WHERE v.product = p AND (
                                   LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                                   OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))))
+              AND (:among = false OR p.id IN :ids)
               AND (:categoryId IS NULL OR c.id = :categoryId OR parent.id = :categoryId)
               AND (:published IS NULL OR p.isPublished = :published)
               AND (:popular IS NULL OR p.isPopular = :popular)
@@ -123,6 +125,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
             """)
     Page<Product> searchAdmin(@Param("q") String q,
+                               @Param("among") boolean among,
+                               @Param("ids") java.util.Collection<UUID> ids,
                                @Param("categoryId") UUID categoryId,
                                @Param("published") Boolean published,
                                @Param("stock") String stock,

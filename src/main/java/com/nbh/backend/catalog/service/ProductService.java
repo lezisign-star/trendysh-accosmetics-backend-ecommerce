@@ -65,6 +65,13 @@ public class ProductService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ProductOptionsService productOptions;
 
+    /** The staff list's word-by-word search; same optional injection, null = the plain whole-phrase match. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ProductSearch productSearch;
+
+    /** Stands in for "no ids" where the list query needs a non-empty list it then ignores. */
+    private static final UUID NO_ID = new UUID(0L, 0L);
+
     private final ProductRepository productRepository;
     private final ProductVariantRepository variantRepository;
     private final BrandRepository brandRepository;
@@ -553,7 +560,30 @@ public class ProductService {
             throw new IllegalArgumentException("stock must be IN or OUT");
         }
         String query = q == null || q.isBlank() ? null : q.trim();
-        var page = productRepository.searchAdmin(query, categoryId, published, stockFilter, popular, newArrival, deleted, pageable);
+        // Only marks ("-", "/") is nothing to search for: the whole list, as with an empty box.
+        if (query != null && productSearch != null && ProductSearch.words(query).isEmpty()) query = null;
+        org.springframework.data.domain.Page<Product> page;
+        if (query != null && productSearch != null) {
+            // The search box: every word anywhere, best first (see ProductSearch). The filters still apply; the
+            // matches are kept in their ranked order and paged here.
+            List<UUID> ranked = productSearch.rankedIds(query, deleted);
+            if (ranked.isEmpty()) {
+                page = org.springframework.data.domain.Page.empty(pageable);
+            } else {
+                Map<UUID, Integer> rank = new HashMap<>();
+                for (int i = 0; i < ranked.size(); i++) rank.put(ranked.get(i), i);
+                List<Product> matches = new ArrayList<>(productRepository.searchAdmin(null, true, ranked, categoryId,
+                        published, stockFilter, popular, newArrival, deleted,
+                        org.springframework.data.domain.Pageable.unpaged()).getContent());
+                matches.sort(java.util.Comparator.comparingInt(p -> rank.getOrDefault(p.getId(), Integer.MAX_VALUE)));
+                int from = (int) Math.min(pageable.getOffset(), matches.size());
+                int to = Math.min(from + pageable.getPageSize(), matches.size());
+                page = new org.springframework.data.domain.PageImpl<>(matches.subList(from, to), pageable, matches.size());
+            }
+        } else {
+            page = productRepository.searchAdmin(query, false, List.of(NO_ID), categoryId, published, stockFilter,
+                    popular, newArrival, deleted, pageable);
+        }
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
 
         List<ProductVariant> allVariants = variantRepository.findByProductIdInAndDeletedFalse(productIds);

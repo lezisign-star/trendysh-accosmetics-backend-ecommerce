@@ -1,5 +1,10 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-17 (later) — the staff product search finds every word anywhere, best first
+
+`GET /api/v1/products?q=` now goes through `catalog/service/ProductSearch` (one native statement over the catalogue, up to 2000 matches): every word must be found somewhere in the product, in any order, in the name, brand, categories, each live option's SKU / name / colour / label / size / colour family, its barcodes, and last the short description and highlights. Marks are ignored ("PU-30" = "PU 30" = "pu30"); spaces are ignored only for words with a digit or of 5+ letters (`joinable`), because "red" was found in "Bare Draft" otherwise. Order: exact code/barcode, name starts with, name contains, every word in the name, every word in options/categories/brand, description-only; newest first within each. The list's filters still apply (`ProductRepository.searchAdmin` has `among`/`ids`); `ProductService.listProducts` sorts and pages the matches. A search of only marks is no search. Tests: `ProductSearchIntegrationTest` (6). The storefront's search is unchanged.
+
+
 ## 2026-10-17 — variants audit: the AI photo is lined up before pasting, marks only on their own photo
 
 - `MaskComposer.apply` returns `Result(image, note)`. Before pasting the original back outside the mark it lines the AI photo up with the original (zoom ±6%, shift ±6% on 120-px copies, compared outside the mark by outlines; moves only when clearly better), so a slightly drifted AI photo no longer gives a doubled edge. A mark of another shape, or an AI photo of another shape, is skipped with a note. Output is capped at 1600 px on the long edge.
