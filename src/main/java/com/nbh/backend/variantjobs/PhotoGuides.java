@@ -82,6 +82,28 @@ public record PhotoGuides(PhotoGuide guide, List<PhotoGroup> groups, List<TrialP
         return maskUrl() == null ? null : new Mask(maskUrl(), blankToNull(guide.maskPhotoUrl()));
     }
 
+    /** Made without AI: the marked part of the product's own photo is recoloured in code ({@link CodeRecolour}). */
+    public boolean byCode() {
+        return guide != null && guide.method() != null && guide.method().trim().equalsIgnoreCase("CODE");
+    }
+
+    /** The general marked part (the one for every colour, e.g. the cap), or null. */
+    public Mask generalMask() {
+        return maskUrl() == null ? null : new Mask(maskUrl(), blankToNull(guide.maskPhotoUrl()));
+    }
+
+    /**
+     * Made without AI: this colour's group's own marked part and the colour it is painted (a black-bottle series), or
+     * null when the colour's group has neither.
+     */
+    public Paint groupPaint(String color) {
+        PhotoGroup g = groupOf(color);
+        if (g == null || blankToNull(g.maskUrl()) == null || blankToNull(g.paintHex()) == null) return null;
+        return new Paint(new Mask(g.maskUrl().trim(), blankToNull(g.maskPhotoUrl())), g.paintHex().trim());
+    }
+
+    public record Paint(Mask mask, String hex) {}
+
     /** The photo staff tried and approved for this colour, or null. */
     public String trialFor(String color) {
         if (trials == null || color == null) {

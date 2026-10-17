@@ -5,6 +5,7 @@ import com.nbh.backend.imagecleanup.ImageCleanupConfig;
 import com.nbh.backend.variantgen.VariantPhotoPromptBuilder;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -56,23 +57,60 @@ public class VariantPhotoMaker {
     public Made recolour(String productName, GeminiImageClient.Image source, String sourceUrl, String color, String hex,
                                             String labelNote, PhotoGuides guides,
                                             Map<String, GeminiImageClient.Image> downloaded) {
-        String referenceUrl = guides.referenceFor(color);
-        List<GeminiImageClient.Image> extras = referenceUrl == null ? List.of()
-                : List.of(download(referenceUrl, downloaded));
-        String prompt = prompts.build(productName, color, hex, null, labelNote, config.getBackgroundHex(),
-                guides.generalNote(), guides.groupNote(color), referenceUrl != null);
-        GeminiImageClient.Image made = gemini.edit(source, extras, prompt);
-        // Staff marked the part that may change: everything else is the product's own photo again, so the variant
-        // differs from the main photo only there. Without a mark (or if the pictures do not line up) it is the AI's.
+        if (guides.byCode()) {
+            return byCode(source, sourceUrl, color, hex, guides, downloaded);
+        }
         PhotoGuides.Mask mask = guides.maskFor(color);
+        boolean masked = mask != null && mask.fits(sourceUrl);
+        String referenceUrl = guides.referenceFor(color);
+        List<GeminiImageClient.Image> extras = new ArrayList<>();
+        if (referenceUrl != null) extras.add(download(referenceUrl, downloaded));
+        // The mark goes along (last) so the AI knows the only area it may touch.
+        if (masked) extras.add(download(mask.url(), downloaded));
+        String prompt = prompts.build(productName, color, hex, null, labelNote, config.getBackgroundHex(),
+                guides.generalNote(), guides.groupNote(color), referenceUrl != null, masked);
         if (mask == null) {
-            return new Made(made, null);
+            return new Made(gemini.edit(source, extras, prompt), null);
         }
-        if (!mask.fits(sourceUrl)) {
-            return new Made(made, "The marked part was not used: it was marked on another photo. Mark it again on this one.");
+        if (!masked) {
+            return new Made(gemini.edit(source, extras, prompt),
+                    "The marked part was not used: it was marked on another photo. Mark it again on this one.");
         }
-        MaskComposer.Result r = MaskComposer.apply(source, made, download(mask.url(), downloaded));
-        return new Made(r.image(), r.note());
+        // Staff marked the part that may change: everything else is the product's own photo again, so the variant
+        // differs from the main photo only there. An AI that moved the product shows its own background inside the
+        // mark (a pale patch on the cap): that photo is made once more, and refused if it happens again.
+        GeminiImageClient.Image marked = download(mask.url(), downloaded);
+        MaskComposer.Result r = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            r = MaskComposer.apply(source, gemini.edit(source, extras, prompt), marked, config.getBackgroundHex());
+            if (!r.failed()) {
+                return new Made(r.image(), r.note());
+            }
+        }
+        throw new IllegalStateException(r.note() + " Try this one again, or make the photos without AI.");
+    }
+
+    /** Made without AI: the product's own photo with the marked part(s) recoloured ({@link CodeRecolour}). */
+    private Made byCode(GeminiImageClient.Image source, String sourceUrl, String color, String hex, PhotoGuides guides,
+                        Map<String, GeminiImageClient.Image> downloaded) {
+        PhotoGuides.Mask cap = guides.generalMask();
+        PhotoGuides.Paint group = guides.groupPaint(color);
+        if (cap == null && group == null) {
+            throw new IllegalStateException("Mark the part that changes first: without AI only the marked part is recoloured.");
+        }
+        if ((cap != null && !cap.fits(sourceUrl)) || (group != null && !group.mask().fits(sourceUrl))) {
+            throw new IllegalStateException("The part was marked on another photo. Mark it again on this one.");
+        }
+        if (hex == null || hex.isBlank()) {
+            throw new IllegalStateException("\"" + color + "\" has no colour code yet. Give it a colour dot first.");
+        }
+        try {
+            return new Made(CodeRecolour.apply(source,
+                    group == null ? null : new CodeRecolour.Area(download(group.mask().url(), downloaded), group.hex(), false),
+                    cap == null ? null : new CodeRecolour.Area(download(cap.url(), downloaded), hex)), null);
+        } catch (java.io.IOException | IllegalArgumentException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
     }
 
     public GeminiImageClient.Image download(String url, Map<String, GeminiImageClient.Image> downloaded) {

@@ -175,9 +175,14 @@ public class VariantJobService {
     }
 
     /** "Redo photos": which existing variants, made from which variant's photo, following which instructions. */
+    /**
+     * @param colourHexes the dot the shop shows for a colour that has none saved (worked out from its name), by colour
+     *                    name: what a photo made without AI paints, so the photo matches the dot
+     */
     public record RedoRequest(UUID productId, UUID baseVariantId, List<UUID> variantIds,
                               VariantJobRequest.PhotoGuide photoGuide, List<VariantJobRequest.PhotoGroup> photoGroups,
-                              List<VariantJobRequest.TrialPhoto> trialPhotos, String prompt) {}
+                              List<VariantJobRequest.TrialPhoto> trialPhotos, String prompt,
+                              Map<String, String> colourHexes) {}
 
     /**
      * Queues new photos for existing variants (owner, 2026-10-15: a whole job of gel polish photos came out painted
@@ -233,7 +238,13 @@ public class VariantJobService {
         List<VariantJobRequest.SizeIn> sizes = new ArrayList<>();
         for (ProductOptionsService.OptionDto o : productOptions.list(product.getId())) {
             if (o.kind() == com.nbh.backend.catalog.entity.ProductOptionValue.Kind.COLOR) {
-                colors.add(new VariantJobRequest.ColorIn(o.value(), o.swatchHex(), o.colorFamily()));
+                String hex = o.swatchHex();
+                if ((hex == null || hex.isBlank()) && r.colourHexes() != null) {
+                    hex = r.colourHexes().entrySet().stream()
+                            .filter(e -> e.getKey() != null && e.getKey().trim().equalsIgnoreCase(o.value().trim()))
+                            .map(Map.Entry::getValue).findFirst().orElse(null);
+                }
+                colors.add(new VariantJobRequest.ColorIn(o.value(), hex, o.colorFamily()));
             } else {
                 sizes.add(new VariantJobRequest.SizeIn(o.value(), o.sizeLabelText(), o.sizePhotoImageId()));
             }

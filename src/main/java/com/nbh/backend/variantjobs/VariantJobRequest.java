@@ -44,14 +44,29 @@ public record VariantJobRequest(
      *                the photo is put back as the product's own ({@link MaskComposer})
      * @param maskPhotoUrl the photo the part was marked on; the mark is used only on that photo
      */
-    public record PhotoGuide(String note, String referenceUrl, String maskUrl, String maskPhotoUrl) {}
+    /**
+     * @param method "CODE": the photos are made without AI, by recolouring the marked part of the product's own photo to
+     *               each colour's dot ({@link CodeRecolour}; owner, 2026-10-17, after AI photos of Roniki gel came back
+     *               with a pale patch). Anything else (or null): made by the AI.
+     */
+    public record PhotoGuide(String note, String referenceUrl, String maskUrl, String maskPhotoUrl, String method) {
+        public PhotoGuide(String note, String referenceUrl, String maskUrl, String maskPhotoUrl) {
+            this(note, referenceUrl, maskUrl, maskPhotoUrl, null);
+        }
+    }
 
     /**
-     * @param maskUrl the part of the photo that may change for this group's colours, replacing the general one (a
-     *                black-bottle series changes the whole bottle, not only the cap)
+     * @param maskUrl  the part of the photo that may change for this group's colours, replacing the general one (a
+     *                 black-bottle series changes the whole bottle, not only the cap)
+     * @param paintHex made without AI: the colour this group's own marked part is painted ("#1A1A1A" for a black-bottle
+     *                 series); the general marked part (the cap) is then painted each colour's dot on top
      */
     public record PhotoGroup(List<String> colors, String note, String referenceUrl, String maskUrl,
-                             String maskPhotoUrl) {}
+                             String maskPhotoUrl, String paintHex) {
+        public PhotoGroup(List<String> colors, String note, String referenceUrl, String maskUrl, String maskPhotoUrl) {
+            this(colors, note, referenceUrl, maskUrl, maskPhotoUrl, null);
+        }
+    }
 
     public record TrialPhoto(String color, String url) {}
 

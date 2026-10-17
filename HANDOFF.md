@@ -1,5 +1,15 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-17 (night) — the pale patch on Roniki photos: why, the AI fix, and photos made without AI
+
+**Why:** with a marked part, the prompt still asked for "a seamless creamy studio backdrop" (`image-cleanup.background-hex`, #F3EBDD), a centred product and a square picture. The AI repainted the backdrop and moved the bottle; pasting the product's photo back around the mark (`MaskComposer`) left the AI's cream backdrop inside the mark, a pale patch where the cap should be (~40 of the 86 Roniki photos).
+
+- **AI path:** `VariantPhotoPromptBuilder.build(..., withMask)`: keep the photo exactly (background, framing, size), change pixels only inside the mask, which is now sent as the last picture. `MaskComposer.apply(..., backdropHex)` refuses an AI photo when more than 20% of the marked part shows the backdrop where the product's photo shows none (`Result.failed`); `VariantPhotoMaker` makes it once more, then fails that photo with a note.
+- **Without AI** (owner's choice for Roniki): `PhotoGuide.method = "CODE"` → `CodeRecolour`: the product's own photo with the marked part recoloured in CIE Lab to the colour's dot, keeping its light, shade and gloss; a marked pixel that matches the backdrop around the mark (judged on the original) is left alone, so a mark that spills is safe. A group's own mark with `PhotoGroup.paintHex` (e.g. #1A1A1A, the black CA series) is painted first and the cap on top. No AI call, no quota; glitter shades come out smooth. Needs a mark and a colour code (`RedoRequest.colourHexes` fills codes from the shop's dot when a colour has none saved).
+- **Finding the damaged ones:** `GET /api/v1/admin/variant-jobs/patch-check?productId=&baseVariantId=` (`PatchCheckService`, `MaskComposer.patchShare` > 0.1%): the variants whose main AI photo shows the backdrop where the starting photo has none. Calibrated on live Roniki photos: damaged 0.33%, good 0.003–0.02%.
+- Tests: `CodeRecolourTest` (4), `MaskComposerTest#anAiPhotoThatMovedTheProduct…`.
+
+
 ## 2026-10-17 (evening) — cards crop around the marked part (V66 `product_image.focus`)
 
 Owner: the Roniki gel cards must show the bottle tops first, decided from the part staff marked. `product_image.focus` ("x% y%", null = middle) is the middle of what was painted (`MaskComposer.focusOf`). It is set (a) by a variant job on every photo it makes with a mark, and on the photo it was made from (`VariantPhotoMaker.focusFor`, `VariantJobWriter.focusPhoto`, `attachPhoto(..., focus)`), and (b) at once when staff save a mark: `POST /api/v1/admin/variant-jobs/photo-focus {productId, maskUrl, maskPhotoUrl, colors?, exceptColors?}` (`PhotoFocusService`): the general mark sets the marked photo and every AI-made photo except colours of groups with their own mark; a group's mark sets only that group's colours (names compared tidied, any case). Uploaded photos of other colours are left alone. Catalogue cards carry `imageFocus`. Removing a mark does not clear focus. Tests: `MaskComposerTest#theFocusIsTheMiddleOfWhatWasMarkedAndNullForNothing`, `PhotoFocusServiceTest`.

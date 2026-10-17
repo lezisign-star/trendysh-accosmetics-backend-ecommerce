@@ -24,12 +24,14 @@ public class VariantJobController {
     private final VariantPhotoEditor editor;
     private final PhotoTrialService trials;
     private final PhotoFocusService focus;
+    private final PatchCheckService patches;
 
     public VariantJobController(VariantJobService service, SwatchSuggester swatches, ColourLibraryService library,
                                 PhotoColourReader reader, VariantPhotoEditor editor, PhotoTrialService trials,
-                                PhotoFocusService focus) {
+                                PhotoFocusService focus, PatchCheckService patches) {
         this.trials = trials;
         this.focus = focus;
+        this.patches = patches;
         this.service = service;
         this.swatches = swatches;
         this.library = library;
@@ -102,6 +104,13 @@ public class VariantJobController {
     public BasePhoto basePhoto(@RequestParam java.util.UUID productId,
                                @RequestParam(required = false) java.util.UUID baseVariantId) {
         return new BasePhoto(trials.basePhotoUrl(productId, baseVariantId));
+    }
+
+    /** The variants whose AI-made photo has a pale patch (the AI's backdrop showing through the marked part). */
+    @GetMapping("/patch-check")
+    public PatchCheckService.Found patchCheck(@RequestParam java.util.UUID productId,
+                                              @RequestParam(required = false) java.util.UUID baseVariantId) {
+        return patches.check(productId, baseVariantId);
     }
 
     public record FocusRequest(java.util.UUID productId, String maskUrl, String maskPhotoUrl,

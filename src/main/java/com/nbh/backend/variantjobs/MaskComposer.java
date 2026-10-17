@@ -48,12 +48,35 @@ public final class MaskComposer {
     private MaskComposer() {}
 
     /**
-     * @param image the photo to use
-     * @param note  null when the marked part was used; otherwise why it was not, in staff's words
+     * More of the marked part than this showing the AI's own backdrop (where the product's photo shows none) means the AI
+     * moved or reframed the product: pasted back, it leaves a pale patch where the cap should be (found live on Roniki,
+     * 2026-10-17).
      */
-    public record Result(GeminiImageClient.Image image, String note) {}
+    static final double MAX_BACKDROP_SHARE = 0.2;
+    /** How close (sum of the red, green and blue differences) a pixel must be to the backdrop to count as backdrop. */
+    static final int BACKDROP_NEAR = 36;
+
+    /**
+     * @param image  the photo to use
+     * @param note   null when the marked part was used; otherwise why it was not, in staff's words
+     * @param failed the AI's photo can't be used (the product moved inside the marked part): make it again or report it
+     */
+    public record Result(GeminiImageClient.Image image, String note, boolean failed) {
+        public Result(GeminiImageClient.Image image, String note) {
+            this(image, note, false);
+        }
+    }
 
     public static Result apply(GeminiImageClient.Image source, GeminiImageClient.Image edited, GeminiImageClient.Image mask) {
+        return apply(source, edited, mask, null);
+    }
+
+    /**
+     * @param backdropHex the backdrop the AI is known to paint ("#F3EBDD"); when it shows through the marked part where the
+     *                    product's photo has none, the result is {@code failed}. Null skips the check.
+     */
+    public static Result apply(GeminiImageClient.Image source, GeminiImageClient.Image edited, GeminiImageClient.Image mask,
+                               String backdropHex) {
         try {
             BufferedImage src = read(source);
             BufferedImage ai = read(edited);
@@ -85,6 +108,15 @@ public final class MaskComposer {
 
             int[] basePx = base.getRGB(0, 0, w, h, null, 0, w);
             int[] paintPx = aligned.getRGB(0, 0, w, h, null, 0, w);
+            Integer backdrop = rgbOf(backdropHex);
+            if (backdrop != null) {
+                double share = backdropShare(basePx, paintPx, m, backdrop);
+                if (share > MAX_BACKDROP_SHARE) {
+                    log.info("AI photo rejected: {}% of the marked part shows its backdrop", Math.round(share * 100));
+                    return new Result(edited,
+                            "The AI moved the product, so its background showed inside the marked part.", true);
+                }
+            }
             soften(m, w, h, Math.max(2, Math.round(Math.max(w, h) * 0.006f)));
 
             BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
@@ -136,12 +168,60 @@ public final class MaskComposer {
         }
     }
 
+    /** "#F3EBDD" as 0xRRGGBB; null for nothing or anything else. */
+    static Integer rgbOf(String hex) {
+        if (hex == null) return null;
+        String h = hex.trim().replace("#", "");
+        if (!h.matches("[0-9A-Fa-f]{6}")) return null;
+        return Integer.parseInt(h, 16);
+    }
+
+    private static int distance(int a, int b) {
+        return Math.abs(((a >> 16) & 0xFF) - ((b >> 16) & 0xFF)) + Math.abs(((a >> 8) & 0xFF) - ((b >> 8) & 0xFF))
+                + Math.abs((a & 0xFF) - (b & 0xFF));
+    }
+
+    /** Of the clearly marked pixels, the share where the AI shows the backdrop and the product's photo does not. */
+    static double backdropShare(int[] basePx, int[] paintPx, float[] mask, int backdrop) {
+        long marked = 0;
+        long showing = 0;
+        for (int i = 0; i < mask.length; i++) {
+            if (mask[i] < 0.5f) continue;
+            marked++;
+            if (distance(paintPx[i], backdrop) <= BACKDROP_NEAR && distance(basePx[i], backdrop) > BACKDROP_NEAR) {
+                showing++;
+            }
+        }
+        return marked == 0 ? 0 : (double) showing / marked;
+    }
+
+    /**
+     * How much of a made photo shows the AI's backdrop where the product's photo has none (a pale patch left by an AI
+     * that moved the product), as a share of the whole photo. For finding photos made before the check above existed.
+     */
+    public static double patchShare(GeminiImageClient.Image productPhoto, GeminiImageClient.Image made, String backdropHex)
+            throws IOException {
+        BufferedImage src = read(productPhoto);
+        BufferedImage out = read(made);
+        Integer backdrop = rgbOf(backdropHex);
+        if (src == null || out == null || backdrop == null || !similarShape(src, out, AI_ASPECT_TOLERANCE)) return 0;
+        int w = 240;
+        int h = Math.max(1, (int) Math.round((double) src.getHeight() * w / src.getWidth()));
+        int[] a = draw(src, w, h, null).getRGB(0, 0, w, h, null, 0, w);
+        int[] b = draw(out, w, h, null).getRGB(0, 0, w, h, null, 0, w);
+        long showing = 0;
+        for (int i = 0; i < a.length; i++) {
+            if (distance(b[i], backdrop) <= BACKDROP_NEAR && distance(a[i], backdrop) > BACKDROP_NEAR) showing++;
+        }
+        return (double) showing / a.length;
+    }
+
     private static Result skipped(GeminiImageClient.Image edited, String note) {
         log.info(note);
         return new Result(edited, note);
     }
 
-    private static BufferedImage read(GeminiImageClient.Image image) throws IOException {
+    static BufferedImage read(GeminiImageClient.Image image) throws IOException {
         return image == null || image.bytes() == null ? null : ImageIO.read(new ByteArrayInputStream(image.bytes()));
     }
 
@@ -152,7 +232,7 @@ public final class MaskComposer {
     }
 
     /** The picture drawn at w x h (moved by {@code at} when given), as plain RGB over white. */
-    private static BufferedImage draw(BufferedImage image, int w, int h, AffineTransform at) {
+    static BufferedImage draw(BufferedImage image, int w, int h, AffineTransform at) {
         BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = out.createGraphics();
         try {
@@ -171,7 +251,7 @@ public final class MaskComposer {
     }
 
     /** 0..1 for every pixel: how bright the mask is there, times how opaque (so white-on-clear and white-on-black both work). */
-    private static float[] maskValues(BufferedImage marked, int w, int h) {
+    static float[] maskValues(BufferedImage marked, int w, int h) {
         BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = scaled.createGraphics();
         try {
@@ -372,7 +452,7 @@ public final class MaskComposer {
         }
     }
 
-    private static int mix(int original, int painted, float m) {
+    static int mix(int original, int painted, float m) {
         if (m <= 0f) {
             return original & 0xFFFFFF;
         }

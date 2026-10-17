@@ -165,4 +165,21 @@ class MaskComposerTest {
         assertThat(MaskComposer.focusOf(png(200, 300, Color.BLACK, null, 0, 0, 0, 0))).isNull();
         assertThat(MaskComposer.focusOf(null)).isNull();
     }
+
+    @Test
+    void anAiPhotoThatMovedTheProductAndShowsItsBackdropInTheMarkIsRefused() throws IOException {
+        Color backdrop = new Color(0xF3, 0xEB, 0xDD);
+        GeminiImageClient.Image source = bottle(200, 300, Color.WHITE, Color.GRAY, PALE_CAP, 0);
+        GeminiImageClient.Image mask = png(200, 300, Color.BLACK, Color.WHITE, 78, 38, 122, 122); // the cap
+        // The AI repainted the backdrop and moved the bottle well away from where the cap was.
+        GeminiImageClient.Image moved = bottle(200, 300, backdrop, Color.GRAY, Color.RED, 50);
+        MaskComposer.Result refused = MaskComposer.apply(source, moved, mask, "#F3EBDD");
+        assertThat(refused.failed()).isTrue();
+        assertThat(refused.note()).contains("moved the product");
+
+        // Repainted backdrop but the product where it was: the cap is used, the backdrop is put back.
+        GeminiImageClient.Image inPlace = bottle(200, 300, backdrop, Color.GRAY, Color.RED, 0);
+        assertThat(MaskComposer.apply(source, inPlace, mask, "#F3EBDD").failed()).isFalse();
+        assertThat(MaskComposer.patchShare(source, moved, "#F3EBDD")).isGreaterThan(0.001);
+    }
 }

@@ -26,6 +26,19 @@ public class VariantPhotoPromptBuilder {
      */
     public String build(String productName, String color, String swatchHex, String size, String labelNote,
                         String backgroundHex, String whereNote, String groupNote, boolean withReference) {
+        return build(productName, color, swatchHex, size, labelNote, backgroundHex, whereNote, groupNote, withReference,
+                false);
+    }
+
+    /**
+     * @param withMask staff marked the part that may change, and the mask is attached as the LAST picture. The photo is
+     *                 then kept exactly as it is (its own background, framing and size): asking for a studio backdrop
+     *                 made the AI repaint and re-centre it, and pasting the product's photo back around the mark left a
+     *                 pale patch where the cap should be (Roniki, 2026-10-17).
+     */
+    public String build(String productName, String color, String swatchHex, String size, String labelNote,
+                        String backgroundHex, String whereNote, String groupNote, boolean withReference,
+                        boolean withMask) {
         StringBuilder p = new StringBuilder();
         p.append("The attached image is a real, unedited photo of a product a shop sells: \"").append(productName)
                 .append("\". Make the photo of ANOTHER VARIANT of this exact product.\n\n");
@@ -80,15 +93,25 @@ public class VariantPhotoPromptBuilder {
                 .append("framing. STRICT RULES: do not add a lid, cap, handle, pump or any part not in the photo; do not ")
                 .append("add texture, labels or text beyond the allowed label update; show exactly the items in the ")
                 .append("photo, no extras or props; do not add any watermark, logo or caption of your own.\n\n");
-        p.append("Make it a professional studio catalogue photo. ").append(PhotoView.CLEAN.instruction())
-                .append(" Use a seamless solid creamy studio backdrop, hex ").append(backgroundHex)
-                .append(", no gradient or texture, soft even studio lighting, a soft realistic ground shadow and a ")
-                .append("subtle reflection. Keep the product centred with a clear margin.\n\n");
+        if (withMask) {
+            p.append("The LAST attached picture is a mask, not a photo: it is white over the only area you may change ")
+                    .append("and black everywhere else. Change pixels only inside the white area.\n\n");
+            p.append("KEEP THE PHOTO EXACTLY AS IT IS: the same background, lighting, framing, crop, picture size and ")
+                    .append("shape. Do not move, resize, re-centre or rotate the product, do not replace or clean the ")
+                    .append("background, and do not add a studio backdrop or shadow. Every pixel outside the white area ")
+                    .append("must stay where it is.\n\n");
+        } else {
+            p.append("Make it a professional studio catalogue photo. ").append(PhotoView.CLEAN.instruction())
+                    .append(" Use a seamless solid creamy studio backdrop, hex ").append(backgroundHex)
+                    .append(", no gradient or texture, soft even studio lighting, a soft realistic ground shadow and a ")
+                    .append("subtle reflection. Keep the product centred with a clear margin.\n\n");
+        }
         p.append("Before finalising, compare with the ").append(withReference ? "first " : "")
                 .append("attached photo: only the colour of the part that shows the shade")
                 .append(size != null ? ", the size wording" : "")
                 .append(" and label wording named above may differ.\n\n");
-        p.append("Square 1:1 composition, 1024x1024 pixels.");
+        p.append(withMask ? "Return the photo at the same size and shape as the first attached photo."
+                : "Square 1:1 composition, 1024x1024 pixels.");
         return p.toString();
     }
 
