@@ -351,6 +351,27 @@ public class VariantJobWriter {
      */
     @Transactional
     public void attachPhoto(UUID jobId, UUID itemId, String url, boolean madeByAi, boolean replaceAiPhotos) {
+        attachPhoto(jobId, itemId, url, madeByAi, replaceAiPhotos, null);
+    }
+
+    /**
+     * The product's own photos at {@code url} (the one a job's photos were made from) get {@code focus}: where the part
+     * staff marked sits, so the shop's cards crop around it there too (V66).
+     */
+    @Transactional
+    public void focusPhoto(UUID productId, String url, String focus) {
+        if (url == null || focus == null) return;
+        List<ProductImage> found = images.findByProductIdInOrderBySortOrderAsc(List.of(productId)).stream()
+                .filter(i -> url.equals(i.getUrl()) && !focus.equals(i.getFocus()))
+                .toList();
+        found.forEach(i -> i.setFocus(focus));
+        images.saveAll(found);
+    }
+
+    /** {@code focus}: where the marked part sits on the photo, "x% y%", or null for the middle (V66). */
+    @Transactional
+    public void attachPhoto(UUID jobId, UUID itemId, String url, boolean madeByAi, boolean replaceAiPhotos,
+                            String focus) {
         VariantJobItem item = items.findById(itemId).orElseThrow();
         if (item.getPhotoStatus() != StepStatus.PENDING) {
             // Already done (or failed and handed back) by another run of this job: a worker that was thought dead and
@@ -384,6 +405,7 @@ public class VariantJobWriter {
             image.setSortOrder(0);
             image.setPrimary(true);
             image.setSource(madeByAi ? ProductImage.ImageSource.AI_CLEANED : ProductImage.ImageSource.UPLOAD);
+            image.setFocus(focus);
             images.save(image);
         }
         item.setPhotoStatus(StepStatus.DONE);

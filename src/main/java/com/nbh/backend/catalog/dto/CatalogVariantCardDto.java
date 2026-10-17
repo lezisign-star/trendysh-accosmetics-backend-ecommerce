@@ -79,7 +79,9 @@ public record CatalogVariantCardDto(
         /** Where its size sits in the product's size order, 0 first; null = no size. */
         Integer sizePosition,
         /** The product's brand; null when it has none. */
-        String brandName
+        String brandName,
+        /** Where on {@code imageUrl} the part that changes sits, "x% y%", for the card to crop around (V66); null = the middle. */
+        String imageFocus
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */
     public static boolean isMeaninglessName(String variantName) {

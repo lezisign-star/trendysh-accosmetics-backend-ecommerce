@@ -23,10 +23,13 @@ public class VariantJobController {
     private final PhotoColourReader reader;
     private final VariantPhotoEditor editor;
     private final PhotoTrialService trials;
+    private final PhotoFocusService focus;
 
     public VariantJobController(VariantJobService service, SwatchSuggester swatches, ColourLibraryService library,
-                                PhotoColourReader reader, VariantPhotoEditor editor, PhotoTrialService trials) {
+                                PhotoColourReader reader, VariantPhotoEditor editor, PhotoTrialService trials,
+                                PhotoFocusService focus) {
         this.trials = trials;
+        this.focus = focus;
         this.service = service;
         this.swatches = swatches;
         this.library = library;
@@ -99,6 +102,16 @@ public class VariantJobController {
     public BasePhoto basePhoto(@RequestParam java.util.UUID productId,
                                @RequestParam(required = false) java.util.UUID baseVariantId) {
         return new BasePhoto(trials.basePhotoUrl(productId, baseVariantId));
+    }
+
+    public record FocusRequest(java.util.UUID productId, String maskUrl, String maskPhotoUrl,
+                               List<String> colors, List<String> exceptColors) {}
+
+    /** Staff marked the part that changes: the shop's cards crop the product's photos around it from now on (V66). */
+    @PostMapping("/photo-focus")
+    public PhotoFocusService.Applied photoFocus(@RequestBody FocusRequest request) {
+        return focus.apply(request.productId(), request.maskUrl(), request.maskPhotoUrl(), request.colors(),
+                request.exceptColors());
     }
 
     public record ReferenceRequest(String image, String mimeType) {}

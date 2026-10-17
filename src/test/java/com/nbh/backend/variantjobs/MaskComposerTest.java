@@ -157,4 +157,12 @@ class MaskComposerTest {
         BufferedImage out = decode(MaskComposer.apply(source, ai, mask).image());
         assertThat(Math.max(out.getWidth(), out.getHeight())).isEqualTo(MaskComposer.MAX_EDGE);
     }
+
+    @Test
+    void theFocusIsTheMiddleOfWhatWasMarkedAndNullForNothing() throws IOException {
+        // the cap of a 200x300 photo: x 78-121, y 38-121
+        assertThat(MaskComposer.focusOf(png(200, 300, Color.BLACK, Color.WHITE, 78, 38, 122, 122))).isEqualTo("50% 27%");
+        assertThat(MaskComposer.focusOf(png(200, 300, Color.BLACK, null, 0, 0, 0, 0))).isNull();
+        assertThat(MaskComposer.focusOf(null)).isNull();
+    }
 }

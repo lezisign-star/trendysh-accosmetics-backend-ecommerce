@@ -262,18 +262,27 @@ public class VariantJobWorker {
                     }
                     masters.put(step.master(), master);
                 }
+                // Where the marked part sits, so the shop's cards crop around it (V66): on the new photo, and on the
+                // photo it was made from (the mark was painted there).
+                String madeFrom = step.master().sourcePhotoId() != null
+                        ? sizePhotoUrls.get(step.master().sourcePhotoId()) : (base == null ? null : base.url());
+                String focus = master.madeByAi() ? maker.focusFor(item.getColor(), madeFrom, guides, downloaded) : null;
+                if (focus != null) {
+                    writer.focusPhoto(product.getId(), madeFrom, focus);
+                }
                 if (step.labelEdit()) {
                     writer.heartbeat(jobId);
                     GeminiImageClient.Image from = master.image() != null ? master.image() : maker.download(master.url(), downloaded);
                     GeminiImageClient.Image relabelled = gemini.edit(from,
                             prompts.labelOnly(product.getName(), step.labelText(), config.getBackgroundHex()));
-                    writer.attachPhoto(jobId, item.getId(), upload(relabelled, item.getVariantId(), jobId), true, replace);
+                    writer.attachPhoto(jobId, item.getId(), upload(relabelled, item.getVariantId(), jobId), true, replace,
+                            focus);
                 } else {
                     if (master.url() == null) {
                         // The first variant to use this master stores it; the others of the colour share the file.
                         master.url = upload(master.image(), item.getVariantId(), jobId);
                     }
-                    writer.attachPhoto(jobId, item.getId(), master.url(), master.madeByAi(), replace);
+                    writer.attachPhoto(jobId, item.getId(), master.url(), master.madeByAi(), replace, focus);
                 }
             } catch (GeminiException e) {
                 if (e.isQuotaExceeded()) {

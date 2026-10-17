@@ -36,6 +36,21 @@ public class VariantPhotoMaker {
     public record Made(GeminiImageClient.Image image, String note) {}
 
     /**
+     * Where the part staff marked for this colour sits on the photo it is made from, "x% y%", so the shop's cards crop
+     * around it (V66); null without a mark, or with one marked on another photo.
+     */
+    public String focusFor(String color, String sourceUrl, PhotoGuides guides,
+                           Map<String, GeminiImageClient.Image> downloaded) {
+        PhotoGuides.Mask mask = guides.maskFor(color);
+        if (mask == null || sourceUrl == null || !mask.fits(sourceUrl)) return null;
+        try {
+            return MaskComposer.focusOf(download(mask.url(), downloaded));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
      * @param sourceUrl where {@code source} came from: a marked part is used only on the photo it was marked on
      */
     public Made recolour(String productName, GeminiImageClient.Image source, String sourceUrl, String color, String hex,

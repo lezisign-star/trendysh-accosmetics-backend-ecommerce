@@ -85,7 +85,7 @@ public class CatalogService {
         List<UUID> variantIds = pageVariants.stream().map(ProductVariant::getId).toList();
 
         Map<UUID, Long> sellableCountByProduct = sellableVariantCountByProduct(productIds);
-        Map<UUID, String> imageByVariant = imageByVariant(pageVariants);
+        Map<UUID, Cover> imageByVariant = imageByVariant(pageVariants);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(variantIds);
         Map<UUID, BigDecimal> availableByVariant = availability(pageVariants);
@@ -112,7 +112,7 @@ public class CatalogService {
         List<UUID> productIds = List.of(product.getId());
 
         Map<UUID, Long> sellableCountByProduct = Map.of(product.getId(), (long) siblings.size());
-        Map<UUID, String> imageByVariant = imageByVariant(siblings);
+        Map<UUID, Cover> imageByVariant = imageByVariant(siblings);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(siblingIds);
         Map<UUID, BigDecimal> availableByVariant = availability(siblings);
@@ -192,7 +192,7 @@ public class CatalogService {
     }
 
     private CatalogVariantCardDto toCard(ProductVariant v, PromoCampaign activeCampaign,
-                                          Map<UUID, Long> sellableCountByProduct, Map<UUID, String> imageByVariant,
+                                          Map<UUID, Long> sellableCountByProduct, Map<UUID, Cover> imageByVariant,
                                           Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct,
                                           Map<UUID, BigDecimal> soldByVariant, Map<UUID, BigDecimal> availableByVariant) {
         Product p = v.getProduct();
@@ -210,9 +210,10 @@ public class CatalogService {
         List<UUID> categoryIds = p.getCategories().stream().map(Category::getId).toList();
 
         BigDecimal availableQty = availableByVariant.getOrDefault(v.getId(), BigDecimal.ZERO);
+        Cover cover = imageByVariant.get(v.getId());
         return new CatalogVariantCardDto(
                 v.getId(), p.getId(), p.getSlug(), p.getName(), variantName, displayName,
-                imageByVariant.get(v.getId()), categoryIds, categoryIds.isEmpty() ? null : categoryIds.get(0),
+                cover == null ? null : cover.url(), categoryIds, categoryIds.isEmpty() ? null : categoryIds.get(0),
                 price.effectivePrice(), price.originalPrice(), price.onDeal(), price.dealEndsAt(),
                 availableQty.signum() > 0,
                 p.isPopular(), p.isNewArrival(),
@@ -223,8 +224,12 @@ public class CatalogService {
                 p.getShortDescription(), optionLabel, v.getSwatchHex(),
                 v.getOptionColor(), v.getOptionSize(),
                 v.effectiveColorFamily() == null ? null : v.effectiveColorFamily().name(),
-                v.getSizePosition(), p.getBrand() == null ? null : p.getBrand().getName());
+                v.getSizePosition(), p.getBrand() == null ? null : p.getBrand().getName(),
+                cover == null ? null : cover.focus());
     }
+
+    /** An option's cover photo and where on it the part that changes sits ("x% y%", V66; null = the middle). */
+    private record Cover(String url, String focus) {}
 
     /**
      * What each variant on a page can sell right now. A plain variant sells what its own stock holds; a kit
@@ -251,12 +256,19 @@ public class CatalogService {
      * Keyed by variant id: that option's own cover photo, or absent when it has none. A card never borrows a
      * sibling's photo or the product's: a photo belongs to exactly one option (see {@link PhotoOwnership}).
      */
-    private Map<UUID, String> imageByVariant(List<ProductVariant> variants) {
+    private Map<UUID, Cover> imageByVariant(List<ProductVariant> variants) {
         List<UUID> productIds = variants.stream().map(v -> v.getProduct().getId()).distinct().toList();
         List<ProductImage> images = imageRepository.findByProductIdInOrderBySortOrderAsc(productIds);
         Map<UUID, Long> optionCounts = PhotoOwnership.optionCounts(
                 variantRepository.findByProductIdInAndDeletedFalse(productIds));
-        return PhotoOwnership.coverUrlByVariant(variants, images, optionCounts);
+        Map<String, String> focusByUrl = new HashMap<>();
+        for (ProductImage i : images) {
+            if (i.getFocus() != null) focusByUrl.putIfAbsent(i.getUrl(), i.getFocus());
+        }
+        Map<UUID, Cover> out = new HashMap<>();
+        PhotoOwnership.coverUrlByVariant(variants, images, optionCounts)
+                .forEach((id, url) -> out.put(id, new Cover(url, focusByUrl.get(url))));
+        return out;
     }
 
     @Transactional(readOnly = true)

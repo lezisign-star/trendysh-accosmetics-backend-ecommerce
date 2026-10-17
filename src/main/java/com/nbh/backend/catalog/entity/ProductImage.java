@@ -40,6 +40,13 @@ public class ProductImage extends BaseEntity {
     @Column(nullable = false, length = 20)
     private ImageSource source = ImageSource.UPLOAD;
 
+    /**
+     * Where the part that changes sits on this photo, "x% y%" (V66), so the shop's cards crop around it (the bottle cap
+     * of a gel polish rather than its middle). Set by a variant job from the part staff marked; null = the middle.
+     */
+    @Column(length = 16)
+    private String focus;
+
     private Integer width;
     private Integer height;
     private Integer byteSize;

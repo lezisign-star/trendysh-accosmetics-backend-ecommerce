@@ -105,6 +105,37 @@ public final class MaskComposer {
         }
     }
 
+    /**
+     * Where the marked part sits on the photo, as "x% y%" (the middle of what was painted), for the shop's cards to crop
+     * around (V66). Null when nothing usable was marked or the mark can't be read.
+     */
+    public static String focusOf(GeminiImageClient.Image mask) {
+        try {
+            BufferedImage marked = read(mask);
+            if (marked == null) return null;
+            int w = Math.min(marked.getWidth(), ALIGN_EDGE * 2);
+            int h = Math.max(1, (int) Math.round((double) marked.getHeight() * w / marked.getWidth()));
+            float[] m = maskValues(marked, w, h);
+            int minX = w, minY = h, maxX = -1, maxY = -1;
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    if (m[y * w + x] < 0.5f) continue;
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+            if (maxX < 0) return null;
+            long cx = Math.round(100.0 * (minX + maxX + 1) / 2 / w);
+            long cy = Math.round(100.0 * (minY + maxY + 1) / 2 / h);
+            return cx + "% " + cy + "%";
+        } catch (IOException | RuntimeException e) {
+            log.info("The marked part's position could not be read: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private static Result skipped(GeminiImageClient.Image edited, String note) {
         log.info(note);
         return new Result(edited, note);
