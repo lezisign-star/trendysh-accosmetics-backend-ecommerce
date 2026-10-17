@@ -82,25 +82,25 @@ public final class CodeRecolour {
         long n = 0;
         for (int i = 0; i < px.length; i++) {
             if (m[i] >= 0.5f) {
-                sum += lab(px[i])[0];
+                sum += MaskComposer.lab(px[i])[0];
                 n++;
             }
         }
         if (n == 0) throw new IllegalArgumentException("Nothing was marked, so there is nothing to recolour.");
-        double[] t = lab(target);
+        double[] t = MaskComposer.lab(target);
         // A hand-painted mark spills a little onto the background around the cap: the background's colour, from a thin
         // ring just outside the mark, is left alone wherever it shows inside the mark.
-        double[] around = spareBackground ? ringColour(original, m, w, h) : null;
+        double[] around = spareBackground ? MaskComposer.ringColour(original, m, w, h) : null;
         float[] own = m.clone();
         if (around != null) {
             sum = 0;
             n = 0;
             for (int i = 0; i < px.length; i++) {
                 if (m[i] <= 0.001f) continue;
-                double object = clamp((deltaE(lab(original[i]), around) - BACKGROUND_NEAR) / BACKGROUND_SPAN, 0, 1);
+                double object = clamp((MaskComposer.deltaE(MaskComposer.lab(original[i]), around) - BACKGROUND_NEAR) / BACKGROUND_SPAN, 0, 1);
                 own[i] = (float) (m[i] * object);
                 if (own[i] >= 0.5f) {
-                    sum += lab(px[i])[0];
+                    sum += MaskComposer.lab(px[i])[0];
                     n++;
                 }
             }
@@ -111,85 +111,18 @@ public final class CodeRecolour {
         MaskComposer.soften(m, w, h, Math.max(1, Math.round(Math.max(w, h) * 0.003f)));
         for (int i = 0; i < px.length; i++) {
             if (m[i] <= 0.001f) continue;
-            double[] p = lab(px[i]);
+            double[] p = MaskComposer.lab(px[i]);
             double highlight = clamp((p[0] - mean - HIGHLIGHT_FROM) / HIGHLIGHT_SPAN, 0, 1);
             double l = (t[0] + (p[0] - mean) * SHADE) * (1 - highlight) + p[0] * highlight;
             double a = t[1] * (1 - 0.75 * highlight);
             double b = t[2] * (1 - 0.75 * highlight);
-            px[i] = MaskComposer.mix(px[i], rgb(clamp(l, 0, 100), a, b), m[i]);
+            px[i] = MaskComposer.mix(px[i], MaskComposer.rgb(clamp(l, 0, 100), a, b), m[i]);
         }
     }
 
     /** Within this colour difference (CIE76) of the background around the mark a pixel counts as background. */
     static final double BACKGROUND_NEAR = 8;
     static final double BACKGROUND_SPAN = 10;
-
-    /** The average Lab colour of a thin ring just outside the mark; null when there is no such ring. */
-    static double[] ringColour(int[] px, float[] m, int w, int h) {
-        float[] grown = m.clone();
-        MaskComposer.soften(grown, w, h, Math.max(2, Math.round(Math.max(w, h) * 0.012f)));
-        double l = 0, a = 0, b = 0;
-        long n = 0;
-        for (int i = 0; i < px.length; i++) {
-            if (m[i] < 0.02f && grown[i] > 0.02f) {
-                double[] p = lab(px[i]);
-                l += p[0];
-                a += p[1];
-                b += p[2];
-                n++;
-            }
-        }
-        return n < 20 ? null : new double[] {l / n, a / n, b / n};
-    }
-
-    static double deltaE(double[] p, double[] q) {
-        double dl = p[0] - q[0], da = p[1] - q[1], db = p[2] - q[2];
-        return Math.sqrt(dl * dl + da * da + db * db);
-    }
-
-    // ------------------------------------------------------------------ sRGB <-> CIE Lab (D65)
-
-    static double[] lab(int rgb) {
-        double r = linear(((rgb >> 16) & 0xFF) / 255.0);
-        double g = linear(((rgb >> 8) & 0xFF) / 255.0);
-        double bl = linear((rgb & 0xFF) / 255.0);
-        double x = (0.4124 * r + 0.3576 * g + 0.1805 * bl) / 0.95047;
-        double y = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
-        double z = (0.0193 * r + 0.1192 * g + 0.9505 * bl) / 1.08883;
-        double fx = f(x), fy = f(y), fz = f(z);
-        return new double[] {116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)};
-    }
-
-    static int rgb(double l, double a, double b) {
-        double fy = (l + 16) / 116;
-        double fx = fy + a / 500;
-        double fz = fy - b / 200;
-        double x = fInv(fx) * 0.95047;
-        double y = fInv(fy);
-        double z = fInv(fz) * 1.08883;
-        double r = 3.2406 * x - 1.5372 * y - 0.4986 * z;
-        double g = -0.9689 * x + 1.8758 * y + 0.0415 * z;
-        double bl = 0.0557 * x - 0.2040 * y + 1.0570 * z;
-        return (channel(r) << 16) | (channel(g) << 8) | channel(bl);
-    }
-
-    private static double linear(double c) {
-        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-    }
-
-    private static int channel(double c) {
-        double s = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055;
-        return (int) Math.round(clamp(s, 0, 1) * 255);
-    }
-
-    private static double f(double t) {
-        return t > 216.0 / 24389 ? Math.cbrt(t) : (24389.0 / 27 * t + 16) / 116;
-    }
-
-    private static double fInv(double t) {
-        double t3 = t * t * t;
-        return t3 > 216.0 / 24389 ? t3 : (116 * t - 16) / (24389.0 / 27);
-    }
 
     private static double clamp(double v, double lo, double hi) {
         return Math.max(lo, Math.min(hi, v));

@@ -48,11 +48,11 @@ public final class MaskComposer {
     private MaskComposer() {}
 
     /**
-     * More of the marked part than this showing the AI's own backdrop (where the product's photo shows none) means the AI
+     * More of the marked part than this (damaged Roniki photos: 16%, good ones: 1%) showing the AI's own backdrop (where the product's photo shows none) means the AI
      * moved or reframed the product: pasted back, it leaves a pale patch where the cap should be (found live on Roniki,
      * 2026-10-17).
      */
-    static final double MAX_BACKDROP_SHARE = 0.2;
+    static final double MAX_BACKDROP_SHARE = 0.08;
     /** How close (sum of the red, green and blue differences) a pixel must be to the backdrop to count as backdrop. */
     static final int BACKDROP_NEAR = 36;
 
@@ -117,6 +117,14 @@ public final class MaskComposer {
                             "The AI moved the product, so its background showed inside the marked part.", true);
                 }
             }
+            // The same failure whatever backdrop the AI chose: where the product's photo shows the product inside the
+            // mark, the AI's photo shows its own background (the colour just around the mark in its photo).
+            double moved = backgroundOverProduct(basePx, paintPx, m, w, h);
+            if (moved > MAX_BACKGROUND_OVER_PRODUCT) {
+                log.info("AI photo rejected: {}% of the marked product shows the AI's background", Math.round(moved * 100));
+                return new Result(edited,
+                        "The AI moved the product, so its background showed inside the marked part.", true);
+            }
             soften(m, w, h, Math.max(2, Math.round(Math.max(w, h) * 0.006f)));
 
             BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
@@ -166,6 +174,31 @@ public final class MaskComposer {
             log.info("The marked part's position could not be read: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** More of the marked product than this turned into the AI's background means the AI moved the product. */
+    static final double MAX_BACKGROUND_OVER_PRODUCT = 0.35;
+    /** Within this colour difference of a photo's own background (around the mark) a pixel is background. */
+    private static final double IS_BACKGROUND = 8;
+    /** At least this far from the background around the mark, a pixel of the product's photo is the product. */
+    private static final double IS_PRODUCT = 18;
+
+    /**
+     * Of the marked pixels that show the product in the product's photo, the share that show the AI's own background in
+     * the AI's photo. 0 when either photo has no clear background around the mark.
+     */
+    static double backgroundOverProduct(int[] basePx, int[] paintPx, float[] m, int w, int h) {
+        double[] baseRing = ringColour(basePx, m, w, h);
+        double[] aiRing = ringColour(paintPx, m, w, h);
+        if (baseRing == null || aiRing == null) return 0;
+        long product = 0;
+        long lost = 0;
+        for (int i = 0; i < m.length; i++) {
+            if (m[i] < 0.5f || deltaE(lab(basePx[i]), baseRing) < IS_PRODUCT) continue;
+            product++;
+            if (deltaE(lab(paintPx[i]), aiRing) < IS_BACKGROUND) lost++;
+        }
+        return product == 0 ? 0 : (double) lost / product;
     }
 
     /** "#F3EBDD" as 0xRRGGBB; null for nothing or anything else. */
@@ -464,4 +497,78 @@ public final class MaskComposer {
         int b = Math.round((original & 0xFF) * (1 - m) + (painted & 0xFF) * m);
         return (r << 16) | (g << 8) | b;
     }
+    // ------------------------------------------------------------------ colour helpers (CIE Lab, D65)
+
+    /** The average Lab colour of a thin ring just outside the mark; null when there is no such ring. */
+    static double[] ringColour(int[] px, float[] m, int w, int h) {
+        float[] grown = m.clone();
+        soften(grown, w, h, Math.max(2, Math.round(Math.max(w, h) * 0.012f)));
+        // The median, not the average: part of the ring often crosses the product (the bottle below a cap), and the
+        // background is what most of the ring shows.
+        java.util.List<double[]> ring = new java.util.ArrayList<>();
+        for (int i = 0; i < px.length; i++) {
+            if (m[i] < 0.02f && grown[i] > 0.02f) ring.add(lab(px[i]));
+        }
+        if (ring.size() < 20) return null;
+        double[] out = new double[3];
+        for (int c = 0; c < 3; c++) {
+            final int ch = c;
+            out[c] = ring.stream().mapToDouble(p -> p[ch]).sorted().skip(ring.size() / 2).findFirst().orElse(0);
+        }
+        return out;
+    }
+
+    static double deltaE(double[] p, double[] q) {
+        double dl = p[0] - q[0], da = p[1] - q[1], db = p[2] - q[2];
+        return Math.sqrt(dl * dl + da * da + db * db);
+    }
+
+    // ------------------------------------------------------------------ sRGB <-> CIE Lab (D65)
+
+    static double[] lab(int rgb) {
+        double r = linear(((rgb >> 16) & 0xFF) / 255.0);
+        double g = linear(((rgb >> 8) & 0xFF) / 255.0);
+        double bl = linear((rgb & 0xFF) / 255.0);
+        double x = (0.4124 * r + 0.3576 * g + 0.1805 * bl) / 0.95047;
+        double y = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+        double z = (0.0193 * r + 0.1192 * g + 0.9505 * bl) / 1.08883;
+        double fx = f(x), fy = f(y), fz = f(z);
+        return new double[] {116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)};
+    }
+
+    static int rgb(double l, double a, double b) {
+        double fy = (l + 16) / 116;
+        double fx = fy + a / 500;
+        double fz = fy - b / 200;
+        double x = fInv(fx) * 0.95047;
+        double y = fInv(fy);
+        double z = fInv(fz) * 1.08883;
+        double r = 3.2406 * x - 1.5372 * y - 0.4986 * z;
+        double g = -0.9689 * x + 1.8758 * y + 0.0415 * z;
+        double bl = 0.0557 * x - 0.2040 * y + 1.0570 * z;
+        return (channel(r) << 16) | (channel(g) << 8) | channel(bl);
+    }
+
+    private static double linear(double c) {
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    private static int channel(double c) {
+        double s = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055;
+        return (int) Math.round(clampUnit(s, 0, 1) * 255);
+    }
+
+    private static double f(double t) {
+        return t > 216.0 / 24389 ? Math.cbrt(t) : (24389.0 / 27 * t + 16) / 116;
+    }
+
+    private static double fInv(double t) {
+        double t3 = t * t * t;
+        return t3 > 216.0 / 24389 ? t3 : (116 * t - 16) / (24389.0 / 27);
+    }
+
+    private static double clampUnit(double v, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
 }

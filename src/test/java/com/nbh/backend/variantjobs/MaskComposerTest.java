@@ -177,9 +177,23 @@ class MaskComposerTest {
         assertThat(refused.failed()).isTrue();
         assertThat(refused.note()).contains("moved the product");
 
-        // Repainted backdrop but the product where it was: the cap is used, the backdrop is put back.
+        // Repainted backdrop but the product where it was, with a mark that fits the cap: the cap is used and the
+        // backdrop put back. (A mark with a border of background around the cap would show a cream halo, and is refused.)
         GeminiImageClient.Image inPlace = bottle(200, 300, backdrop, Color.GRAY, Color.RED, 0);
-        assertThat(MaskComposer.apply(source, inPlace, mask, "#F3EBDD").failed()).isFalse();
+        GeminiImageClient.Image capOnly = png(200, 300, Color.BLACK, Color.WHITE, 80, 40, 120, 120);
+        assertThat(MaskComposer.apply(source, inPlace, capOnly, "#F3EBDD").failed()).isFalse();
+        assertThat(MaskComposer.apply(source, inPlace, mask, "#F3EBDD").failed()).isTrue();
         assertThat(MaskComposer.patchShare(source, moved, "#F3EBDD")).isGreaterThan(0.001);
+    }
+
+    @Test
+    void anAiPhotoThatMovedTheProductIsRefusedWhateverBackgroundItKept() throws IOException {
+        Color foam = new Color(222, 222, 226);
+        GeminiImageClient.Image source = bottle(200, 300, foam, Color.GRAY, PALE_CAP, 0);
+        GeminiImageClient.Image mask = png(200, 300, Color.BLACK, Color.WHITE, 78, 38, 122, 122); // the cap
+        // Same background as the photo, but the bottle moved away from the mark: no backdrop colour to look for.
+        GeminiImageClient.Image moved = bottle(200, 300, foam, Color.GRAY, Color.RED, 50);
+        MaskComposer.Result r = MaskComposer.apply(source, moved, mask);
+        assertThat(r.failed()).isTrue();
     }
 }

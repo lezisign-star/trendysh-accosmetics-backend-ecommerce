@@ -57,9 +57,6 @@ public class VariantPhotoMaker {
     public Made recolour(String productName, GeminiImageClient.Image source, String sourceUrl, String color, String hex,
                                             String labelNote, PhotoGuides guides,
                                             Map<String, GeminiImageClient.Image> downloaded) {
-        if (guides.byCode()) {
-            return byCode(source, sourceUrl, color, hex, guides, downloaded);
-        }
         PhotoGuides.Mask mask = guides.maskFor(color);
         boolean masked = mask != null && mask.fits(sourceUrl);
         String referenceUrl = guides.referenceFor(color);
@@ -87,30 +84,7 @@ public class VariantPhotoMaker {
                 return new Made(r.image(), r.note());
             }
         }
-        throw new IllegalStateException(r.note() + " Try this one again, or make the photos without AI.");
-    }
-
-    /** Made without AI: the product's own photo with the marked part(s) recoloured ({@link CodeRecolour}). */
-    private Made byCode(GeminiImageClient.Image source, String sourceUrl, String color, String hex, PhotoGuides guides,
-                        Map<String, GeminiImageClient.Image> downloaded) {
-        PhotoGuides.Mask cap = guides.generalMask();
-        PhotoGuides.Paint group = guides.groupPaint(color);
-        if (cap == null && group == null) {
-            throw new IllegalStateException("Mark the part that changes first: without AI only the marked part is recoloured.");
-        }
-        if ((cap != null && !cap.fits(sourceUrl)) || (group != null && !group.mask().fits(sourceUrl))) {
-            throw new IllegalStateException("The part was marked on another photo. Mark it again on this one.");
-        }
-        if (hex == null || hex.isBlank()) {
-            throw new IllegalStateException("\"" + color + "\" has no colour code yet. Give it a colour dot first.");
-        }
-        try {
-            return new Made(CodeRecolour.apply(source,
-                    group == null ? null : new CodeRecolour.Area(download(group.mask().url(), downloaded), group.hex(), false),
-                    cap == null ? null : new CodeRecolour.Area(download(cap.url(), downloaded), hex)), null);
-        } catch (java.io.IOException | IllegalArgumentException e) {
-            throw new IllegalStateException(e.getMessage());
-        }
+        throw new IllegalStateException(r.note() + " Try this one again.");
     }
 
     public GeminiImageClient.Image download(String url, Map<String, GeminiImageClient.Image> downloaded) {
