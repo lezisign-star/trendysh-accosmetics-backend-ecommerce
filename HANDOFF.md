@@ -1,5 +1,14 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-17 — variants audit: the AI photo is lined up before pasting, marks only on their own photo
+
+- `MaskComposer.apply` returns `Result(image, note)`. Before pasting the original back outside the mark it lines the AI photo up with the original (zoom ±6%, shift ±6% on 120-px copies, compared outside the mark by outlines; moves only when clearly better), so a slightly drifted AI photo no longer gives a doubled edge. A mark of another shape, or an AI photo of another shape, is skipped with a note. Output is capped at 1600 px on the long edge.
+- A mark remembers the photo it was painted on (`maskPhotoUrl` on `PhotoGuide`/`PhotoGroup`; `PhotoGuides.Mask.fits`). If the job now starts from another photo the mark is not used and the trial says so (`TrialPhoto.note`). `GET /api/v1/admin/variant-jobs/base-photo` returns the photo a job starts from, for the painter.
+- `VariantCombos.tidyColour` (parity with the frontend's `tidyColourWords`); `VariantJobWriter.existingCombos` also holds the tidied key, so a colour saved before names were tidied is not made twice.
+- Tests: `MaskComposerTest`, `PhotoGuidesMaskTest`, `VariantPhotoMakerMaskTest`, `VariantJobIntegrationTest#aColourSavedBeforeNamesWereTidiedIsStillRecognisedAndNotMadeTwice`.
+- Not masked yet: single-variant "Change photo" and size-label edits. The real Gemini path is untested end to end; run "Try 2 first" on a real product before relying on it.
+
+
 ## 2026-10-16 (later) — a group's own marked part
 
 `PhotoGroup` has `maskUrl`; `PhotoGuides.maskFor(color)` is the group's own marked part, else the general one. `VariantPhotoMaker` uses it, so a black-bottle series can have the whole bottle marked while the other colours change only the cap. Tests: `PhotoGuidesMaskTest`.
