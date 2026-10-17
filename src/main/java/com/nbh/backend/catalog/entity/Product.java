@@ -107,4 +107,34 @@ public class Product extends BaseEntity {
      */
     @Column(name = "options_reviewed_at")
     private Instant optionsReviewedAt;
+
+    // ------------------------------------------------------------ a range's configuration (V68, see RangeService)
+
+    /** The price every variant has unless the range lets prices differ. */
+    @Column(name = "shared_price", precision = 14, scale = 2)
+    private java.math.BigDecimal sharedPrice;
+
+    /** The size every variant has ("15ml") unless the range lets sizes differ. */
+    @Column(name = "shared_size", length = 80)
+    private String sharedSize;
+
+    @Column(name = "price_varies", nullable = false)
+    private boolean priceVaries = false;
+
+    @Column(name = "size_varies", nullable = false)
+    private boolean sizeVaries = false;
+
+    @Column(name = "description_varies", nullable = false)
+    private boolean descriptionVaries = false;
+
+    @Column(name = "category_varies", nullable = false)
+    private boolean categoryVaries = false;
+
+    /** When staff confirmed the range's configuration; until then its variants are left exactly as they are. */
+    @Column(name = "range_reviewed_at")
+    private Instant rangeReviewedAt;
+
+    /** The photo of all the variants together; admin only, never shown in the shop. */
+    @Column(name = "group_photo_url", columnDefinition = "TEXT")
+    private String groupPhotoUrl;
 }

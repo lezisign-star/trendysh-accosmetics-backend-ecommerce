@@ -35,5 +35,7 @@ public record CatalogVariantDetailDto(
          */
         List<CatalogOptionDto> colors,
         /** The product's sizes in order, same rules. Empty = no sizes. */
-        List<CatalogOptionDto> sizes
+        List<CatalogOptionDto> sizes,
+        /** The size every variant of its range has ("15ml", V68), when the variant has no size of its own; else null. */
+        String rangeSize
 ) {}

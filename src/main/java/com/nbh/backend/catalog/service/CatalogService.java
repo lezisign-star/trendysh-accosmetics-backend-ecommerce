@@ -148,7 +148,9 @@ public class CatalogService {
                 com.nbh.backend.imagecleanup.DescriptionCaps.splitHighlights(product.getHighlights()),
                 product.getSeoTitle(), product.getSeoDescription(),
                 pickerOptions(product.getId(), siblings, ProductOptionValue.Kind.COLOR),
-                pickerOptions(product.getId(), siblings, ProductOptionValue.Kind.SIZE));
+                pickerOptions(product.getId(), siblings, ProductOptionValue.Kind.SIZE),
+                ProductOptionsService.clean(variant.getOptionSize()) == null && product.getRangeReviewedAt() != null
+                        ? ProductOptionsService.clean(product.getSharedSize()) : null);
     }
 
     /**
@@ -207,7 +209,9 @@ public class CatalogService {
         // never through this resolved price/onDeal.
         EffectivePriceResolver.EffectivePrice price = priceResolver.resolve(v, activeCampaign, BigDecimal.ZERO);
         ProductReviewRepository.RatingSummary rating = ratingByProduct.get(p.getId());
-        List<UUID> categoryIds = p.getCategories().stream().map(Category::getId).toList();
+        // A variant filed under a category of its own (its range lets categories differ, V68) is listed there instead.
+        List<UUID> categoryIds = v.getCategory() != null && p.isCategoryVaries() ? List.of(v.getCategory().getId())
+                : p.getCategories().stream().map(Category::getId).toList();
 
         BigDecimal availableQty = availableByVariant.getOrDefault(v.getId(), BigDecimal.ZERO);
         Cover cover = imageByVariant.get(v.getId());

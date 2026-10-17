@@ -65,6 +65,11 @@ public class ProductService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ProductOptionsService productOptions;
 
+    /** A range's configuration rules, put back on its variants after a save here (V68); same optional injection. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private RangeService ranges;
+
     /** The staff list's word-by-word search; same optional injection, null = the plain whole-phrase match. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ProductSearch productSearch;
@@ -235,6 +240,9 @@ public class ProductService {
         if (productOptions != null) {
             productOptions.sync(product.getId());
         }
+        if (ranges != null) {
+            ranges.enforce(product.getId(), true);
+        }
     }
 
     /**
@@ -256,9 +264,21 @@ public class ProductService {
         if (in.options() != null) {
             applyOptions(variant, in.options());
         }
+        if (variant.getProduct().isCategoryVaries()) {
+            variant.setCategory(in.categoryId() == null ? null : categoryRepository.findById(in.categoryId())
+                    .orElseThrow(() -> new EntityNotFoundException("No such category.")));
+        }
         variantRepository.save(variant);
         if (productOptions != null) {
             productOptions.sync(productId);
+        }
+        if (ranges != null && variant.getProduct().getRangeReviewedAt() != null) {
+            // A confirmed range: the name's common part, and a price, description or category the range shares, are
+            // the configuration's, whatever this page sent. The own part is read again from the name sent.
+            variant.setNamePart(null);
+            variant.setNamePart(RangeService.partOf(variant, variant.getProduct().getName()));
+            variantRepository.save(variant);
+            ranges.enforce(productId);
         }
         productRepository.touch(productId, Instant.now());
         ProductVariant saved = variantRepository.findById(variantId).orElseThrow();

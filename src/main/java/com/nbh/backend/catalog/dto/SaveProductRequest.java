@@ -43,11 +43,16 @@ public record SaveProductRequest(
              * this field sends, so saving from it never wipes a generated variant's colour or size. Sent = exactly
              * these (blank clears one).
              */
-            VariantOptions options
+            VariantOptions options,
+            /**
+             * A category of its own (V68), read only by the single-variant save and only when its range lets categories
+             * differ; null there = the range's categories.
+             */
+            UUID categoryId
     ) {
         /** The four-argument form editors and seeders used before options existed. */
         public VariantInput(UUID id, String variantName, String description, String sellingPrice, boolean isActive) {
-            this(id, variantName, description, sellingPrice, isActive, null);
+            this(id, variantName, description, sellingPrice, isActive, null, null);
         }
     }
 

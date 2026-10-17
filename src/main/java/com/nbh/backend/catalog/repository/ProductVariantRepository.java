@@ -72,6 +72,8 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             JOIN v.product p
             LEFT JOIN p.categories c
             LEFT JOIN c.parent parent
+            LEFT JOIN v.category vc
+            LEFT JOIN vc.parent vparent
             LEFT JOIN Kit kit ON kit.variant = v
             LEFT JOIN kit.profession prof
             WHERE v.deleted = false AND v.isActive = true AND v.sellingPrice IS NOT NULL
@@ -84,8 +86,11 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
                    OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(c.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(parent.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(vc.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR LOWER(prof.label) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-              AND (:categorySlug IS NULL OR c.slug = :categorySlug OR parent.slug = :categorySlug)
+              AND (:categorySlug IS NULL
+                   OR ((vc IS NULL OR p.categoryVaries = false) AND (c.slug = :categorySlug OR parent.slug = :categorySlug))
+                   OR (p.categoryVaries = true AND (vc.slug = :categorySlug OR vparent.slug = :categorySlug)))
               AND (:popular IS NULL OR p.isPopular = :popular)
               AND (:newArrival IS NULL OR p.isNewArrival = :newArrival)
               AND (:deal IS NULL OR :deal = false

@@ -50,6 +50,11 @@ public class VariantJobWriter {
     private final ApplicationEventPublisher events;
     private final ImageAssetCleaner assetCleaner;
 
+    /** A range's configuration rules for the variants a job makes (V68); optional so hand-built writers still work. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private com.nbh.backend.catalog.service.RangeService ranges;
+
     public VariantJobWriter(VariantJobRepository jobs, VariantJobItemRepository items, ProductRepository products,
                             ProductVariantRepository variants, ProductImageRepository images,
                             ProductOptionValueRepository optionRows, ProductOptionsService productOptions,
@@ -260,6 +265,9 @@ public class VariantJobWriter {
         items.saveAll(jobItems);
         productOptions.sync(product.getId());
         applyOptionDetails(product.getId(), r);
+        if (ranges != null) {
+            ranges.enforce(product.getId(), true); // a confirmed range: the new variants take its common name and rules
+        }
 
         products.touch(product.getId(), Instant.now());
         job.setVariantsCreated(created);

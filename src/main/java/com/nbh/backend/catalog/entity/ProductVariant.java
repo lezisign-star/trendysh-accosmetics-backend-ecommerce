@@ -144,6 +144,15 @@ public class ProductVariant extends BaseEntity {
     @Column(name = "is_kit", nullable = false)
     private boolean isKit = false;
 
+    /** The variant's own part of its name (V68): its full name is the range's common name, a dash, and this. */
+    @Column(name = "name_part", length = 200)
+    private String namePart;
+
+    /** A category of its own, used only when its range lets categories differ (V68); null = the range's. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private Category category;
+
     /** The colour family the shop filters this variant under: staff's choice, else what its dot looks like; null = no colour. */
     public ColorFamily effectiveColorFamily() {
         ColorFamily chosen = ColorFamily.ofStored(colorFamily);
