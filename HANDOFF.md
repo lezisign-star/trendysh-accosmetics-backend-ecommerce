@@ -1,5 +1,9 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-17 — the one-time Roniki repair is deleted
+
+It ran in production and the owner confirmed the photos. `OneTimeRonikiPatchRepair`, `CodeRecolour` and their three tests are gone. V67 and the `one_time_task` table stay (the row records that it ran); nothing reads the table now.
+
 ## 2026-10-17 (night) — the pale patch on Roniki photos: why, prevention, and a one-time repair
 
 **Why:** with a marked part, the prompt still asked for "a seamless creamy studio backdrop" (`image-cleanup.background-hex`, #F3EBDD), a centred product and a square picture. The AI repainted the backdrop and moved the bottle; pasting the product's photo back around the mark (`MaskComposer`) left the AI's backdrop inside the mark, a pale patch where the cap should be (~40 of the 86 Roniki photos).
