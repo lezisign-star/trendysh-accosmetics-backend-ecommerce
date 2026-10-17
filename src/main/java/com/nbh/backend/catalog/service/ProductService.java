@@ -238,6 +238,35 @@ public class ProductService {
     }
 
     /**
+     * Saves one variant on its own (owner, 2026-10-17: each variant is edited on its own page; a product with 87 colours
+     * must not resend all of them): its name, description, price, on-sale switch and, when sent, colour and size. Same
+     * rules as the product's full save; the other variants are not touched. The product is marked changed, so an editor
+     * open on its older copy is told to reload rather than saving its variants back over this.
+     */
+    @Transactional
+    public ProductVariantDto saveVariant(UUID productId, UUID variantId, SaveProductRequest.VariantInput in) {
+        ProductVariant variant = variantRepository.findById(variantId)
+                .filter(v -> !v.isDeleted() && v.getProduct().getId().equals(productId))
+                .orElseThrow(() -> new EntityNotFoundException("No such variant on this product."));
+        if (in == null) throw new IllegalArgumentException("Nothing to save.");
+        variant.setVariantName(in.variantName() == null ? "" : in.variantName());
+        variant.setDescription(in.description());
+        variant.setSellingPrice(parsePriceOrNull(in.sellingPrice()));
+        variant.setActive(in.isActive());
+        if (in.options() != null) {
+            applyOptions(variant, in.options());
+        }
+        variantRepository.save(variant);
+        if (productOptions != null) {
+            productOptions.sync(productId);
+        }
+        productRepository.touch(productId, Instant.now());
+        ProductVariant saved = variantRepository.findById(variantId).orElseThrow();
+        return ProductVariantDto.from(saved,
+                availabilityService.available(List.of(variantId)).getOrDefault(variantId, BigDecimal.ZERO));
+    }
+
+    /**
      * The editor's colour/size for one variant, exactly as sent. The short option the picker and orders show follows
      * them ("Ruby Red / 50ml"); with neither it is cleared, so the name is used as before.
      */
@@ -555,6 +584,18 @@ public class ProductService {
     public org.springframework.data.domain.Page<ProductDto> listProducts(
             String q, UUID categoryId, Boolean published, String stock, Boolean popular, Boolean newArrival,
             boolean deleted, org.springframework.data.domain.Pageable pageable) {
+        return listProducts(q, categoryId, published, stock, popular, newArrival, deleted, null, pageable);
+    }
+
+    /** {@code options}: SINGLE (at most one live variant), RANGE (two or more), or null for all. */
+    @Transactional(readOnly = true)
+    public org.springframework.data.domain.Page<ProductDto> listProducts(
+            String q, UUID categoryId, Boolean published, String stock, Boolean popular, Boolean newArrival,
+            boolean deleted, String options, org.springframework.data.domain.Pageable pageable) {
+        String optionsFilter = options == null || options.isBlank() ? null : options.trim().toUpperCase(Locale.ROOT);
+        if (optionsFilter != null && !optionsFilter.equals("SINGLE") && !optionsFilter.equals("RANGE")) {
+            throw new IllegalArgumentException("options must be SINGLE or RANGE");
+        }
         String stockFilter = stock == null || stock.isBlank() ? null : stock.trim().toUpperCase(Locale.ROOT);
         if (stockFilter != null && !stockFilter.equals("IN") && !stockFilter.equals("OUT")) {
             throw new IllegalArgumentException("stock must be IN or OUT");
@@ -573,7 +614,7 @@ public class ProductService {
                 Map<UUID, Integer> rank = new HashMap<>();
                 for (int i = 0; i < ranked.size(); i++) rank.put(ranked.get(i), i);
                 List<Product> matches = new ArrayList<>(productRepository.searchAdmin(null, true, ranked, categoryId,
-                        published, stockFilter, popular, newArrival, deleted,
+                        published, stockFilter, popular, newArrival, deleted, optionsFilter,
                         org.springframework.data.domain.Pageable.unpaged()).getContent());
                 matches.sort(java.util.Comparator.comparingInt(p -> rank.getOrDefault(p.getId(), Integer.MAX_VALUE)));
                 int from = (int) Math.min(pageable.getOffset(), matches.size());
@@ -582,7 +623,7 @@ public class ProductService {
             }
         } else {
             page = productRepository.searchAdmin(query, false, List.of(NO_ID), categoryId, published, stockFilter,
-                    popular, newArrival, deleted, pageable);
+                    popular, newArrival, deleted, optionsFilter, pageable);
         }
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
 

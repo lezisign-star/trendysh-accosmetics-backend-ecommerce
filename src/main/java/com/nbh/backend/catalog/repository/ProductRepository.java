@@ -84,7 +84,9 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     /**
      * Staff product list: every optional filter short-circuits when null. {@code q} also matches a
      * variant SKU or name. With {@code among}, only the products in {@code ids} (the search box's
-     * matches from {@link com.nbh.backend.catalog.service.ProductSearch}; {@code q} is then null). {@code stock} is IN (something sellable) or OUT (nothing sellable); the
+     * matches from {@link com.nbh.backend.catalog.service.ProductSearch}; {@code q} is then null). {@code options}:
+     * SINGLE = products with at most one live variant (the Products list), RANGE = two or more (the Variants list,
+     * owner 2026-10-17); null = all. {@code stock} is IN (something sellable) or OUT (nothing sellable); the
      * same sellable definition as the public catalogue (on hand minus reserved, at SHOP — branches/
      * locations were removed 2026-09-24, founder decision, see HANDOFF.md). {@code categoryId}
      * matches a product tagged with that category directly, or with one of its subcategories
@@ -109,6 +111,11 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                   LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                                   OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))))
               AND (:among = false OR p.id IN :ids)
+              AND (:options IS NULL
+                   OR (CAST(:options AS string) = 'SINGLE'
+                       AND (SELECT COUNT(ov) FROM ProductVariant ov WHERE ov.product = p AND ov.deleted = false) <= 1)
+                   OR (CAST(:options AS string) = 'RANGE'
+                       AND (SELECT COUNT(ov) FROM ProductVariant ov WHERE ov.product = p AND ov.deleted = false) > 1))
               AND (:categoryId IS NULL OR c.id = :categoryId OR parent.id = :categoryId)
               AND (:published IS NULL OR p.isPublished = :published)
               AND (:popular IS NULL OR p.isPopular = :popular)
@@ -133,6 +140,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                @Param("popular") Boolean popular,
                                @Param("newArrival") Boolean newArrival,
                                @Param("deleted") boolean deleted,
+                               @Param("options") String options,
                                Pageable pageable);
 
     /** Shares a category (directly, or via a shared parent) with the given product, excluding itself — the "related products" rail. */

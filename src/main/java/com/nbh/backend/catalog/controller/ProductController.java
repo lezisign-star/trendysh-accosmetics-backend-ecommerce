@@ -56,8 +56,10 @@ public class ProductController {
                                   @RequestParam(required = false) Boolean popular,
                                   @RequestParam(name = "newArrival", required = false) Boolean newArrival,
                                   @RequestParam(defaultValue = "false") boolean deleted,
+                                  @RequestParam(required = false) String options,
                                   @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return productService.listProducts(q, categoryId, published, stock, popular, newArrival, deleted, pageable);
+        return productService.listProducts(q, categoryId, published, stock, popular, newArrival, deleted, options,
+                pageable);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_VIEW') or hasAuthority('PERM_PRODUCT_MANAGE')")
@@ -150,6 +152,14 @@ public class ProductController {
     @PostMapping("/{id}/restore")
     public ProductDto restore(@PathVariable UUID id) {
         return productService.restore(id);
+    }
+
+    /** Saves one variant on its own: its name, description, price, on-sale switch, and colour and size when sent. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PutMapping("/{id}/variants/{variantId}")
+    public ProductVariantDto saveVariant(@PathVariable UUID id, @PathVariable UUID variantId,
+                                         @RequestBody SaveProductRequest.VariantInput request) {
+        return productService.saveVariant(id, variantId, request);
     }
 
     /**
