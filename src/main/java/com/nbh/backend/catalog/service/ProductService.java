@@ -584,14 +584,17 @@ public class ProductService {
     public org.springframework.data.domain.Page<ProductDto> listProducts(
             String q, UUID categoryId, Boolean published, String stock, Boolean popular, Boolean newArrival,
             boolean deleted, org.springframework.data.domain.Pageable pageable) {
-        return listProducts(q, categoryId, published, stock, popular, newArrival, deleted, null, pageable);
+        return listProducts(q, categoryId, published, stock, popular, newArrival, deleted, null, false, pageable);
     }
 
-    /** {@code options}: SINGLE (at most one live variant), RANGE (two or more), or null for all. */
+    /**
+     * {@code options}: SINGLE (at most one live variant), RANGE (two or more), or null for all. {@code noPhoto}: only
+     * products with no photo at all (owner, 2026-10-17: "a list of only products that have no images").
+     */
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<ProductDto> listProducts(
             String q, UUID categoryId, Boolean published, String stock, Boolean popular, Boolean newArrival,
-            boolean deleted, String options, org.springframework.data.domain.Pageable pageable) {
+            boolean deleted, String options, boolean noPhoto, org.springframework.data.domain.Pageable pageable) {
         String optionsFilter = options == null || options.isBlank() ? null : options.trim().toUpperCase(Locale.ROOT);
         if (optionsFilter != null && !optionsFilter.equals("SINGLE") && !optionsFilter.equals("RANGE")) {
             throw new IllegalArgumentException("options must be SINGLE or RANGE");
@@ -614,7 +617,7 @@ public class ProductService {
                 Map<UUID, Integer> rank = new HashMap<>();
                 for (int i = 0; i < ranked.size(); i++) rank.put(ranked.get(i), i);
                 List<Product> matches = new ArrayList<>(productRepository.searchAdmin(null, true, ranked, categoryId,
-                        published, stockFilter, popular, newArrival, deleted, optionsFilter,
+                        published, stockFilter, popular, newArrival, deleted, optionsFilter, noPhoto,
                         org.springframework.data.domain.Pageable.unpaged()).getContent());
                 matches.sort(java.util.Comparator.comparingInt(p -> rank.getOrDefault(p.getId(), Integer.MAX_VALUE)));
                 int from = (int) Math.min(pageable.getOffset(), matches.size());
@@ -623,7 +626,7 @@ public class ProductService {
             }
         } else {
             page = productRepository.searchAdmin(query, false, List.of(NO_ID), categoryId, published, stockFilter,
-                    popular, newArrival, deleted, optionsFilter, pageable);
+                    popular, newArrival, deleted, optionsFilter, noPhoto, pageable);
         }
         List<UUID> productIds = page.getContent().stream().map(Product::getId).toList();
 

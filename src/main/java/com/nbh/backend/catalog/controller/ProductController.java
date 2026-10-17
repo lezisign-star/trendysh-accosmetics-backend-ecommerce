@@ -57,9 +57,10 @@ public class ProductController {
                                   @RequestParam(name = "newArrival", required = false) Boolean newArrival,
                                   @RequestParam(defaultValue = "false") boolean deleted,
                                   @RequestParam(required = false) String options,
+                                  @RequestParam(defaultValue = "false") boolean noPhoto,
                                   @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         return productService.listProducts(q, categoryId, published, stock, popular, newArrival, deleted, options,
-                pageable);
+                noPhoto, pageable);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_VIEW') or hasAuthority('PERM_PRODUCT_MANAGE')")

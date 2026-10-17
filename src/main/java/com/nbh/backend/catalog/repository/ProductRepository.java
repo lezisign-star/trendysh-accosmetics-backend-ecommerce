@@ -111,6 +111,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                   LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                                   OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))))
               AND (:among = false OR p.id IN :ids)
+              AND (:noPhoto = false
+                   OR NOT EXISTS (SELECT 1 FROM ProductImage pi WHERE pi.product = p))
               AND (:options IS NULL
                    OR (CAST(:options AS string) = 'SINGLE'
                        AND (SELECT COUNT(ov) FROM ProductVariant ov WHERE ov.product = p AND ov.deleted = false) <= 1)
@@ -141,6 +143,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                @Param("newArrival") Boolean newArrival,
                                @Param("deleted") boolean deleted,
                                @Param("options") String options,
+                               @Param("noPhoto") boolean noPhoto,
                                Pageable pageable);
 
     /** Shares a category (directly, or via a shared parent) with the given product, excluding itself — the "related products" rail. */

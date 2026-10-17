@@ -95,6 +95,21 @@ class ProductListOptionsIntegrationTest {
     }
 
     @Test
+    void noPhotoListsOnlyProductsWithoutAnyPhoto() throws Exception {
+        String w = "zqnph" + UUID.randomUUID().toString().replaceAll("[^a-f]", "").substring(0, 6);
+        String bare = product("Bare " + w, "Only");
+        String withPhoto = product("Pictured " + w, "Only");
+        String variant = ok(get("/api/v1/products/" + withPhoto), null).get("variants").get(0).get("id").asText();
+        ok(post("/api/v1/products/" + withPhoto + "/images"),
+                "{\"url\":\"https://res.cloudinary.com/test/" + w + ".png\",\"isPrimary\":true,\"variantId\":\"" + variant + "\"}");
+
+        var request = get("/api/v1/products").param("q", w).param("noPhoto", "true").param("size", "50");
+        List<String> ids = new ArrayList<>();
+        ok(request, null).get("content").forEach(p -> ids.add(p.get("id").asText()));
+        assertThat(ids).containsExactly(bare);
+    }
+
+    @Test
     void productsWithOneVariantAndRangesAreListedApart() throws Exception {
         String w = "zqopt" + UUID.randomUUID().toString().replaceAll("[^a-f]", "").substring(0, 6);
         String single = product("Single " + w, "Only");
