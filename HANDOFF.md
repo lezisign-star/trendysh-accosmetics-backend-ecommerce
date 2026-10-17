@@ -1,5 +1,12 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-17 (search) — the admin product search finds related words, plurals, typos and descriptions
+
+Owner: "searching a term returns all products containing the term in their name, description, category, related by any chance". `ProductSearch` (`GET /api/v1/products?q=`, used by Products, Variants and the admin's new top search):
+- Each typed word may be found as any of its alternatives (`catalog/service/SearchWords`): itself, its singular ("lashes" → "lash"), beauty words meaning the same (lash/eyelash, nail/manicure, polish/varnish, colour/color, lamp/light/dryer, glue/adhesive, kit/set …), and, when found nowhere in the catalogue, catalogue words one or two letters away (a typo: "zephirine" → "zephyrine"). The catalogue's words are read once and again only when a product, variant or category changed (a small stamp query per search).
+- Now also looked in: the product's full description and the variants' own descriptions (last in the ranking, as before).
+- Test: `ProductSearchIntegrationTest#theDescriptionRelatedWordsPluralsAndTyposFindAProduct`. The shop's search is in the frontend (same rules, `lib/searchWords.ts`).
+
 ## 2026-10-17 — Variants A4-A6: a range's configuration, AI variant descriptions (V68)
 
 Owner, correcting the plan: there is **no main product**. A range is a **configuration** its variants come from; every variant is an independent product that inherits from it. The configuration holds the common name, price, size, description, categories and the group photo (admin only, never in the shop). Renaming it **forces** the common part of every variant's name and keeps each variant's own part. Price, size, description and category are shared unless a switch lets them differ; changing a shared value asks about variants with their own (owner: "ask each time"). Existing ranges are converted only when staff confirm (suggested first). Data model: the `product` row behind a range is the configuration.

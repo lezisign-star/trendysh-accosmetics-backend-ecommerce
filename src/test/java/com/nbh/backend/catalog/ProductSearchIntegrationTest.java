@@ -136,6 +136,22 @@ class ProductSearchIntegrationTest {
     }
 
     @Test
+    void theDescriptionRelatedWordsPluralsAndTyposFindAProduct() throws Exception {
+        String w = word();
+        String lashes = product("Zephyrine " + w + " Lashes", null, "Only", null);
+        String id = ok(post("/api/v1/products/draft"), "{\"name\":\"Quorvelle " + w + " Kit\",\"categoryIds\":[],"
+                + "\"published\":false,\"description\":\"Everything for a waterproof manicure at home.\","
+                + "\"variants\":[{\"variantName\":\"Only\",\"sellingPrice\":\"100\",\"isActive\":true}]}")
+                .get("id").asText();
+
+        assertThat(search(w + " waterproof", null)).as("the full description").containsExactly(id);
+        assertThat(search(w + " eyelash", null)).as("a word meaning the same").containsExactly(lashes);
+        assertThat(search(w + " lash", null)).as("singular").containsExactly(lashes);
+        assertThat(search("zephirine " + w, null)).as("a typo of a catalogue word").containsExactly(lashes);
+        assertThat(search(w + " nails", null)).as("manicure is a nail word").containsExactly(id);
+    }
+
+    @Test
     void onlyMarksIsNoSearchAtAll() throws Exception {
         var request = get("/api/v1/products").param("q", " - ").param("size", "1");
         assertThat(ok(request, null).get("totalElements").asLong()).isPositive();

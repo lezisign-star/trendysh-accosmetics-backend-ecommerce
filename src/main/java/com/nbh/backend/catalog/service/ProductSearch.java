@@ -6,9 +6,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -70,9 +73,56 @@ public class ProductSearch {
     }
 
     /** Word {@code i} in a field: within its words, and also with its spaces taken out when {@link #joinable}. */
-    private static String in(String field, int i, boolean joined) {
-        String spaced = field + "_s LIKE :w" + i;
-        return joined ? "(" + spaced + " OR " + field + "_c LIKE :w" + i + ")" : spaced;
+    private static String in(String field, String param, boolean joined) {
+        String spaced = field + "_s LIKE :w" + param;
+        return joined ? "(" + spaced + " OR " + field + "_c LIKE :w" + param + ")" : spaced;
+    }
+
+    /** Word {@code i} found in a field as any of its alternatives ({@link SearchWords#alternatives}). */
+    private static String anyOf(String field, int i, List<String> alts) {
+        StringBuilder b = new StringBuilder("(");
+        for (int j = 0; j < alts.size(); j++) {
+            if (j > 0) b.append(" OR ");
+            b.append(in(field, i + "_" + j, joinable(alts.get(j))));
+        }
+        return b.append(")").toString();
+    }
+
+    // ---------------------------------------------------------------- the catalogue's own words, for typos
+
+    private volatile Set<String> vocabulary = Set.of();
+    private volatile String vocabularyOf = "";
+
+    /**
+     * Every word of three letters or more in the catalogue's names, options, categories and brands. Read again only
+     * when a product or variant has changed since (one small check per search).
+     */
+    @SuppressWarnings("unchecked")
+    Set<String> vocabulary() {
+        Object stamp = em.createNativeQuery("""
+                SELECT concat_ws('|', (SELECT max(updated_at) FROM product), (SELECT count(*) FROM product),
+                                      (SELECT max(updated_at) FROM product_variant), (SELECT count(*) FROM category))
+                """).getSingleResult();
+        String now = String.valueOf(stamp);
+        if (now.equals(vocabularyOf) && !vocabulary.isEmpty()) return vocabulary;
+        String sql = """
+                SELECT lower(concat_ws(' ', p.name, p.short_description,
+                  (SELECT string_agg(concat_ws(' ', v.variant_name, v.option_color, v.option_label, v.option_size), ' ')
+                     FROM product_variant v WHERE v.product_id = p.id AND v.deleted = false)))
+                FROM product p WHERE p.deleted = false
+                UNION ALL SELECT lower(name) FROM category
+                UNION ALL SELECT lower(name) FROM brand
+                """;
+        Set<String> words = new HashSet<>();
+        for (Object row : (List<Object>) em.createNativeQuery(sql).getResultList()) {
+            if (row == null) continue;
+            for (String w : row.toString().split("[^\\p{L}\\p{N}]+")) {
+                if (w.length() >= 3 && w.length() <= 30) words.add(w);
+            }
+        }
+        vocabulary = Collections.unmodifiableSet(words);
+        vocabularyOf = now;
+        return vocabulary;
     }
 
     /**
@@ -91,13 +141,16 @@ public class ProductSearch {
         StringBuilder inName = new StringBuilder();
         StringBuilder inCore = new StringBuilder();
         StringBuilder inAll = new StringBuilder();
+        // Each word may be found as itself, its singular, a word meaning the same, or (a typo) a close catalogue word.
+        Set<String> vocab = vocabulary();
+        List<List<String>> alts = new ArrayList<>();
+        for (String w : words) alts.add(SearchWords.alternatives(w, vocab));
         for (int i = 0; i < words.size(); i++) {
             String and = i == 0 ? "" : " AND ";
-            boolean joined = joinable(words.get(i));
-            inName.append(and).append(in("name", i, joined));
-            inCore.append(and).append(in("core", i, joined));
-            inAll.append(and).append("(").append(in("core", i, joined)).append(" OR ")
-                    .append(in("more", i, joined)).append(")");
+            inName.append(and).append(anyOf("name", i, alts.get(i)));
+            inCore.append(and).append(anyOf("core", i, alts.get(i)));
+            inAll.append(and).append("(").append(anyOf("core", i, alts.get(i))).append(" OR ")
+                    .append(anyOf("more", i, alts.get(i))).append(")");
         }
         boolean wholeJoined = joinable(whole);
         String nameStarts = "name_s LIKE :spacedStart" + (wholeJoined ? " OR name_c LIKE :wholeStart" : "");
@@ -119,7 +172,9 @@ public class ProductSearch {
                       (SELECT string_agg(cat.name, ' ')
                          FROM product_category pc JOIN category cat ON cat.id = pc.category_id
                         WHERE pc.product_id = p.id))) AS core_t,
-                    lower(concat_ws(' ', p.short_description, p.highlights)) AS more_t,
+                    lower(concat_ws(' ', p.short_description, p.highlights, p.description,
+                      (SELECT string_agg(v.description, ' ')
+                         FROM product_variant v WHERE v.product_id = p.id AND v.deleted = false))) AS more_t,
                     (EXISTS (SELECT 1 FROM product_variant v
                               WHERE v.product_id = p.id AND v.deleted = false
                                 AND regexp_replace(lower(coalesce(v.sku, '')), %2$s) = :whole)
@@ -155,7 +210,11 @@ public class ProductSearch {
         if (wholeJoined) {
             query.setParameter("wholeStart", whole + "%").setParameter("wholeAny", "%" + whole + "%");
         }
-        for (int i = 0; i < words.size(); i++) query.setParameter("w" + i, "%" + words.get(i) + "%");
+        for (int i = 0; i < words.size(); i++) {
+            for (int j = 0; j < alts.get(i).size(); j++) {
+                query.setParameter("w" + i + "_" + j, "%" + alts.get(i).get(j) + "%");
+            }
+        }
         return ((List<Object>) query.getResultList()).stream().map(o -> UUID.fromString(o.toString())).toList();
     }
 }
