@@ -444,6 +444,33 @@ public class VariantJobWriter {
         announce();
     }
 
+    /** Of these variants, the ones that were removed since or that staff have given a photo of their own. */
+    @Transactional(readOnly = true)
+    public Set<UUID> removedOrWithOwnPhoto(Collection<UUID> variantIds) {
+        return variantIds.isEmpty() ? Set.of() : new HashSet<>(variants.findIdsRemovedOrWithOwnPhoto(variantIds));
+    }
+
+    /**
+     * The item's photo is not made: staff gave the variant one of their own while it waited (an AI quota pause can last
+     * a quarter of an hour), or the variant is gone. The AI is not paid for a second photo that would go on top of
+     * theirs.
+     */
+    @Transactional
+    public void photoSkipped(UUID jobId, UUID itemId) {
+        VariantJobItem item = items.findById(itemId).orElseThrow();
+        if (item.getPhotoStatus() != StepStatus.PENDING) {
+            return;
+        }
+        item.setPhotoStatus(StepStatus.SKIPPED);
+        item.setLastError(null);
+        items.save(item);
+        VariantJob job = jobs.findById(jobId).orElseThrow();
+        recount(job);
+        job.setHeartbeatAt(Instant.now());
+        jobs.save(job);
+        announce();
+    }
+
     // ---------------------------------------------------------------- ends
 
     /** The quota ran out: the job waits and is taken again by the poller once {@code until} has passed. */

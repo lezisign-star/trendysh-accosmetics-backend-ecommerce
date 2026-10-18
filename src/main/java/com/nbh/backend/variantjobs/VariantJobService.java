@@ -304,10 +304,11 @@ public class VariantJobService {
             images.findByVariantIdOrderBySortOrderAsc(id).stream().filter(ProductImage::isPrimary).findFirst()
                     .ifPresent(i -> photos.put(id, i.getUrl()));
         }
+        // An item's "live" is null for a variant that is gone (removed since), else whether it is on sale.
         List<ItemDto> out = its.stream().map(i -> {
             ProductVariant v = i.getVariantId() == null ? null : vs.get(i.getVariantId());
             return new ItemDto(i.getId(), i.getPosition(), i.getVariantId(), i.getColor(), i.getSize(), i.label(),
-                    i.getPrice(), v == null ? null : v.getSku(), v == null ? null : v.isActive() && !v.isDeleted(),
+                    i.getPrice(), v == null ? null : v.getSku(), v == null || v.isDeleted() ? null : v.isActive(),
                     i.getVariantId() == null ? null : photos.get(i.getVariantId()), v == null ? null : v.getSwatchHex(),
                     i.getDescriptionStatus(), i.getPhotoStatus(), i.getLastError());
         }).toList();
@@ -351,19 +352,41 @@ public class VariantJobService {
             throw new ConflictException("A cancelled job can't be retried. Start a new one from the product.");
         }
         int reset = 0;
+        int fixedByHand = 0;
         List<VariantJobItem> its = items.findByJobIdOrderByPositionAsc(jobId);
+        // A failed photo that staff have since fixed themselves (a photo of their own on the variant, or the variant
+        // removed) is not made again: the AI would be paid for a second photo that then goes on top of theirs. Not for
+        // a "Redo photos" job, whose variants have photos by design.
+        Set<UUID> handled = isRedo(job) ? Set.of() : variantsWithFailedPhotoFixedByHand(its);
         for (VariantJobItem i : its) {
             if (i.getDescriptionStatus() == StepStatus.FAILED) {
                 i.setDescriptionStatus(StepStatus.PENDING);
                 reset++;
             }
             if (i.getPhotoStatus() == StepStatus.FAILED) {
-                i.setPhotoStatus(StepStatus.PENDING);
-                reset++;
+                if (i.getVariantId() != null && handled.contains(i.getVariantId())) {
+                    i.setPhotoStatus(StepStatus.SKIPPED);
+                    i.setLastError(null);
+                    fixedByHand++;
+                } else {
+                    i.setPhotoStatus(StepStatus.PENDING);
+                    reset++;
+                }
             }
             if (i.getDescriptionStatus() == StepStatus.PENDING || i.getPhotoStatus() == StepStatus.PENDING) {
                 i.setLastError(null);
             }
+        }
+        if (reset == 0 && fixedByHand > 0 && job.getStatus() != Status.FAILED) {
+            // Everything that had failed was fixed by hand since: nothing to run, the job is simply finished.
+            items.saveAll(its);
+            writer.recount(job);
+            if (job.getStatus() == Status.COMPLETED_WITH_ERRORS) {
+                job.setStatus(Status.COMPLETED);
+            }
+            jobs.save(job);
+            writer.announce();
+            return get(jobId);
         }
         if (reset == 0 && job.getStatus() != Status.FAILED) {
             throw new ConflictException("Nothing in this job needs retrying.");
@@ -379,6 +402,15 @@ public class VariantJobService {
         jobs.save(job);
         writer.announce();
         return get(jobId);
+    }
+
+    /** The variants whose photo failed and that staff have since given a photo of their own, or removed. */
+    private Set<UUID> variantsWithFailedPhotoFixedByHand(List<VariantJobItem> its) {
+        Set<UUID> failed = its.stream()
+                .filter(i -> i.getPhotoStatus() == StepStatus.FAILED && i.getVariantId() != null)
+                .map(VariantJobItem::getVariantId)
+                .collect(Collectors.toSet());
+        return failed.isEmpty() ? Set.of() : new HashSet<>(variants.findIdsRemovedOrWithOwnPhoto(failed));
     }
 
     /**

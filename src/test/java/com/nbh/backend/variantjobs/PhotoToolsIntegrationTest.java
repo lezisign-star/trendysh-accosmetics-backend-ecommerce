@@ -53,14 +53,25 @@ class PhotoToolsIntegrationTest {
     @Autowired private ProductRepository products;
     @Autowired private ProductVariantRepository variants;
     @Autowired private ProductImageRepository images;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private HttpServer stub;
     private final List<String> textRequests = Collections.synchronizedList(new ArrayList<>());
     private final List<String> imagePrompts = Collections.synchronizedList(new ArrayList<>());
     private final AtomicInteger uploads = new AtomicInteger();
+    /** The files the photo-store stand-in was given, in order (what the server stored, logo or not). */
+    private final List<byte[]> storedBytes = Collections.synchronizedList(new ArrayList<>());
+    /** The delete requests the photo-store stand-in got. */
+    private final List<String> destroyed = Collections.synchronizedList(new ArrayList<>());
+    /** The ids the photo-store stand-in gave the files it stored, in order. */
+    private final List<String> issuedIds = Collections.synchronizedList(new ArrayList<>());
     /** What the text stand-in answers: the colours JSON, QUOTA (429), or MESS (not the shape asked for). */
     private volatile String textMode = "COLOURS";
     private volatile String imageMode = "OK";
+    /** The photo store: OK, or DOWN (every upload answers 500). */
+    private volatile String storeMode = "OK";
+    /** Runs while the photo-editing stand-in is "working", to change things behind the server's back. */
+    private volatile Runnable duringEdit;
     private String originalGeminiUrl;
     private String originalCloudinaryUrl;
     private String token;
@@ -92,6 +103,10 @@ class PhotoToolsIntegrationTest {
                 type = "image/png";
             } else if (path.contains("gemini-2.5-flash-image")) {
                 imagePrompts.add(request);
+                Runnable hook = duringEdit;
+                if (hook != null) {
+                    hook.run();
+                }
                 if ("QUOTA".equals(imageMode)) {
                     status = 429;
                     reply = "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}".getBytes(StandardCharsets.UTF_8);
@@ -129,11 +144,21 @@ class PhotoToolsIntegrationTest {
                             "content", Map.of("parts", List.of(Map.of("text", answer)))))));
                 }
             } else if (path.endsWith("/image/upload")) {
-                String id = "p-" + UUID.randomUUID();
-                uploads.incrementAndGet();
-                // Pointed back at this stand-in, so a photo that was just stored can be downloaded and edited again.
-                reply = ("{\"secure_url\":\"http://127.0.0.1:" + stub.getAddress().getPort() + "/" + id
-                        + ".png\",\"public_id\":\"" + id + "\"}").getBytes(StandardCharsets.UTF_8);
+                if ("DOWN".equals(storeMode)) {
+                    status = 500;
+                    reply = "{\"error\":{\"message\":\"the store is down\"}}".getBytes(StandardCharsets.UTF_8);
+                } else {
+                    String id = "p-" + UUID.randomUUID();
+                    uploads.incrementAndGet();
+                    issuedIds.add(id);
+                    storedBytes.add(uploadedFile(request));
+                    // Pointed back at this stand-in, so a photo that was just stored can be downloaded and edited again.
+                    reply = ("{\"secure_url\":\"http://127.0.0.1:" + stub.getAddress().getPort() + "/" + id
+                            + ".png\",\"public_id\":\"" + id + "\"}").getBytes(StandardCharsets.UTF_8);
+                }
+            } else if (path.endsWith("/image/destroy")) {
+                destroyed.add(request);
+                reply = "{\"result\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
             } else {
                 reply = "{}".getBytes(StandardCharsets.UTF_8);
             }
@@ -165,6 +190,17 @@ class PhotoToolsIntegrationTest {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /** The picture inside an upload request: a url-encoded form whose "file" is a base64 data URI. */
+    private static byte[] uploadedFile(String form) {
+        for (String field : form.split("&")) {
+            if (field.startsWith("file=")) {
+                String data = java.net.URLDecoder.decode(field.substring("file=".length()), StandardCharsets.UTF_8);
+                return Base64.getDecoder().decode(data.substring(data.indexOf(',') + 1));
+            }
+        }
+        return new byte[0];
+    }
 
     private MvcResult call(MockHttpServletRequestBuilder request, String body) throws Exception {
         request.header("Authorization", "Bearer " + token);
@@ -342,6 +378,45 @@ class PhotoToolsIntegrationTest {
         assertThat(edit(new Made(other.productId(), m.variantId()), null, "make it red").getResponse().getStatus())
                 .as("a variant of another product").isEqualTo(404);
         assertThat(imagePrompts).as("the AI was never asked").isEmpty();
+    }
+
+    @Test
+    void aPhotoThatAlreadyCarriesTheLogoIsNotStampedAgainButOneOfStaffsOwnIs() throws Exception {
+        Made m = productWithPhoto(true); // staff's own upload: no logo on it yet
+        assertThat(edit(m, null, "make the cap gold").getResponse().getStatus()).isEqualTo(200);
+        assertThat(storedBytes.get(0)).as("made from staff's own photo: the logo goes on").isNotEqualTo(pngBytes);
+        assertThat(imagePrompts.get(0)).doesNotContain("watermark");
+
+        // The photo it made is AI-made, so it has the logo: a second edit leaves it as the AI returned it.
+        assertThat(edit(m, null, "remove the shadow").getResponse().getStatus()).isEqualTo(200);
+        assertThat(storedBytes.get(1)).as("made from a photo that already has the logo: not stamped again")
+                .isEqualTo(pngBytes);
+        assertThat(imagePrompts.get(1)).as("the model is told the faint logo is a watermark to leave alone")
+                .contains("watermark");
+    }
+
+    @Test
+    void aPhotoStoreThatDoesNotAnswerIsSaidInPlainWordsAndLeavesThePhotosAlone() throws Exception {
+        Made m = productWithPhoto(true);
+        storeMode = "DOWN";
+        MvcResult r = edit(m, null, "make the cap gold");
+        assertThat(r.getResponse().getStatus()).as(r.getResponse().getContentAsString()).isEqualTo(422);
+        assertThat(json.readTree(r.getResponse().getContentAsString()).get("error").asText()).contains("photo store");
+        assertThat(images.findByVariantIdOrderBySortOrderAsc(m.variantId())).hasSize(1);
+    }
+
+    @Test
+    void aVariantRemovedWhileTheAiWorkedDoesNotLeaveTheNewFileOnThePhotoAccount() throws Exception {
+        Made m = productWithPhoto(true);
+        duringEdit = () -> jdbc.update("UPDATE product_variant SET deleted = true WHERE id = ?::uuid",
+                m.variantId().toString());
+
+        MvcResult r = edit(m, null, "make the cap gold");
+
+        assertThat(r.getResponse().getStatus()).isEqualTo(404);
+        assertThat(destroyed).as("the file that had been stored is released").hasSize(1);
+        assertThat(issuedIds).hasSize(1);
+        assertThat(destroyed.get(0)).contains("public_id=" + issuedIds.get(0));
     }
 
     @Test

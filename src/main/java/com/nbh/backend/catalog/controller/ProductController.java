@@ -7,6 +7,7 @@ import com.nbh.backend.catalog.dto.BulkProductActionRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionResult;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
+import com.nbh.backend.catalog.dto.RenameProductRequest;
 import com.nbh.backend.catalog.dto.SaveProductRequest;
 import com.nbh.backend.catalog.service.ProductService;
 import com.nbh.backend.catalog.service.VariantDealService;
@@ -82,6 +83,17 @@ public class ProductController {
     public ProductDto saveFull(@PathVariable UUID id, @RequestBody SaveProductRequest request,
                                 @AuthenticationPrincipal StaffUser staff) {
         return productService.saveProduct(id, request, staff);
+    }
+
+    /**
+     * Renames a product and nothing else: the editor's name autosave. See {@link ProductService#rename}: it cannot
+     * change the shop switch, and it refuses a product that is in the shop.
+     */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PatchMapping("/{id}/name")
+    public ProductDto rename(@PathVariable UUID id, @RequestBody RenameProductRequest request,
+                             @AuthenticationPrincipal StaffUser staff) {
+        return productService.rename(id, request, staff);
     }
 
     /** A fresh, unpublished copy — fast entry of many similar products (Phase 3, 2026-09-24). */

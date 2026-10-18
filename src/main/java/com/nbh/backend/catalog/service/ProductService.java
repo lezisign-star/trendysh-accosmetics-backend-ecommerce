@@ -6,6 +6,7 @@ import com.nbh.backend.catalog.dto.BulkProductActionRequest;
 import com.nbh.backend.catalog.dto.BulkProductActionResult;
 import com.nbh.backend.catalog.dto.ProductDto;
 import com.nbh.backend.catalog.dto.ProductVariantDto;
+import com.nbh.backend.catalog.dto.RenameProductRequest;
 import com.nbh.backend.catalog.dto.SaveProductRequest;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
@@ -148,19 +149,7 @@ public class ProductService {
         } else {
             product = productRepository.findById(productId)
                     .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-            // Truncated to whole seconds on both sides — found live: the JVM auditing clock sets
-            // updatedAt with nanosecond precision, but Postgres's timestamptz only keeps
-            // microseconds and the JDBC driver ROUNDS (not truncates) to the nearest one on
-            // write. A value like .022999900 can round up to .023000000 on storage, so even
-            // truncating both sides to microseconds still falsely conflicted right at that
-            // boundary. A same-second double-save by two different staff going undetected is an
-            // acceptable trade-off for a low-traffic admin tool — the alternative was a spurious
-            // 409 on a large fraction of ordinary solo saves.
-            if (request.expectedUpdatedAt() != null
-                    && !request.expectedUpdatedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
-                            .equals(product.getUpdatedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS))) {
-                throw new ConflictException("Someone else changed this product — reload to see their changes");
-            }
+            requireUnchangedSince(product, request.expectedUpdatedAt());
         }
 
         product.setName(request.name() == null ? "" : request.name());
@@ -184,6 +173,59 @@ public class ProductService {
         product = productRepository.save(product);
         saveVariants(product, request.variants() == null ? List.of() : request.variants());
 
+        List<ProductVariantDto> variants = variantDtos(product.getId());
+        return ProductDto.from(product, variants, primaryImageUrl(product.getId()), warnings(product, variants));
+    }
+
+    /**
+     * The editor's optimistic-lock check: a form loaded at {@code expected} may only save while the product is still at
+     * that version. Truncated to whole seconds on both sides — found live: the JVM auditing clock sets
+     * updatedAt with nanosecond precision, but Postgres's timestamptz only keeps
+     * microseconds and the JDBC driver ROUNDS (not truncates) to the nearest one on
+     * write. A value like .022999900 can round up to .023000000 on storage, so even
+     * truncating both sides to microseconds still falsely conflicted right at that
+     * boundary. A same-second double-save by two different staff going undetected is an
+     * acceptable trade-off for a low-traffic admin tool — the alternative was a spurious
+     * 409 on a large fraction of ordinary solo saves.
+     */
+    private void requireUnchangedSince(Product product, Instant expected) {
+        if (expected != null
+                && !expected.truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                        .equals(product.getUpdatedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS))) {
+            throw new ConflictException("Someone else changed this product — reload to see their changes");
+        }
+    }
+
+    /**
+     * Renames a product and changes nothing else (the editor's name autosave, owner 2026-10-14: after duplicating and
+     * renaming, "I may go on to edit the images on the same page"). It is its own endpoint, not the full Save with the
+     * saved form sent back, because the full Save also carries the shop switch: the list's Hide/Put in the shop button
+     * changes that switch without moving {@code updatedAt}, so an editor left open could send its older "in the shop"
+     * and put a product back on sale (or hide one just published) when only the name was meant. Here nothing but the
+     * name is read from the request.
+     *
+     * <p>Only for a product that is not in the shop: a live product's name is what customers see, so it goes through
+     * Save, where staff are looking at it. A product that was published after the editor opened is refused for the same
+     * reason (409), and the editor then leaves the name for Save.
+     */
+    @Transactional
+    public ProductDto rename(UUID productId, RenameProductRequest request, StaffUser staff) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
+        if (product.isDeleted()) {
+            throw new EntityNotFoundException("No product: " + productId);
+        }
+        String name = request.name() == null ? "" : request.name().strip();
+        if (name.isEmpty()) {
+            throw new UnprocessableException("Type a name first.");
+        }
+        if (product.isPublished()) {
+            throw new ConflictException("This product is in the shop now, so its name is saved with the Save button.");
+        }
+        requireUnchangedSince(product, request.expectedUpdatedAt());
+        product.setName(name);
+        product.setUpdatedBy(staff != null ? staff.getId() : null);
+        product = productRepository.save(product);
         List<ProductVariantDto> variants = variantDtos(product.getId());
         return ProductDto.from(product, variants, primaryImageUrl(product.getId()), warnings(product, variants));
     }

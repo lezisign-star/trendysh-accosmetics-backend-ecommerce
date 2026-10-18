@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
@@ -247,5 +248,87 @@ class ProductSaveIntegrationTest {
         assertThat(draft.get("isPublished").asBoolean()).isTrue();
         assertThat(draft.get("warnings")).anyMatch(w -> w.asText().equals("No photo"));
         assertThat(draft.get("warnings")).anyMatch(w -> w.asText().equals("Not in any category"));
+    }
+
+    // ---------------------------------------------------------------- the name autosave's own endpoint
+
+    private JsonNode hiddenProduct(String name) throws Exception {
+        return ok(post("/api/v1/products/draft"), "{\"name\":\"" + name + "\","
+                + "\"description\":\"A soft matte lipstick.\",\"categoryIds\":[],\"published\":false,"
+                + "\"variants\":[{\"variantName\":\"Default\",\"sellingPrice\":\"1000\",\"isActive\":true}]}");
+    }
+
+    @Test
+    void aRenameChangesTheNameAndNothingElse() throws Exception {
+        JsonNode before = hiddenProduct(unique("Plum Lipstick"));
+        String id = before.get("id").asText();
+        String newName = unique("Plum Satin Lipstick");
+
+        JsonNode after = ok(patch("/api/v1/products/" + id + "/name"),
+                "{\"expectedUpdatedAt\":\"" + before.get("updatedAt").asText() + "\",\"name\":\"  " + newName + " \"}");
+
+        assertThat(after.get("name").asText()).as("tidied, and saved").isEqualTo(newName);
+        assertThat(after.get("description").asText()).isEqualTo("A soft matte lipstick.");
+        assertThat(after.get("isPublished").asBoolean()).isFalse();
+        assertThat(after.get("variants")).hasSize(1);
+        assertThat(after.get("variants").get(0).get("id").asText()).isEqualTo(before.get("variants").get(0).get("id").asText());
+        assertThat(after.get("variants").get(0).get("sellingPrice").asDouble()).isEqualTo(1000.0);
+        assertThat(ok(get("/api/v1/products/" + id), null).get("name").asText()).isEqualTo(newName);
+    }
+
+    @Test
+    void aRenameCannotTouchTheShopSwitchWhateverTheRequestSays() throws Exception {
+        // An editor left open since before the product was hidden still believes it is "in the shop": the old
+        // autosave sent that belief back with the name and put the product on sale again. The endpoint reads only
+        // the name, so even a request that carries the switch cannot move it.
+        JsonNode before = hiddenProduct(unique("Hidden Gloss"));
+        String id = before.get("id").asText();
+
+        ok(patch("/api/v1/products/" + id + "/name"),
+                "{\"expectedUpdatedAt\":\"" + before.get("updatedAt").asText() + "\","
+                        + "\"name\":\"" + unique("Hidden Gloss Two") + "\",\"published\":true}");
+
+        assertThat(ok(get("/api/v1/products/" + id), null).get("isPublished").asBoolean()).isFalse();
+    }
+
+    @Test
+    void aProductThatIsInTheShopIsNotRenamedBehindStaffsBack() throws Exception {
+        JsonNode before = hiddenProduct(unique("Now Live Balm"));
+        String id = before.get("id").asText();
+        ok(post("/api/v1/products/" + id + "/publish"), null); // published from the list while an editor was open
+
+        int code = status(patch("/api/v1/products/" + id + "/name"),
+                "{\"expectedUpdatedAt\":\"" + before.get("updatedAt").asText() + "\",\"name\":\"Renamed while live\"}");
+
+        assertThat(code).isEqualTo(409);
+        JsonNode after = ok(get("/api/v1/products/" + id), null);
+        assertThat(after.get("name").asText()).isEqualTo(before.get("name").asText());
+        assertThat(after.get("isPublished").asBoolean()).isTrue();
+    }
+
+    @Test
+    void aRenameFromAnOlderFormIsRefusedAndABlankNameIsNotSaved() throws Exception {
+        JsonNode before = hiddenProduct(unique("Old Form Cream"));
+        String id = before.get("id").asText();
+
+        // Someone saved the product after this form was loaded.
+        assertThat(status(patch("/api/v1/products/" + id + "/name"),
+                "{\"expectedUpdatedAt\":\"2020-01-01T00:00:00Z\",\"name\":\"Too late\"}")).isEqualTo(409);
+        // A name must have letters in it.
+        assertThat(status(patch("/api/v1/products/" + id + "/name"),
+                "{\"expectedUpdatedAt\":\"" + before.get("updatedAt").asText() + "\",\"name\":\"   \"}")).isEqualTo(422);
+        // And no product, no rename.
+        assertThat(status(patch("/api/v1/products/" + UUID.randomUUID() + "/name"), "{\"name\":\"Nobody\"}")).isEqualTo(404);
+
+        assertThat(ok(get("/api/v1/products/" + id), null).get("name").asText()).isEqualTo(before.get("name").asText());
+    }
+
+    @Test
+    void renamingNeedsTheRightToManageProducts() throws Exception {
+        JsonNode before = hiddenProduct(unique("Staff Only Mask"));
+        int signedOut = mvc.perform(patch("/api/v1/products/" + before.get("id").asText() + "/name")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Anyone\"}"))
+                .andReturn().getResponse().getStatus();
+        assertThat(signedOut).isIn(401, 403);
     }
 }

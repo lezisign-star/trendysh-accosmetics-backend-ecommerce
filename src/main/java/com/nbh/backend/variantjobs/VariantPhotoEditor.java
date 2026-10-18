@@ -18,6 +18,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestClientException;
 
 import java.util.Comparator;
 import java.util.List;
@@ -76,7 +77,9 @@ public class VariantPhotoEditor {
             throw new UnprocessableException("Cloudinary isn't set up yet — the photo can't be stored.");
         }
         // Read what is needed, then let go of the database while the AI works (it can take a minute).
-        record Start(String url, String label) {}
+        // `stamped`: the photo it starts from was made by the AI for the shop, and every such photo already carries the
+        // logo (stamped when it was stored).
+        record Start(String url, String label, boolean stamped) {}
         Start start = tx.execute(status -> {
             ProductVariant v = variants.findById(variantId).filter(x -> !x.isDeleted()).orElse(null);
             if (v == null || !v.getProduct().getId().equals(productId)) {
@@ -92,7 +95,7 @@ public class VariantPhotoEditor {
                         ? "That photo isn't one of this variant's any more."
                         : "This variant has no photo to edit yet. Add one first.");
             }
-            return new Start(from.getUrl(), v.displayLabel());
+            return new Start(from.getUrl(), v.displayLabel(), from.getSource() == ProductImage.ImageSource.AI_CLEANED);
         });
         if (start == null) {
             throw new UnprocessableException("That didn't work. Try again.");
@@ -100,7 +103,7 @@ public class VariantPhotoEditor {
         GeminiImageClient.Image edited;
         try {
             GeminiImageClient.Image source = gemini.download(start.url());
-            edited = gemini.edit(source, prompt(instruction));
+            edited = gemini.edit(source, prompt(instruction, start.stamped()));
         } catch (GeminiImageClient.GeminiException e) {
             log.info("Editing a variant photo failed: {}", e.getMessage());
             throw new UnprocessableException(e.isQuotaExceeded()
@@ -108,9 +111,36 @@ public class VariantPhotoEditor {
                     : "The AI couldn't make that change: " + e.getMessage());
         }
         String publicId = variantId + "-edit-" + UUID.randomUUID().toString().substring(0, 8);
-        String url = cloudinary.upload(watermark.stamp(edited.bytes()), "products", publicId).url();
+        // The logo goes on only when the photo came from one of staff's own: an AI-made one already has it, and a
+        // second stamp would darken it (30% over 30%) or double it if the model moved it.
+        byte[] bytes = start.stamped() ? edited.bytes() : watermark.stamp(edited.bytes());
+        CloudinaryUploader.Uploaded uploaded;
+        try {
+            uploaded = cloudinary.upload(bytes, "products", publicId);
+        } catch (RestClientException | IllegalStateException e) {
+            // The AI has already been paid for: say what happened in words, not "an unexpected error".
+            log.warn("Storing an edited variant photo failed: {}", e.getMessage());
+            throw new UnprocessableException(
+                    "The photo store didn't answer, so the changed photo wasn't saved. Try again in a moment.");
+        }
+        String url = uploaded.url();
 
-        Edited result = tx.execute(status -> {
+        Edited result;
+        try {
+            result = writePhoto(variantId, url);
+        } catch (RuntimeException e) {
+            // Nothing refers to the file now (the variant was removed while the AI worked, say): don't leave it on the
+            // shop's photo account for good.
+            cloudinary.delete(uploaded.publicId());
+            throw e;
+        }
+        events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
+        return result;
+    }
+
+    /** Puts the stored photo on the variant as its main one, behind nothing, with everything before it kept behind it. */
+    private Edited writePhoto(UUID variantId, String url) {
+        return tx.execute(status -> {
             ProductVariant v = variants.findById(variantId).filter(x -> !x.isDeleted()).orElse(null);
             if (v == null) {
                 throw new NotFoundException("That variant was removed while the photo was being made.");
@@ -134,14 +164,15 @@ public class VariantPhotoEditor {
             image.setSource(ProductImage.ImageSource.AI_CLEANED);
             return new Edited(AdminImageDto.from(images.save(image)), previousMain);
         });
-        events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
-        return result;
     }
 
-    static String prompt(String instruction) {
+    static String prompt(String instruction, boolean stamped) {
         return "Edit this product photo exactly as the shop owner asks, and change nothing else.\n"
                 + "Instruction: " + instruction + "\n"
                 + "Keep the product's shape, its packaging, the printed text and logo, the framing and the background "
-                + "exactly as they are unless the instruction says otherwise. Return only the edited photo.";
+                + "exactly as they are unless the instruction says otherwise. "
+                + (stamped ? "The faint logo in the middle of the photo is the shop's watermark, not part of the "
+                        + "product: leave it exactly where and as it is. " : "")
+                + "Return only the edited photo.";
     }
 }

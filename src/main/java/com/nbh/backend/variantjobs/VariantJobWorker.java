@@ -208,12 +208,21 @@ public class VariantJobWorker {
         PhotoGuides guides = request.guides();
         // A "Redo photos" job replaces the AI-made photos it is redoing instead of keeping them behind the new one.
         boolean replace = request.isRedo();
+        // Staff may have given a variant a photo of their own while it waited (an AI quota pause lasts a quarter of an
+        // hour; a retry can sit in the queue): no second photo is made to go on top of theirs. Not for "Redo photos",
+        // whose variants have photos by design.
+        Set<UUID> fixedByHand = replace ? Set.of()
+                : writer.removedOrWithOwnPhoto(pending.stream().map(VariantJobItem::getVariantId).toList());
         Map<PhotoPlan.Master, MasterImage> masters = new HashMap<>();
         Map<PhotoPlan.Master, String> masterFailures = new HashMap<>();
 
         for (VariantJobItem item : pending) {
             checkCancel(jobId);
             writer.heartbeat(jobId);
+            if (fixedByHand.contains(item.getVariantId())) {
+                writer.photoSkipped(jobId, item.getId());
+                continue;
+            }
             PhotoPlan.Step step = plan.stepFor(item.getColor(), item.getSize());
             try {
                 if (masterFailures.containsKey(step.master())) {

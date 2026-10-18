@@ -596,6 +596,97 @@ class VariantJobIntegrationTest {
         assertThat(attentionFor(attention(), id)).noneMatch(n -> n.get("title").asText().contains("photos failed"));
     }
 
+    private int photoRows(String variantId) {
+        return jdbc.queryForObject("SELECT count(*) FROM product_image WHERE variant_id = ?::uuid",
+                Integer.class, variantId);
+    }
+
+    @Test
+    void aRetryDoesNotMakeAgainAPhotoStaffFixedByHandNorPutTheAiOnTopOfIt() throws Exception {
+        imageMode = "FAIL_CORAL";
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, "Coral Kiss"));
+        JsonNode done = settled(id);
+        assertThat(done.get("job").get("photosFailed").asInt()).isEqualTo(2);
+        String mini = item(done, "Coral Kiss / Mini 2g").get("variantId").asText();
+        String full = item(done, "Coral Kiss / Full 3.5g").get("variantId").asText();
+
+        UUID mine = photo(p.productId(), mini); // staff took their own photo for the Mini on the job screen
+        imageMode = "OK";
+        int calls = imageCalls.get();
+        ok(post("/api/v1/admin/variant-jobs/" + id + "/retry"), null);
+        JsonNode fixed = settled(id);
+
+        assertThat(item(fixed, "Coral Kiss / Mini 2g").get("photoStatus").asText()).isEqualTo("SKIPPED");
+        assertThat(item(fixed, "Coral Kiss / Full 3.5g").get("photoStatus").asText()).isEqualTo("DONE");
+        assertThat(imageCalls.get() - calls).as("only the size nobody fixed is made").isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT id::text FROM product_image WHERE variant_id = ?::uuid", String.class, mini))
+                .as("the Mini keeps staff's photo, alone").containsExactly(mine.toString());
+        assertThat(photoRows(full)).isEqualTo(1);
+        assertThat(fixed.get("job").get("photosFailed").asInt()).isZero();
+    }
+
+    @Test
+    void aRetryWhoseEveryFailureWasFixedByHandJustFinishesTheJobWithoutAnyAiCall() throws Exception {
+        imageMode = "FAIL_CORAL";
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, "Coral Kiss"));
+        JsonNode done = settled(id);
+        photo(p.productId(), item(done, "Coral Kiss / Mini 2g").get("variantId").asText());
+        photo(p.productId(), item(done, "Coral Kiss / Full 3.5g").get("variantId").asText());
+        imageMode = "OK";
+        int calls = imageCalls.get();
+
+        JsonNode finished = ok(post("/api/v1/admin/variant-jobs/" + id + "/retry"), null);
+
+        assertThat(finished.get("job").get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(poller.pollOnce()).as("nothing was queued").isZero();
+        assertThat(imageCalls.get()).isEqualTo(calls);
+        assertThat(item(finished, "Coral Kiss / Mini 2g").get("photoStatus").asText()).isEqualTo("SKIPPED");
+        assertThat(attentionFor(attention(), id)).noneMatch(n -> n.get("title").asText().contains("photo"));
+    }
+
+    @Test
+    void aVariantRemovedSinceIsShownAsGoneNotAsHidden() throws Exception {
+        Made p = product(true);
+        JsonNode done = settled(start(lipstickRequest(p, false, null)));
+        JsonNode mini = item(done, "Ruby Red / Mini 2g");
+        assertThat(mini.get("live").asBoolean()).isTrue();
+
+        jdbc.update("UPDATE product_variant SET deleted = true WHERE id = ?::uuid", mini.get("variantId").asText());
+
+        JsonNode after = job(done.get("job").get("id").asText());
+        assertThat(item(after, "Ruby Red / Mini 2g").get("live").isNull())
+                .as("the job screen offers no photo actions for a variant that is gone").isTrue();
+        assertThat(item(after, "Ruby Red / Full 3.5g").get("live").asBoolean()).isTrue();
+    }
+
+    @Test
+    void aPhotoStaffAddedWhileTheItemWaitedIsNotMadeAgainWhenTheJobCarriesOn() throws Exception {
+        imageMode = "QUOTA";
+        Made p = product(true);
+        String id = start(lipstickRequest(p, false, null));
+        JsonNode paused = settled(id);
+        assertThat(paused.get("job").get("status").asText()).isEqualTo("PAUSED_QUOTA");
+        String mine = item(paused, "Ruby Red / Mini 2g").get("variantId").asText();
+        photo(p.productId(), mine); // staff add their own while the job waits for the AI quota
+        imageMode = "OK";
+        int calls = imageCalls.get();
+        VariantJob job = jobs.findById(UUID.fromString(id)).orElseThrow();
+        job.setNextAttemptAt(Instant.now().minusSeconds(1));
+        jobs.save(job);
+
+        JsonNode done = settled(id);
+
+        assertThat(done.get("job").get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(item(done, "Ruby Red / Mini 2g").get("photoStatus").asText()).isEqualTo("SKIPPED");
+        assertThat(photoRows(mine)).as("staff's photo is the Mini's only one").isEqualTo(1);
+        assertThat(imageCalls.get() - calls).as("one recolour per colour, none spent on the fixed variant alone").isEqualTo(2);
+        for (String label : List.of("Ruby Red / Full 3.5g", "Gold Shimmer / Mini 2g", "Gold Shimmer / Full 3.5g")) {
+            assertThat(photoRows(item(done, label).get("variantId").asText())).as(label).isEqualTo(1);
+        }
+    }
+
     @Test
     void aFailedPhotoStopsBeingListedOnceStaffGiveTheVariantAPhotoOfItsOwn() throws Exception {
         imageMode = "FAIL_CORAL";
