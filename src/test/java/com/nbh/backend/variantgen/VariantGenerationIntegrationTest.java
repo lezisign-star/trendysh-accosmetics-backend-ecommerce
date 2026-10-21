@@ -206,6 +206,8 @@ class VariantGenerationIntegrationTest {
         var all = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(UUID.fromString(made.productId()));
         assertThat(all).hasSize(3);
         assertThat(all.get(0).getVariantName()).isEqualTo(made.name() + " – Dusty");
+        assertThat(all.get(0).getSwatchHex()).as("the base gets a swatch too, so the shop's colour dots cover every variant")
+                .isNotNull();
         for (var v : all.subList(1, 3)) {
             assertThat(v.getSellingPrice()).isEqualByComparingTo("13000");
             assertThat(v.getDescription()).isNotBlank();

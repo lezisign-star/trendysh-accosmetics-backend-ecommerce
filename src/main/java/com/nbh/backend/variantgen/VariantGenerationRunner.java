@@ -100,8 +100,18 @@ public class VariantGenerationRunner {
             for (int i = 0; i < combos.size(); i++) {
                 planned.add(new Planned(combos.get(i), details.get(i).swatchHex(), details.get(i).description()));
             }
+            // The base variant's own swatch, so the shop's colour dots cover every variant (they need all of them).
+            String baseSwatch = null;
+            if (job.baseOption() != null) {
+                try {
+                    baseSwatch = planner.details(text.productName(), text.description(), job.prompt(),
+                            List.of(new Combo(job.baseOption(), null))).get(0).swatchHex();
+                } catch (GeminiImageClient.GeminiException e) {
+                    log.warn("Base swatch not chosen for batch {}: {}", batchId, e.getMessage());
+                }
+            }
             List<NewVariant> created = writer.createVariants(batchId, job.productId(), job.baseVariantId(), planned,
-                    job.price(), !job.approveFirst(), job.baseOption());
+                    job.price(), !job.approveFirst(), job.baseOption(), baseSwatch);
 
             Source source = writer.source(job.productId(), job.baseVariantId()).orElse(null);
             if (source == null || source.referenceUrl() == null) {

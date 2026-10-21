@@ -122,12 +122,15 @@ public class VariantGenerationWriter {
      */
     @Transactional
     public List<NewVariant> createVariants(UUID batchId, UUID productId, UUID baseVariantId, List<Planned> planned,
-                                           BigDecimal price, boolean active, String baseOption) {
+                                           BigDecimal price, boolean active, String baseOption, String baseSwatchHex) {
         Product product = products.findById(productId).orElseThrow();
         ProductVariant base = variants.findById(baseVariantId).orElseThrow();
         if (baseOption != null && !baseOption.isBlank()) {
             String label = baseOption.trim();
             base.setOptionLabel(label);
+            if (baseSwatchHex != null && base.getSwatchHex() == null) {
+                base.setSwatchHex(baseSwatchHex);
+            }
             base.setVariantName(VariantCombos.variantName(product.getName(), label));
             variants.save(base);
         }
