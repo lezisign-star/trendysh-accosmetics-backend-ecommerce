@@ -44,7 +44,9 @@ public record ProductVariantDto(
         String colorFamily,
         /** The family the dot looks like, what the shop uses when staff chose none; null without a dot. */
         String suggestedColorFamily,
-        Integer sizePosition
+        Integer sizePosition,
+        /** The variant that stands for a kit: such a product is changed under Kits, never in the product editor. */
+        boolean isKit
 ) {
     public static ProductVariantDto from(ProductVariant v) {
         return from(v, null);
@@ -59,7 +61,7 @@ public record ProductVariantDto(
                 v.getWholesaleMinQty(), v.getWholesalePrice(),
                 v.getOptionLabel(), v.getOptionColor(), v.getOptionSize(), v.getSwatchHex(), v.getColorFamily(),
                 v.getSwatchHex() == null ? null : nameOf(com.nbh.backend.catalog.entity.ColorFamily.fromHex(v.getSwatchHex())),
-                v.getSizePosition());
+                v.getSizePosition(), v.isKit());
     }
 
     private static String nameOf(com.nbh.backend.catalog.entity.ColorFamily f) {

@@ -16,6 +16,10 @@ public interface KitRepository extends JpaRepository<Kit, UUID> {
 
     Optional<Kit> findByVariantId(UUID variantId);
 
+    /** The kit whose product has this slug (the address of its page in the shop). */
+    @Query("SELECT k FROM Kit k JOIN k.variant v JOIN v.product p WHERE p.slug = :slug")
+    Optional<Kit> findByProductSlug(@Param("slug") String slug);
+
     /** Batched, for the catalogue's card page (which kits are on it) — avoids an N+1 per kit card. */
     List<Kit> findByVariantIdIn(Collection<UUID> variantIds);
 

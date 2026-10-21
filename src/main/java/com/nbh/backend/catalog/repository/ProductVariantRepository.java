@@ -63,7 +63,8 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
      * name, sku, inclusion in a kit"): product/variant name, product description, SKU, this
      * variant's own category and its parent, and — for a kit's own line only — the profession it's
      * curated for (so "brow artist" finds a kit named something else entirely, as long as it's
-     * filed under that profession). {@code Kit} isn't reachable from {@code ProductVariant} via a
+     * filed under that profession). {@code includeKits}: kits have their own pages (owner, 2026-10-19), so the browse
+     * grid leaves them out and only a search (which finds them as kit cards) asks for them. {@code Kit} isn't reachable from {@code ProductVariant} via a
      * mapped association (the FK lives on {@code kit.variant_id}, not the other way around), hence
      * the explicit ad-hoc {@code ON} join rather than a normal path join.
      */
@@ -78,6 +79,7 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             LEFT JOIN kit.profession prof
             WHERE v.deleted = false AND v.isActive = true AND v.sellingPrice IS NOT NULL
               AND p.isPublished = true AND p.deleted = false
+              AND (v.isKit = false OR :includeKits = true)
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:q IS NULL
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
@@ -99,7 +101,8 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             """)
     Page<ProductVariant> searchSellable(@Param("q") String q, @Param("categorySlug") String categorySlug,
                                          @Param("deal") Boolean deal, @Param("popular") Boolean popular,
-                                         @Param("newArrival") Boolean newArrival, Pageable pageable);
+                                         @Param("newArrival") Boolean newArrival,
+                                         @Param("includeKits") boolean includeKits, Pageable pageable);
 
     /** Every sellable variant of the same product, in display order — the storefront's sibling strip. */
     List<ProductVariant> findByProductIdAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNullOrderBySortOrderAsc(UUID productId);
@@ -133,6 +136,10 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     List<UUID> findIdsRemovedOrWithOwnPhoto(@Param("ids") Collection<UUID> ids);
 
     List<ProductVariant> findByGenerationBatchId(UUID generationBatchId);
+
+    /** Whether this product stands for a kit (its one variant is the kit's own). */
+    @Query("SELECT COUNT(v) > 0 FROM ProductVariant v WHERE v.product.id = :productId AND v.isKit = true")
+    boolean existsKitVariant(@Param("productId") UUID productId);
 
     /** Live variants (not kits) of real products not yet looked at in "Tidy colours & sizes", with their product. */
     @Query("""

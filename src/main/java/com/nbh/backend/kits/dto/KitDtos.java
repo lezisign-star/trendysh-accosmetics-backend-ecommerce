@@ -71,9 +71,15 @@ public final class KitDtos {
                                UUID categoryId, String categoryName, boolean isActive,
                                BigDecimal packagePrice, BigDecimal sumOfComponents, BigDecimal discountPercent,
                                boolean hasUnavailableComponent,
-                               Instant updatedAt, List<ComponentDto> components) {
+                               Instant updatedAt, List<ComponentDto> components,
+                               /** The kit's own thumbnail (the professional at work): its variant's cover photo; null until one is added. */
+                               String imageUrl) {
 
         public static KitAdminDto from(Kit k) {
+            return from(k, null);
+        }
+
+        public static KitAdminDto from(Kit k, String imageUrl) {
             var variant = k.getVariant();
             var product = variant.getProduct();
             var profession = k.getProfession();
@@ -91,7 +97,7 @@ public final class KitDtos {
                     profession.getId(), profession.getLabel(), profession.getSlug(), k.getDescription(),
                     category != null ? category.getId() : null, category != null ? category.getName() : null,
                     variant.isActive(), packagePrice, sum, discountPercent, hasUnavailableComponent,
-                    k.getUpdatedAt(), components);
+                    k.getUpdatedAt(), components, imageUrl);
         }
     }
 }

@@ -74,8 +74,10 @@ public class CatalogService {
     @Transactional(readOnly = true)
     public Page<CatalogVariantCardDto> browseCards(String q, String categorySlug, Boolean deal, Boolean popular,
                                                      Boolean newArrival, Pageable pageable) {
+        // Kits have their own pages and are not listed among products; a search still finds them, as kit cards.
+        boolean includeKits = blankToNull(q) != null;
         Page<ProductVariant> page = variantRepository.searchSellable(blankToNull(q), blankToNull(categorySlug),
-                deal, popular, newArrival, pageable);
+                deal, popular, newArrival, includeKits, pageable);
         List<ProductVariant> pageVariants = page.getContent();
         if (pageVariants.isEmpty()) {
             return Page.empty(pageable);
@@ -229,7 +231,7 @@ public class CatalogService {
                 v.getOptionColor(), v.getOptionSize(),
                 v.effectiveColorFamily() == null ? null : v.effectiveColorFamily().name(),
                 v.getSizePosition(), p.getBrand() == null ? null : p.getBrand().getName(),
-                cover == null ? null : cover.focus());
+                cover == null ? null : cover.focus(), v.isKit());
     }
 
     /** An option's cover photo and where on it the part that changes sits ("x% y%", V66; null = the middle). */

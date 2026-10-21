@@ -11,6 +11,7 @@ import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.catalog.service.PhotoOwnership;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
+import com.nbh.backend.kits.dto.KitDetailDto;
 import com.nbh.backend.kits.dto.KitDtos;
 import com.nbh.backend.kits.dto.KitDtos.ComponentInput;
 import com.nbh.backend.kits.dto.KitDtos.KitAdminDto;
@@ -24,6 +25,7 @@ import com.nbh.backend.kits.entity.Profession;
 import com.nbh.backend.kits.repository.KitComponentRepository;
 import com.nbh.backend.kits.repository.KitRepository;
 import com.nbh.backend.kits.repository.ProfessionRepository;
+import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -59,11 +61,13 @@ public class KitService {
     private final ProductImageRepository imageRepository;
     private final ProfessionRepository professions;
     private final KitAvailabilityService kitAvailability;
+    private final StockAvailabilityService stockAvailability;
 
     public KitService(KitRepository kits, KitComponentRepository componentRepository,
                        ProductVariantRepository variantRepository, ProductRepository productRepository,
                        CategoryRepository categoryRepository, ProductImageRepository imageRepository,
-                       ProfessionRepository professions, KitAvailabilityService kitAvailability) {
+                       ProfessionRepository professions, KitAvailabilityService kitAvailability,
+                       StockAvailabilityService stockAvailability) {
         this.kits = kits;
         this.componentRepository = componentRepository;
         this.variantRepository = variantRepository;
@@ -72,6 +76,7 @@ public class KitService {
         this.imageRepository = imageRepository;
         this.professions = professions;
         this.kitAvailability = kitAvailability;
+        this.stockAvailability = stockAvailability;
     }
 
     // ---- admin CRUD ----
@@ -79,22 +84,25 @@ public class KitService {
     @Transactional(readOnly = true)
     public Page<KitAdminDto> list(String q, UUID professionId, Pageable pageable) {
         String query = q == null || q.isBlank() ? null : q.trim();
-        return kits.searchAdmin(query, professionId, pageable).map(KitAdminDto::from);
+        Page<Kit> page = kits.searchAdmin(query, professionId, pageable);
+        // One lookup for the whole page: each card shows its kit's own thumbnail.
+        Map<UUID, String> covers = coverImageByVariant(page.getContent().stream().map(Kit::getVariant).toList());
+        return page.map(k -> KitAdminDto.from(k, covers.get(k.getVariant().getId())));
     }
 
     @Transactional(readOnly = true)
     public KitAdminDto get(UUID id) {
-        return KitAdminDto.from(findOrThrow(id));
+        return adminDto(findOrThrow(id));
     }
 
     @Transactional
     public KitAdminDto create(SaveKitRequest request) {
-        return KitAdminDto.from(saveKit(null, request));
+        return adminDto(saveKit(null, request));
     }
 
     @Transactional
     public KitAdminDto update(UUID id, SaveKitRequest request) {
-        return KitAdminDto.from(saveKit(id, request));
+        return adminDto(saveKit(id, request));
     }
 
     @Transactional
@@ -104,7 +112,12 @@ public class KitService {
         // the shelf — no other change is needed to take one down.
         kit.getVariant().setActive(active);
         variantRepository.save(kit.getVariant());
-        return KitAdminDto.from(kit);
+        return adminDto(kit);
+    }
+
+    /** A kit as staff see it, with its own thumbnail. */
+    private KitAdminDto adminDto(Kit kit) {
+        return KitAdminDto.from(kit, coverImageByVariant(List.of(kit.getVariant())).get(kit.getVariant().getId()));
     }
 
     private Kit saveKit(UUID existingId, SaveKitRequest request) {
@@ -215,9 +228,7 @@ public class KitService {
     public List<KitPublicDto> listPublicKits() {
         boolean demoOn = kits.demoDataOn();
         List<Kit> active = kits.findAll().stream()
-                .filter(k -> k.getVariant().getProduct().isMockData() == demoOn)
-                .filter(k -> k.getVariant().isSellable() && k.getVariant().getProduct().isPublished()
-                        && !k.getVariant().getProduct().isDeleted())
+                .filter(k -> isOnSale(k, demoOn))
                 .toList();
         if (active.isEmpty()) {
             return List.of();
@@ -255,6 +266,81 @@ public class KitService {
                 .map(k -> toPublicDto(k, componentsByKit.get(k.getId()), imageByVariant,
                         wholeKits.getOrDefault(k.getVariant().getId(), BigDecimal.ZERO).signum() > 0))
                 .toList();
+    }
+
+    /** Whether a kit is on sale right now: its own product is real (or demo, while demo mode is on), live and priced. */
+    private static boolean isOnSale(Kit k, boolean demoOn) {
+        Product product = k.getVariant().getProduct();
+        return product.isMockData() == demoOn && k.getVariant().isSellable() && product.isPublished()
+                && !product.isDeleted();
+    }
+
+    /**
+     * One kit's own page in the shop (owner, 2026-10-19). Like the list, a component whose own product is no longer
+     * purchasable is left out, and a kit with nothing left to sell is not found.
+     */
+    @Transactional(readOnly = true)
+    public KitDetailDto publicKit(String slug) {
+        boolean demoOn = kits.demoDataOn();
+        Kit k = kits.findByProductSlug(slug)
+                .filter(kit -> isOnSale(kit, demoOn))
+                .orElseThrow(() -> new NotFoundException("No kit: " + slug));
+        List<KitComponent> comps = componentRepository.findByKitIdOrderByLineNoAsc(k.getId()).stream()
+                .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
+                .toList();
+        if (comps.isEmpty()) {
+            throw new NotFoundException("No kit: " + slug);
+        }
+
+        // Every photo this page can show, found with two queries: each variant shows only ITS OWN gallery.
+        ProductVariant kitVariant = k.getVariant();
+        List<ProductVariant> shown = new ArrayList<>();
+        shown.add(kitVariant);
+        comps.forEach(c -> shown.add(c.getComponentVariant()));
+        List<UUID> productIds = shown.stream().map(v -> v.getProduct().getId()).distinct().toList();
+        Map<UUID, List<ProductImage>> imagesByProduct = imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)
+                .stream().collect(Collectors.groupingBy(i -> i.getProduct().getId()));
+        Map<UUID, Long> optionCounts = PhotoOwnership.optionCounts(variantRepository.findByProductIdInAndDeletedFalse(productIds));
+        java.util.function.Function<ProductVariant, List<String>> gallery = v -> PhotoOwnership.galleryFor(
+                        v.getId(), PhotoOwnership.isSingleOption(optionCounts, v.getProduct().getId()),
+                        imagesByProduct.getOrDefault(v.getProduct().getId(), List.of()))
+                .stream().map(ProductImage::getUrl).toList();
+
+        Map<UUID, BigDecimal> onShelf = stockAvailability.available(
+                comps.stream().map(c -> c.getComponentVariant().getId()).toList());
+        List<KitDetailDto.Item> items = comps.stream().map(c -> {
+            ProductVariant cv = c.getComponentVariant();
+            Product cp = cv.getProduct();
+            BigDecimal price = cv.getSellingPrice() == null ? BigDecimal.ZERO : cv.getSellingPrice();
+            List<String> photos = gallery.apply(cv);
+            boolean inStock = onShelf.getOrDefault(cv.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0;
+            return new KitDetailDto.Item(c.getId(), cv.getId(), cp.getId(), cp.getSlug(), cp.getName(),
+                    CatalogLabel.of(cv), photos.isEmpty() ? null : photos.get(0), photos, c.getQty(), price,
+                    price.multiply(c.getQty()), cp.getShortDescription(), cp.getDescription(), cp.getHowToUse(),
+                    cp.getIngredients(), inStock);
+        }).toList();
+
+        BigDecimal sum = items.stream().map(KitDetailDto.Item::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal packagePrice = kitVariant.getSellingPrice() == null ? BigDecimal.ZERO : kitVariant.getSellingPrice();
+        BigDecimal whole = kitAvailability.wholeKitsAvailable(List.of(k), Map.of(k.getId(), comps))
+                .getOrDefault(kitVariant.getId(), BigDecimal.ZERO);
+        List<String> kitPhotos = gallery.apply(kitVariant);
+        Product product = kitVariant.getProduct();
+        Profession profession = k.getProfession();
+        return new KitDetailDto(kitVariant.getId(), product.getId(), product.getSlug(), product.getName(),
+                profession.getId(), profession.getLabel(), profession.getSlug(), k.getDescription(),
+                kitPhotos.isEmpty() ? null : kitPhotos.get(0), kitPhotos, packagePrice, sum,
+                sum.subtract(packagePrice).max(BigDecimal.ZERO), whole.signum() > 0, whole, items);
+    }
+
+    /** How a variant is named on a kit's page: its colour / size / shade, or nothing for a one-option product. */
+    private static final class CatalogLabel {
+        private CatalogLabel() {}
+
+        static String of(ProductVariant v) {
+            String label = v.shortOption();
+            return label == null || label.isBlank() || label.equalsIgnoreCase("Default") ? null : label;
+        }
     }
 
     /** The one method {@code CheckoutService} calls — empty for any variant that isn't a kit, or

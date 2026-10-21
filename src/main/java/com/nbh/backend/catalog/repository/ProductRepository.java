@@ -82,7 +82,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                    @Param("newArrival") Boolean newArrival, Pageable pageable);
 
     /**
-     * Staff product list: every optional filter short-circuits when null. {@code q} also matches a
+     * Staff product list (never a kit: kits are managed under Kits, owner 2026-10-19): every optional filter
+     * short-circuits when null. {@code q} also matches a
      * variant SKU or name. With {@code among}, only the products in {@code ids} (the search box's
      * matches from {@link com.nbh.backend.catalog.service.ProductSearch}; {@code q} is then null). {@code options}:
      * SINGLE = products with at most one live variant (the Products list), RANGE = two or more (the Variants list,
@@ -104,6 +105,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             LEFT JOIN p.categories c
             LEFT JOIN c.parent parent
             WHERE p.deleted = :deleted
+              AND NOT EXISTS (SELECT 1 FROM ProductVariant kv WHERE kv.product = p AND kv.isKit = true)
               AND (:q IS NULL
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR EXISTS (SELECT 1 FROM ProductVariant v
