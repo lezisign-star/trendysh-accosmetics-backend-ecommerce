@@ -47,11 +47,18 @@ public class CartItem extends BaseEntity {
     @Column(name = "added_at", nullable = false)
     private java.time.Instant addedAt = java.time.Instant.now();
 
+    /** A basket's lines in the order they were added: how the basket is shown and how an order's lines are numbered. */
+    public static final java.util.Comparator<CartItem> IN_ORDER_ADDED =
+            java.util.Comparator.comparing(CartItem::getAddedAt,
+                            java.util.Comparator.nullsLast(java.util.Comparator.<java.time.Instant>naturalOrder()))
+                    .thenComparing(CartItem::getId,
+                            java.util.Comparator.nullsLast(java.util.Comparator.<UUID>naturalOrder()));
+
     /**
      * What the shopper picked inside a kit, keyed by the DEFAULT variant of the product they changed (a kit's component
-     * rows are replaced on every save, but a product is in a kit once, so its default variant is a stable key) and
-     * holding the variant they chose instead. Only picks that differ from the default are stored; empty for a plain
-     * line and for a kit taken as it comes.
+     * row goes away when staff take the product out and is made again if they add it back, but a product is in a kit once,
+     * so its default variant is a stable key) and holding the variant they chose instead. Only picks that differ from the
+     * default are stored; empty for a plain line and for a kit taken as it comes.
      */
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "cart_item_choice", joinColumns = @JoinColumn(name = "cart_item_id"))

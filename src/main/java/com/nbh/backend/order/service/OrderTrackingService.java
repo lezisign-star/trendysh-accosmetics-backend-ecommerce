@@ -179,7 +179,7 @@ public class OrderTrackingService {
     public OrderDto order(String token, String rawOrderNo) {
         String email = emailFor(token);
         return orders.findByOrderNo(normalizeOrderNo(rawOrderNo))
-                .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
+                .filter(o -> email.equalsIgnoreCase(o.getGuestEmail()))
                 // This guest has proved the mailbox, so they may get back to the page that takes the M-PESA code.
                 .map(o -> OrderDto.from(o).withPayRef(paymentInstructions.payReferenceFor(o)))
                 .orElseThrow(() -> new NotFoundException("No order with that number under this email"));
@@ -194,7 +194,7 @@ public class OrderTrackingService {
     public OrderDto confirmReceived(String token, String rawOrderNo) {
         String email = emailFor(token);
         CustomerOrder order = orders.findByOrderNo(normalizeOrderNo(rawOrderNo))
-                .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
+                .filter(o -> email.equalsIgnoreCase(o.getGuestEmail()))
                 .orElseThrow(() -> new NotFoundException("No order with that number under this email"));
         if (order.getStatus() == OrderStatus.DELIVERED) {
             return OrderDto.from(order);
@@ -207,7 +207,7 @@ public class OrderTrackingService {
     public void review(String token, String rawOrderNo, com.nbh.backend.order.dto.TrackingDtos.TrackedReviewRequest request) {
         String email = emailFor(token);
         CustomerOrder order = orders.findByOrderNo(normalizeOrderNo(rawOrderNo))
-                .filter(o -> o.getGuestEmail().equalsIgnoreCase(email))
+                .filter(o -> email.equalsIgnoreCase(o.getGuestEmail()))
                 .orElseThrow(() -> new NotFoundException("No order with that number under this email"));
         reviews.submitForVerifiedOrder(order, request.productId(), request.rating(), request.comment(),
                 request.reviewerName());

@@ -215,9 +215,13 @@ class CartServiceUnitTest {
                 .hasMessage("Only 2 of Gel polish (Red) left");
     }
 
+    /** Lines are listed in the order they were added; a real basket's lines are added at different moments, these are made in a row. */
+    private int linesMade = 0;
+
     private CartItem line(ProductVariant v, String qty, String price) {
         CartItem item = new CartItem();
         item.setId(UUID.randomUUID()); // a stored line always has one; the cart reports each line's shelf by it
+        item.setAddedAt(java.time.Instant.parse("2026-10-01T08:00:00Z").plusSeconds(linesMade++));
         item.setCart(cart);
         item.setVariant(v);
         item.setQty(new BigDecimal(qty));

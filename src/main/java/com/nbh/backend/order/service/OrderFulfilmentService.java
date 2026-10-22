@@ -3,6 +3,7 @@ package com.nbh.backend.order.service;
 import com.nbh.backend.common.event.OrderCancelledEvent;
 import com.nbh.backend.common.event.OrderDeliveredEvent;
 import com.nbh.backend.common.event.OrderFulfilledEvent;
+import com.nbh.backend.common.event.OrderPackedEvent;
 import com.nbh.backend.common.event.OrderPickingStartedEvent;
 import com.nbh.backend.common.event.OrderReadyEvent;
 import com.nbh.backend.common.exception.UnprocessableException;
@@ -299,6 +300,58 @@ public class OrderFulfilmentService {
 
         eventPublisher.publishEvent(new OrderPickingStartedEvent(order.getId(), order.getOrderNo()));
 
+        return order;
+    }
+
+    /**
+     * The pick-and-pack ticks. Marks products of the order's pick list packed (or, with {@code packed} false, not packed
+     * again) and records who and when. Only a line that is physically picked can be ticked: a plain product, or a product
+     * inside a kit; a kit's own summary line is not picked, its products are. Ticking is idempotent (an already packed
+     * line keeps its first packer and time) and open from paid until the order leaves the shop. Nothing is checked about
+     * ticks when the order is marked ready or dispatched: they are a help to the person packing, not a gate.
+     */
+    @Transactional
+    public CustomerOrder setPacked(java.util.UUID orderId, java.util.Collection<java.util.UUID> itemIds, boolean packed,
+                                   String staffName) {
+        CustomerOrder order = orderRepository.lockById(orderId)
+                .orElseThrow(() -> new EntityNotFoundException("No order: " + orderId));
+        if (!DISPATCHABLE_STATUSES.contains(order.getStatus())) {
+            throw new UnprocessableException("Order " + order.getOrderNo() + " is " + order.getStatus()
+                    + " — its pick-and-pack list can be ticked from paid until it is dispatched");
+        }
+        if (itemIds == null || itemIds.isEmpty()) {
+            throw new UnprocessableException("Choose at least one product to tick.");
+        }
+        java.util.Map<java.util.UUID, CustomerOrderItem> byId = new java.util.HashMap<>();
+        for (CustomerOrderItem item : order.getItems()) {
+            byId.put(item.getId(), item);
+        }
+        // To the microsecond, which is all the column keeps: what is answered now is then what is read back later.
+        java.time.Instant now = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        boolean changed = false;
+        for (java.util.UUID id : new java.util.LinkedHashSet<>(itemIds)) {
+            CustomerOrderItem item = byId.get(id);
+            if (item == null) {
+                throw new UnprocessableException("One of those products is not on order " + order.getOrderNo() + ".");
+            }
+            if (item.getParentItem() == null && item.getVariant().isKit()) {
+                throw new UnprocessableException(item.soldProductName()
+                        + " is a kit: tick the products inside it, not the kit itself.");
+            }
+            if (packed && item.getPackedAt() == null) {
+                item.setPackedAt(now);
+                item.setPackedBy(staffName == null || staffName.isBlank() ? null : staffName.trim());
+                changed = true;
+            } else if (!packed && item.getPackedAt() != null) {
+                item.setPackedAt(null);
+                item.setPackedBy(null);
+                changed = true;
+            }
+        }
+        if (changed) {
+            order = orderRepository.save(order);
+            eventPublisher.publishEvent(new OrderPackedEvent(order.getId(), order.getOrderNo()));
+        }
         return order;
     }
 

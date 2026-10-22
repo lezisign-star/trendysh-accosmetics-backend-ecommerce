@@ -123,13 +123,34 @@ public class CheckoutService {
     @Transactional
     public CheckoutResult checkout(String sessionId, CheckoutRequest request,
                                     com.nbh.backend.customer.entity.CustomerAccount customer) {
+        return checkout(sessionId, request, customer, Placement.SHOPPER);
+    }
+
+    /**
+     * Who is placing the order: the shopper themselves at the checkout, or a member of staff entering it for a customer
+     * ({@code StaffOrderService}). Staff are not held to the shopper's limit on orders waiting for payment (a limit that
+     * exists so the public form cannot tie up the shelf), the order records who entered it, and it does not ring the
+     * new-order alert for the person who just placed it.
+     */
+    public record Placement(String staffName, String staffEmail) {
+        public static final Placement SHOPPER = new Placement(null, null);
+
+        public boolean byStaff() {
+            return staffName != null;
+        }
+    }
+
+    @Transactional
+    public CheckoutResult checkout(String sessionId, CheckoutRequest request,
+                                    com.nbh.backend.customer.entity.CustomerAccount customer, Placement placement) {
         requireUsableContactDetails(request);
         Cart cart = cartRepository.findWithLockBySessionId(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("No cart for this session"));
         if (cart.getStatus() != Cart.CartStatus.ACTIVE) {
             throw new ConflictException("This cart has already been checked out");
         }
-        List<CartItem> cartItems = cartItemRepository.findByCartId(cart.getId());
+        List<CartItem> cartItems = cartItemRepository.findByCartId(cart.getId()).stream()
+                .sorted(CartItem.IN_ORDER_ADDED).toList();
         if (cartItems.isEmpty()) {
             throw new IllegalStateException("Cannot check out an empty cart");
         }
@@ -149,7 +170,7 @@ public class CheckoutService {
         // for. Counting by phone OR email means changing just one of them doesn't get round it;
         // OrderExpiryService is what frees a slot again once a hold lapses.
         String contactPhone = PhoneNumbers.normalize(request.guestPhone());
-        long open = orderRepository.countByStatusForContact(
+        long open = placement.byStaff() ? 0 : orderRepository.countByStatusForContact(
                 OrderStatus.PENDING_PAYMENT, contactPhone, request.guestEmail());
         if (open >= maxOpenOrdersPerContact) {
             throw new TooManyRequestsException("You already have " + open
@@ -166,8 +187,16 @@ public class CheckoutService {
         order.setOrderNo(orderNoGenerator.next());
         order.setCustomerAccount(customer);
         order.setCustomerName(request.customerName().trim());
-        order.setGuestEmail(request.guestEmail());
+        // The public form always has one; an order staff enter for a customer without one is stored with none.
+        order.setGuestEmail(request.guestEmail() == null || request.guestEmail().isBlank()
+                ? null : request.guestEmail().trim());
         order.setGuestPhone(contactPhone);
+        if (placement.byStaff()) {
+            order.setPlacedBy(placement.staffName());
+            // The person who entered it needs no ring to tell them an order has arrived.
+            order.setAlertAcknowledgedAt(Instant.now(clock));
+            order.setAlertAcknowledgedBy(placement.staffEmail());
+        }
         order.setFulfilmentType(request.fulfilmentType());
         order.setDeliveryAddress(request.deliveryAddress());
         // Blank/same-as-main-phone is stored as null -- TumaBodaBookingService falls back to
@@ -214,7 +243,10 @@ public class CheckoutService {
         // variant — without it, two concurrent checkouts that touch the same underlying SKUs
         // (directly, or buried inside different kits) in opposite orders could still deadlock in
         // Postgres, which is exactly what the original fix was for.
-        record ReservationTarget(CartItem cartItem, ProductVariant variant, BigDecimal qty, boolean isKitComponent) {}
+        // position: where a kit's product stands in its kit, so the order can list the products in the kit's own order
+        // although they are reserved in variant-id order.
+        record ReservationTarget(CartItem cartItem, ProductVariant variant, BigDecimal qty, boolean isKitComponent,
+                                 int position) {}
         List<ReservationTarget> targets = new java.util.ArrayList<>();
         for (CartItem cartItem : cartItems) {
             // A kit expands into its products as the shopper picked them (another colour or size of a product inside it):
@@ -222,8 +254,9 @@ public class CheckoutService {
             List<KitService.SelectedPart> components = kitService.selectionFor(
                     cartItem.getVariant().getId(), cartItem.getChoices());
             if (components.isEmpty()) {
-                targets.add(new ReservationTarget(cartItem, cartItem.getVariant(), cartItem.getQty(), false));
+                targets.add(new ReservationTarget(cartItem, cartItem.getVariant(), cartItem.getQty(), false, 0));
             } else {
+                int position = 0;
                 for (KitService.SelectedPart component : components) {
                     // A product the kit comes with is available by the way the selection is made; one the shopper
                     // picked instead may have been taken off sale since (the cart refused it too, this is the same
@@ -234,7 +267,7 @@ public class CheckoutService {
                                 + " is no longer available. Please remove the kit from your cart and choose again.");
                     }
                     targets.add(new ReservationTarget(cartItem, component.variant(),
-                            component.qtyPerKit().multiply(cartItem.getQty()), true));
+                            component.qtyPerKit().multiply(cartItem.getQty()), true, position++));
                 }
             }
         }
@@ -254,7 +287,7 @@ public class CheckoutService {
         // Reserving here — not at add-to-cart — is the exact "hold starts at checkout" decision.
         // If any target throws (insufficient availability), the whole @Transactional method rolls
         // back, including the order row saved above — nothing is left half-created.
-        record ReservedComponent(ProductVariant variant, BigDecimal qty, StockReservation reservation) {}
+        record ReservedComponent(ProductVariant variant, BigDecimal qty, StockReservation reservation, int position) {}
         java.util.Map<CartItem, StockReservation> reservationByCartItem = new java.util.LinkedHashMap<>();
         java.util.Map<CartItem, List<ReservedComponent>> componentsByCartItem = new java.util.LinkedHashMap<>();
         for (ReservationTarget target : targets) {
@@ -269,12 +302,13 @@ public class CheckoutService {
                 // one of its kit components — the customer never added that component SKU directly
                 // and shouldn't need to know it exists.
                 CartItem cartItem = target.cartItem();
-                throw new InsufficientAvailabilityException(
-                        cartItem.getVariant().displayLabel() + " just went out of stock — please update your cart");
+                throw new InsufficientAvailabilityException(cartItem.getVariant().displayLabel()
+                        + (placement.byStaff() ? " is not available in that quantity right now"
+                                : " just went out of stock — please update your cart"));
             }
             if (target.isKitComponent()) {
                 componentsByCartItem.computeIfAbsent(target.cartItem(), k -> new java.util.ArrayList<>())
-                        .add(new ReservedComponent(target.variant(), target.qty(), reservation));
+                        .add(new ReservedComponent(target.variant(), target.qty(), reservation, target.position()));
             } else {
                 reservationByCartItem.put(target.cartItem(), reservation);
             }
@@ -291,9 +325,12 @@ public class CheckoutService {
         }
         java.util.Map<java.util.UUID, String> coverByVariant = variantCovers.urlsFor(soldVariants.values());
 
+        // The order the lines were entered in: each kit line, then its own products in the kit's order.
+        int lineNo = 0;
         for (CartItem cartItem : cartItems) {
             CustomerOrderItem orderItem = new CustomerOrderItem();
             orderItem.setOrder(order);
+            orderItem.setLineNo(++lineNo);
             orderItem.setVariant(cartItem.getVariant());
             orderItem.rememberVariant(cartItem.getVariant(), coverByVariant.get(cartItem.getVariant().getId()));
             orderItem.setQty(cartItem.getQty());
@@ -306,11 +343,17 @@ public class CheckoutService {
             orderItem.setReservation(reservationByCartItem.get(cartItem));
             order.getItems().add(orderItem);
 
-            for (ReservedComponent component : componentsByCartItem.getOrDefault(cartItem, List.of())) {
+            // The kit's products in the kit's own order (they were reserved in variant-id order, which means nothing to
+            // the person packing the box).
+            List<ReservedComponent> inKitOrder = new java.util.ArrayList<>(
+                    componentsByCartItem.getOrDefault(cartItem, List.of()));
+            inKitOrder.sort(java.util.Comparator.comparingInt(ReservedComponent::position));
+            for (ReservedComponent component : inKitOrder) {
                 BigDecimal unitPrice = component.variant().getSellingPrice() == null
                         ? BigDecimal.ZERO : component.variant().getSellingPrice();
                 CustomerOrderItem componentItem = new CustomerOrderItem();
                 componentItem.setOrder(order);
+                componentItem.setLineNo(++lineNo);
                 componentItem.setVariant(component.variant());
                 componentItem.rememberVariant(component.variant(), coverByVariant.get(component.variant().getId()));
                 componentItem.setQty(component.qty());

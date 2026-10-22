@@ -476,7 +476,9 @@ public class CartService {
     private record Refreshed(List<CartItem> items, Map<UUID, BigDecimal> changedFrom) {}
 
     private Refreshed refreshPrices(Cart cart) {
-        List<CartItem> items = cartItemRepository.findByCartId(cart.getId());
+        // In the order they were added, so a line never moves when its quantity or price is updated.
+        List<CartItem> items = cartItemRepository.findByCartId(cart.getId()).stream()
+                .sorted(CartItem.IN_ORDER_ADDED).toList();
         PromoCampaign campaign = promoCampaignService.getActiveOrNull();
         Map<UUID, BigDecimal> changedFrom = new HashMap<>();
         for (CartItem item : items) {

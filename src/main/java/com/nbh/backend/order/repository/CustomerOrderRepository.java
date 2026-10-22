@@ -83,7 +83,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     /** Orders under a verified email, newest first ({@code email} already lower-cased). No line items are loaded. */
     @Query("""
             SELECT NEW com.nbh.backend.order.dto.TrackingDtos$TrackedOrderSummaryDto(
-                o.orderNo, o.status, o.createdAt, SIZE(o.items), o.grandTotal, o.fulfilmentType)
+                o.orderNo, o.status, o.createdAt, (SELECT COUNT(li) FROM CustomerOrderItem li WHERE li.order = o AND li.parentItem IS NULL), o.grandTotal, o.fulfilmentType)
             FROM CustomerOrder o
             WHERE LOWER(o.guestEmail) = :email
             ORDER BY o.createdAt DESC
@@ -157,9 +157,10 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
                                  @Param("phone") String phone, @Param("email") String email);
 
     /**
-     * Staff order-browse list — one query, no N+1 (F12 pattern): {@code
-     * SIZE(o.items)} is a correlated-count subquery, not a fetch of the
-     * items collection itself. {@code status}/{@code q} are optional; the
+     * Staff order-browse list — one query, no N+1 (F12 pattern): the item
+     * count is a correlated-count subquery, not a fetch of the items
+     * collection itself, and it counts what was bought (a kit once: the
+     * products inside it are not counted again). {@code status}/{@code q} are optional; the
      * {@code CAST(:q AS string)} is required for the same reason
      * {@code ProductRepository.searchPublished} needed it — a null bind
      * parameter reused inside LOWER/LIKE otherwise defaults to bytea on
@@ -183,7 +184,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Query("""
             SELECT NEW com.nbh.backend.order.dto.OrderSummaryDto(
                 o.id, o.orderNo, o.status, o.customerName, o.guestEmail, o.guestPhone,
-                SIZE(o.items), o.grandTotal, o.createdAt,
+                (SELECT COUNT(li) FROM CustomerOrderItem li WHERE li.order = o AND li.parentItem IS NULL), o.grandTotal, o.createdAt,
                 CASE WHEN o.tumabodaRerouted = true THEN false
                      WHEN LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled') THEN true
                      WHEN o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL THEN true
@@ -233,7 +234,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     @Query("""
             SELECT NEW com.nbh.backend.order.dto.OrderSummaryDto(
                 o.id, o.orderNo, o.status, o.customerName, o.guestEmail, o.guestPhone,
-                SIZE(o.items), o.grandTotal, o.createdAt,
+                (SELECT COUNT(li) FROM CustomerOrderItem li WHERE li.order = o AND li.parentItem IS NULL), o.grandTotal, o.createdAt,
                 CASE WHEN o.tumabodaRerouted = true THEN false
                      WHEN LOWER(COALESCE(o.tumabodaStatus, '')) IN ('failed', 'returned', 'cancelled', 'canceled') THEN true
                      WHEN o.tumabodaDeliveryId IS NULL AND o.tumabodaBookingFailure IS NOT NULL AND o.tumabodaNextRetryAt IS NULL THEN true
@@ -278,7 +279,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     /** A signed-in customer's own orders, newest first. Lightweight projection — no line items are loaded. */
     @Query("""
             SELECT NEW com.nbh.backend.customer.dto.CustomerDtos$MyOrderDto(
-                o.orderNo, o.status, SIZE(o.items), o.grandTotal, o.createdAt)
+                o.orderNo, o.status, (SELECT COUNT(li) FROM CustomerOrderItem li WHERE li.order = o AND li.parentItem IS NULL), o.grandTotal, o.createdAt)
             FROM CustomerOrder o
             WHERE o.customerAccount.id = :accountId
             ORDER BY o.createdAt DESC

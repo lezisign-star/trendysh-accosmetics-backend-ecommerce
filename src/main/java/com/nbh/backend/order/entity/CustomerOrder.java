@@ -33,8 +33,13 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "customer_name", length = 200)
     private String customerName;
 
-    @Column(name = "guest_email", nullable = false, length = 255)
+    /** Null for an order staff entered for a customer who gave no email (V70): such an order is simply not emailed. */
+    @Column(name = "guest_email", length = 255)
     private String guestEmail;
+
+    /** The member of staff who entered this order for a customer (V70); null for an order the customer placed. */
+    @Column(name = "placed_by", length = 200)
+    private String placedBy;
 
     @Column(name = "guest_phone", nullable = false, length = 20)
     private String guestPhone;
@@ -242,7 +247,9 @@ public class CustomerOrder extends BaseEntity {
         return tumabodaDeliveryId != null && !isDeadTumabodaStatus(tumabodaStatus);
     }
 
+    /** In the order they were entered (V70): a kit's own products follow the kit's line, in the kit's order. */
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("lineNo ASC, id ASC")
     private List<CustomerOrderItem> items = new ArrayList<>();
 
     /** Developer-toggleable demo content (2026-09-29) — backs fabricated reviews/sale-events only,

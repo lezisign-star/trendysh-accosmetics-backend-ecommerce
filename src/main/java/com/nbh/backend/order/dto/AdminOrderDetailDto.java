@@ -55,7 +55,9 @@ public record AdminOrderDetailDto(
         /** The shopper account this order belongs to; null for a guest order. */
         Account account,
         /** The M-PESA codes the customer sent for this order, newest first. Empty means none has been entered yet. */
-        List<Claim> claims
+        List<Claim> claims,
+        /** The member of staff who entered this order for a customer; null for an order the customer placed. */
+        String placedBy
 ) {
     /**
      * Who the order is attached to, so staff can see at a glance whether it counts toward a customer's account
@@ -105,6 +107,8 @@ public record AdminOrderDetailDto(
      * can't contain another kit, see {@code KitService}). Each entry is a real constituent with its
      * own reservation, shown here purely for staff visibility; it's never counted again anywhere —
      * the parent line's own {@code lineTotal} (the package price) is what the order subtotal used.
+     * {@code packedAt}/{@code packedBy} are the pick-and-pack tick: null until staff pack the line, and always null on
+     * a kit's own summary line (it is not picked, its products are).
      */
     public record Line(UUID itemId, UUID variantId, String sku, String productName, String variantName,
                        BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal, boolean wholesaleApplied,
@@ -116,7 +120,8 @@ public record AdminOrderDetailDto(
                        /** The ordered size on its own ("50ml"); null when the variant had none. */
                        String optionSize,
                        /** The photo the variant had when it was ordered; null for an order placed before photos were frozen. */
-                       String imageUrl) {
+                       String imageUrl,
+                       Instant packedAt, String packedBy) {
         /** Described from what the line froze at checkout (see {@link CustomerOrderItem#rememberVariant}). */
         static Line from(CustomerOrderItem i, List<CustomerOrderItem> children) {
             return new Line(i.getId(), i.getVariant().getId(), i.soldSku(),
@@ -125,7 +130,7 @@ public record AdminOrderDetailDto(
                     i.getReturnedQty(),
                     children.stream().map(c -> Line.from(c, List.of())).toList(),
                     i.soldOptionLabel(), i.soldOptionColor(), i.soldSwatchHex(), i.soldOptionSize(),
-                    i.soldImageUrl());
+                    i.soldImageUrl(), i.getPackedAt(), i.getPackedBy());
         }
     }
 
@@ -161,6 +166,7 @@ public record AdminOrderDetailDto(
                 lines,
                 payments.stream().map(Payment::from).toList(),
                 Account.from(o.getCustomerAccount()),
-                claims.stream().map(Claim::from).toList());
+                claims.stream().map(Claim::from).toList(),
+                o.getPlacedBy());
     }
 }

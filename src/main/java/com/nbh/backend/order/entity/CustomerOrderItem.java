@@ -14,7 +14,8 @@ import java.util.UUID;
  * immutable once the order is placed (a change means cancelling and
  * re-ordering, not editing history), mirroring the append-only posture used
  * elsewhere in this codebase for anything that becomes a record of what
- * actually happened.
+ * actually happened. The only things that move afterwards are how much has been
+ * returned and the pick-and-pack tick.
  */
 @Getter
 @Setter
@@ -34,8 +35,23 @@ public class CustomerOrderItem {
     @JoinColumn(name = "variant_id", nullable = false)
     private ProductVariant variant;
 
+    /** Where this line sits in its order (V70): the order it was entered in, a kit's products following the kit. */
+    @Column(name = "line_no", nullable = false)
+    private int lineNo;
+
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qty;
+
+    /**
+     * The pick-and-pack tick (V70): when staff packed this line and who did. Only a line that is physically picked has one
+     * (a plain product, or a product inside a kit), never a kit's own summary line. Set and cleared by
+     * {@code OrderFulfilmentService.setPacked}; nothing else about a placed order's lines ever changes except returns.
+     */
+    @Column(name = "packed_at")
+    private java.time.Instant packedAt;
+
+    @Column(name = "packed_by", length = 200)
+    private String packedBy;
 
     @Column(name = "unit_price", nullable = false, precision = 14, scale = 2)
     private BigDecimal unitPrice;

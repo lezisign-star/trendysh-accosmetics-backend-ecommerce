@@ -198,6 +198,24 @@ public class OrderController {
         return OrderDto.from(fulfilmentService.startPicking(id));
     }
 
+    /**
+     * The pick-and-pack ticks: marks products of the order's pick list packed, or not packed again. See
+     * {@code OrderFulfilmentService.setPacked}.
+     */
+    @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
+    @PostMapping("/{id}/packed")
+    @Transactional
+    public AdminOrderDetailDto setPacked(@PathVariable java.util.UUID id, @Valid @RequestBody PackedRequest request,
+                                         @AuthenticationPrincipal StaffUser staff) {
+        fulfilmentService.setPacked(id, request.itemIds(), request.packed(), staff.getFullName());
+        return get(id);
+    }
+
+    /** {@code packed} true ticks the products, false takes the tick off again. */
+    public record PackedRequest(@jakarta.validation.constraints.NotEmpty
+                                @jakarta.validation.constraints.Size(max = 200) List<java.util.UUID> itemIds,
+                                boolean packed) {}
+
     /** PAID or PICKING -> READY. See {@code OrderFulfilmentService.markReady}. */
     @PreAuthorize("hasAuthority('PERM_ORDER_MANAGE_ALL')")
     @PostMapping("/{id}/mark-ready")

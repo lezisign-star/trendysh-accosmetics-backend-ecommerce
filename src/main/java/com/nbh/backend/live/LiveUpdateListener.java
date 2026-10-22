@@ -59,6 +59,12 @@ public class LiveUpdateListener {
         streams.publishToOrder(event.orderNo());
     }
 
+    /** Packing is the shop's own business: another member of staff with the order open sees the tick, customers are not told. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onOrderPacked(com.nbh.backend.common.event.OrderPackedEvent event) {
+        streams.publishToStaff(AdminEvent.of(AdminEvent.Type.ORDER_UPDATED, event.orderNo()));
+    }
+
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onOrderReady(OrderReadyEvent event) {
         streams.publishToStaff(AdminEvent.of(AdminEvent.Type.ORDER_UPDATED, event.orderNo()));
