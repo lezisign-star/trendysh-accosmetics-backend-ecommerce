@@ -1,5 +1,14 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-22 (ordering mode) — a switch for how the shop takes orders: on the website, or by WhatsApp only until the owner launches
+
+Owner's decisions of 21 Oct for trendyshaccosmetic.com: it becomes the full shop (the same app as the .site) but, until online ordering launches, a shopper sends their basket on WhatsApp instead of checking out; the owner (and the developer) flip it to full ordering in Admin > Settings, no redeploy.
+- **V71** `shop_settings`: one row (`ordering_mode` FULL / WHATSAPP, `changed_by`); a new shop starts in WHATSAPP, the switch is flipped on purpose at launch. New table only (the singleton row is made by the migration like `stock_alert_settings`).
+- **`com.nbh.backend.shop`**: `GET /api/v1/catalog/shop-mode` is PUBLIC (the storefront asks on every visit; `/api/v1/catalog/**` was already open) and answers `{orderingMode}`; `GET` and `PUT /api/v1/admin/shop-mode` `{orderingMode}` are for `SUPER_ADMIN` and `DEVELOPER` only (the owner's own account and the developer's, so a manager cannot flip it); the screen reads who changed it last and when. Saying the mode it already has changes nothing and tells nobody; a change publishes the storefront's usual live hint (`DataChangedEvent` CATALOG) so open shop pages follow without a reload.
+- **It is not enforced by the API**: the order, cart and payment endpoints work in either mode. Only the storefront on the .com honours the switch (the frontend is built with `VITE_HONOUR_ORDERING_SWITCH=true` for that domain only; the .site test copy is built without it and always takes orders), so one backend serves both.
+- **Tests:** `ShopModeIntegrationTest` 7 (a new shop is on WhatsApp and the storefront reads it unauthenticated; the owner and the developer change it and the storefront sees it at once; the settings screen reads who changed it, and a manager, cashier, viewer, stock controller and an anonymous caller are refused on read and on change with nothing moving; an unknown or missing mode is 400; saying the same mode again leaves the record of who changed it). Migration tests re-run green.
+- Local commit only, not pushed (push the backend first).
+
 ## 2026-10-22 (kits K4) — a pick-and-pack list on every order that holds a kit, and orders that staff enter for a customer
 
 The owner's answers of 19 Oct for the staff side: "pick and pack list on every kit order" and "staff can place a kit order for a customer". Before this the admin order detail carried a kit's products but the screens never showed them, an order's lines came back in whatever order the database liked, and there was no way for staff to enter an order.
