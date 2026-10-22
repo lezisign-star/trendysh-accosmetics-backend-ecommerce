@@ -217,11 +217,22 @@ public class CheckoutService {
         record ReservationTarget(CartItem cartItem, ProductVariant variant, BigDecimal qty, boolean isKitComponent) {}
         List<ReservationTarget> targets = new java.util.ArrayList<>();
         for (CartItem cartItem : cartItems) {
-            List<KitService.KitComponentLine> components = kitService.componentsForVariant(cartItem.getVariant().getId());
+            // A kit expands into its products as the shopper picked them (another colour or size of a product inside it):
+            // the variants picked are what is reserved and what the order lines name.
+            List<KitService.SelectedPart> components = kitService.selectionFor(
+                    cartItem.getVariant().getId(), cartItem.getChoices());
             if (components.isEmpty()) {
                 targets.add(new ReservationTarget(cartItem, cartItem.getVariant(), cartItem.getQty(), false));
             } else {
-                for (KitService.KitComponentLine component : components) {
+                for (KitService.SelectedPart component : components) {
+                    // A product the kit comes with is available by the way the selection is made; one the shopper
+                    // picked instead may have been taken off sale since (the cart refused it too, this is the same
+                    // rule where the order is made).
+                    if (component.changed() && !component.available()) {
+                        throw new UnprocessableException(component.variant().getProduct().getName() + " in "
+                                + cartItem.getProductNameSnapshot()
+                                + " is no longer available. Please remove the kit from your cart and choose again.");
+                    }
                     targets.add(new ReservationTarget(cartItem, component.variant(),
                             component.qtyPerKit().multiply(cartItem.getQty()), true));
                 }

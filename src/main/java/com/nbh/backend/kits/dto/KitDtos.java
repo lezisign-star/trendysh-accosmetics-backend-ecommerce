@@ -19,7 +19,19 @@ public final class KitDtos {
 
     private KitDtos() {}
 
-    public record ComponentInput(@NotNull UUID variantId, @NotBlank String qty) {}
+    /**
+     * {@code customerCanChange} is whether a shopper may pick another colour or size of this product inside the kit;
+     * left out (an older client) it means yes, the way it is for every kit made before the switch existed.
+     */
+    public record ComponentInput(@NotNull UUID variantId, @NotBlank String qty, Boolean customerCanChange) {
+        public ComponentInput(UUID variantId, String qty) {
+            this(variantId, qty, null);
+        }
+
+        public boolean canChange() {
+            return customerCanChange == null || customerCanChange;
+        }
+    }
 
     /**
      * {@code finalPrice} is the one number the backend needs — whichever of the admin UI's three
@@ -48,13 +60,15 @@ public final class KitDtos {
 
     public record ComponentDto(UUID variantId, String sku, String productName, String variantName,
                                 BigDecimal qty, BigDecimal currentUnitPrice, BigDecimal lineTotal,
-                                boolean available) {
+                                boolean available,
+                                /** Whether a shopper may pick another colour or size of this product inside the kit. */
+                                boolean customerCanChange) {
 
         public static ComponentDto from(KitComponent c) {
             var v = c.getComponentVariant();
             BigDecimal price = v.getSellingPrice() == null ? BigDecimal.ZERO : v.getSellingPrice();
             return new ComponentDto(v.getId(), v.getSku(), v.getProduct().getName(), v.getVariantName(),
-                    c.getQty(), price, price.multiply(c.getQty()), isComponentAvailable(v));
+                    c.getQty(), price, price.multiply(c.getQty()), isComponentAvailable(v), c.isCustomerCanChange());
         }
     }
 
@@ -83,7 +97,9 @@ public final class KitDtos {
             var variant = k.getVariant();
             var product = variant.getProduct();
             var profession = k.getProfession();
-            List<ComponentDto> components = k.getComponents().stream().map(ComponentDto::from).toList();
+            // In the order staff set them (a kit's products are updated in place, so the list is not always in that order).
+            List<ComponentDto> components = k.getComponents().stream()
+                    .sorted(java.util.Comparator.comparingInt(KitComponent::getLineNo)).map(ComponentDto::from).toList();
             BigDecimal sum = components.stream().map(ComponentDto::lineTotal)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal packagePrice = variant.getSellingPrice() == null ? BigDecimal.ZERO : variant.getSellingPrice();

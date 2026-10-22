@@ -74,6 +74,26 @@ public class KitAvailabilityService {
         return result;
     }
 
+    /**
+     * Whole kits the shelf can make up from exactly these parts: a basket line whose shopper swapped some of the
+     * kit's products for another colour or size draws on the picked variants' shelves, not the defaults'.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal wholeKitsFrom(List<Part> parts) {
+        if (parts.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        Map<UUID, BigDecimal> onShelf = stockAvailability.available(
+                parts.stream().map(p -> p.variant().getId()).distinct().toList());
+        BigDecimal whole = null;
+        for (Part part : parts) {
+            BigDecimal have = onShelf.getOrDefault(part.variant().getId(), BigDecimal.ZERO);
+            BigDecimal kitsFromThis = have.signum() <= 0 ? BigDecimal.ZERO : have.divide(part.qty(), 0, RoundingMode.DOWN);
+            whole = whole == null ? kitsFromThis : whole.min(kitsFromThis);
+        }
+        return whole == null ? BigDecimal.ZERO : whole;
+    }
+
     /** Whole kits available, keyed by the kit's own variant id. A variant that is not a kit is absent. */
     @Transactional(readOnly = true)
     public Map<UUID, BigDecimal> wholeKitsAvailable(Collection<UUID> kitVariantIds) {

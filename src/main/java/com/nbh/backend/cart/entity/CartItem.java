@@ -7,12 +7,15 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 @Getter
 @Setter
 @Entity
 @Table(name = "cart_item", uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"cart_id", "variant_id"})
+        @UniqueConstraint(columnNames = {"cart_id", "variant_id", "choice_key"})
 })
 public class CartItem extends BaseEntity {
 
@@ -43,6 +46,25 @@ public class CartItem extends BaseEntity {
 
     @Column(name = "added_at", nullable = false)
     private java.time.Instant addedAt = java.time.Instant.now();
+
+    /**
+     * What the shopper picked inside a kit, keyed by the DEFAULT variant of the product they changed (a kit's component
+     * rows are replaced on every save, but a product is in a kit once, so its default variant is a stable key) and
+     * holding the variant they chose instead. Only picks that differ from the default are stored; empty for a plain
+     * line and for a kit taken as it comes.
+     */
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "cart_item_choice", joinColumns = @JoinColumn(name = "cart_item_id"))
+    @MapKeyColumn(name = "default_variant_id")
+    @Column(name = "chosen_variant_id")
+    private Map<UUID, UUID> choices = new HashMap<>();
+
+    /**
+     * Identifies the picks so that the same kit with different picks is a different line: "" for none, else a digest of
+     * the sorted picks (see KitChoices.keyOf). Part of the line's uniqueness together with the cart and the variant.
+     */
+    @Column(name = "choice_key", nullable = false, length = 64)
+    private String choiceKey = "";
 
     @Transient
     public BigDecimal getLineTotal() {

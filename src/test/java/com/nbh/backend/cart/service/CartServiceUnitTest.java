@@ -10,7 +10,9 @@ import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PromoCampaignService;
+import com.nbh.backend.catalog.service.VariantCovers;
 import com.nbh.backend.kits.service.KitAvailabilityService;
+import com.nbh.backend.kits.service.KitService;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +48,8 @@ class CartServiceUnitTest {
     @Mock private StockAvailabilityService availabilityService;
     @Mock private KitAvailabilityService kitAvailability;
     @Mock private PromoCampaignService promoCampaignService;
+    @Mock private KitService kitService;
+    @Mock private VariantCovers variantCovers;
 
     private CartService cartService;
     private Cart cart;
@@ -60,7 +64,8 @@ class CartServiceUnitTest {
         // price is what should end up in unitPriceSnapshot, same as before this dependency existed.
         lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         cartService = new CartService(cartRepository, cartItemRepository, variantRepository,
-                availabilityService, kitAvailability, new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService);
+                availabilityService, kitAvailability, new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService,
+                kitService, variantCovers);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -110,7 +115,7 @@ class CartServiceUnitTest {
     void addingTheSameVariantTwiceMergesIntoOneLineWithProductIdentityExposed() {
         stockAvailable("10", "0");
         CartItem[] saved = new CartItem[1];
-        when(cartItemRepository.findByCartIdAndVariantId(cart.getId(), variant.getId()))
+        when(cartItemRepository.findByCartIdAndVariantIdAndChoiceKey(cart.getId(), variant.getId(), ""))
                 .thenReturn(Optional.empty())
                 .thenAnswer(inv -> Optional.of(saved[0]));
         when(cartItemRepository.save(any())).thenAnswer(inv -> {
@@ -171,7 +176,7 @@ class CartServiceUnitTest {
         inBasket.setCart(cart);
         inBasket.setVariant(variant);
         inBasket.setQty(new BigDecimal("2"));
-        when(cartItemRepository.findByCartIdAndVariantId(cart.getId(), variant.getId()))
+        when(cartItemRepository.findByCartIdAndVariantIdAndChoiceKey(cart.getId(), variant.getId(), ""))
                 .thenReturn(Optional.of(inBasket));
 
         // 2 already in the basket + 2 more is 4 against 3 in stock: each add used to be compared
@@ -212,6 +217,7 @@ class CartServiceUnitTest {
 
     private CartItem line(ProductVariant v, String qty, String price) {
         CartItem item = new CartItem();
+        item.setId(UUID.randomUUID()); // a stored line always has one; the cart reports each line's shelf by it
         item.setCart(cart);
         item.setVariant(v);
         item.setQty(new BigDecimal(qty));

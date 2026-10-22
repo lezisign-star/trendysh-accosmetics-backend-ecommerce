@@ -9,8 +9,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface CartItemRepository extends JpaRepository<CartItem, UUID> {
-    @EntityGraph(attributePaths = {"variant", "variant.product"})
+    @EntityGraph(attributePaths = {"variant", "variant.product", "choices"})
     List<CartItem> findByCartId(UUID cartId);
 
-    Optional<CartItem> findByCartIdAndVariantId(UUID cartId, UUID variantId);
+    /** The line for this variant with exactly these kit picks ("" for none): the same kit with different picks is another line. */
+    Optional<CartItem> findByCartIdAndVariantIdAndChoiceKey(UUID cartId, UUID variantId, String choiceKey);
 }

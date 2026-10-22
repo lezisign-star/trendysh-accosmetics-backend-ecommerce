@@ -32,6 +32,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.*;
@@ -205,18 +206,28 @@ public class KitService {
         kit.setProfession(profession);
         kit.setDescription(request.description().trim());
 
-        // Wholesale replace — safe because order lines reference the real component variant
-        // directly (see CheckoutService), never a KitComponent row, so no transactional history
-        // points at these rows.
-        kit.getComponents().clear();
+        // A product that stays in the kit keeps its row and is updated in place; one taken out is removed and a new one
+        // added. Clearing the list and adding every row again looked simpler, but Hibernate inserts the new rows BEFORE it
+        // deletes the old ones, and a product can only be in a kit once (unique kit_id + variant), so saving a kit whose
+        // products had not changed (a new price or description) failed with "A conflicting record already exists".
+        Map<UUID, KitComponent> existingByVariant = new HashMap<>();
+        for (KitComponent existing : kit.getComponents()) {
+            existingByVariant.put(existing.getComponentVariant().getId(), existing);
+        }
+        Set<UUID> wanted = new HashSet<>(variantIds);
+        kit.getComponents().removeIf(existing -> !wanted.contains(existing.getComponentVariant().getId()));
         int lineNo = 1;
         for (ComponentInput c : request.components()) {
-            KitComponent kc = new KitComponent();
-            kc.setKit(kit);
+            KitComponent kc = existingByVariant.get(c.variantId());
+            if (kc == null) {
+                kc = new KitComponent();
+                kc.setKit(kit);
+                kc.setComponentVariant(variantById.get(c.variantId()));
+                kit.getComponents().add(kc);
+            }
             kc.setLineNo(lineNo++);
-            kc.setComponentVariant(variantById.get(c.variantId()));
             kc.setQty(qtyByVariant.get(c.variantId()));
-            kit.getComponents().add(kc);
+            kc.setCustomerCanChange(c.canChange());
         }
 
         return kits.save(kit);
@@ -300,24 +311,59 @@ public class KitService {
         List<UUID> productIds = shown.stream().map(v -> v.getProduct().getId()).distinct().toList();
         Map<UUID, List<ProductImage>> imagesByProduct = imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)
                 .stream().collect(Collectors.groupingBy(i -> i.getProduct().getId()));
-        Map<UUID, Long> optionCounts = PhotoOwnership.optionCounts(variantRepository.findByProductIdInAndDeletedFalse(productIds));
+        List<ProductVariant> liveVariants = variantRepository.findByProductIdInAndDeletedFalse(productIds);
+        Map<UUID, Long> optionCounts = PhotoOwnership.optionCounts(liveVariants);
         java.util.function.Function<ProductVariant, List<String>> gallery = v -> PhotoOwnership.galleryFor(
                         v.getId(), PhotoOwnership.isSingleOption(optionCounts, v.getProduct().getId()),
                         imagesByProduct.getOrDefault(v.getProduct().getId(), List.of()))
                 .stream().map(ProductImage::getUrl).toList();
 
-        Map<UUID, BigDecimal> onShelf = stockAvailability.available(
-                comps.stream().map(c -> c.getComponentVariant().getId()).toList());
+        // What a shopper may pick instead for each item they are allowed to change: the buyable variants of its product in
+        // the product's own order, the one the kit comes with among them. One option means there is nothing to choose.
+        Map<UUID, List<ProductVariant>> variantsByProduct = liveVariants.stream()
+                .collect(Collectors.groupingBy(v -> v.getProduct().getId()));
+        Map<UUID, List<ProductVariant>> optionsByComponent = new HashMap<>();
+        Set<UUID> shelfIds = new HashSet<>();
+        for (KitComponent c : comps) {
+            ProductVariant cv = c.getComponentVariant();
+            shelfIds.add(cv.getId());
+            if (!c.isCustomerCanChange()) {
+                continue;
+            }
+            List<ProductVariant> options = variantsByProduct.getOrDefault(cv.getProduct().getId(), List.of()).stream()
+                    .filter(v -> v.getId().equals(cv.getId())
+                            || (KitDtos.isComponentAvailable(v) && !v.isKit() && !v.getProduct().isMockData()))
+                    .sorted(Comparator.comparingInt(ProductVariant::getSortOrder)
+                            .thenComparing(v -> v.getVariantName() == null ? "" : v.getVariantName()))
+                    .toList();
+            if (options.size() > 1) {
+                optionsByComponent.put(c.getId(), options);
+                options.forEach(v -> shelfIds.add(v.getId()));
+            }
+        }
+        Map<UUID, BigDecimal> onShelf = stockAvailability.available(shelfIds);
         List<KitDetailDto.Item> items = comps.stream().map(c -> {
             ProductVariant cv = c.getComponentVariant();
             Product cp = cv.getProduct();
-            BigDecimal price = cv.getSellingPrice() == null ? BigDecimal.ZERO : cv.getSellingPrice();
+            BigDecimal price = priceOf(cv);
             List<String> photos = gallery.apply(cv);
             boolean inStock = onShelf.getOrDefault(cv.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0;
+            List<ProductVariant> options = optionsByComponent.getOrDefault(c.getId(), List.of());
+            List<KitDetailDto.Choice> choices = options.stream().map(v -> {
+                List<String> optionPhotos = gallery.apply(v);
+                BigDecimal optionPrice = priceOf(v);
+                String label = CatalogLabel.of(v);
+                return new KitDetailDto.Choice(v.getId(), label != null ? label : v.getVariantName(),
+                        v.getOptionColor(), v.getOptionSize(), v.getSwatchHex(), optionPrice,
+                        optionPrice.subtract(price).multiply(c.getQty()).setScale(2, RoundingMode.HALF_UP),
+                        optionPhotos.isEmpty() ? null : optionPhotos.get(0), optionPhotos,
+                        onShelf.getOrDefault(v.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0,
+                        v.getId().equals(cv.getId()));
+            }).toList();
             return new KitDetailDto.Item(c.getId(), cv.getId(), cp.getId(), cp.getSlug(), cp.getName(),
                     CatalogLabel.of(cv), photos.isEmpty() ? null : photos.get(0), photos, c.getQty(), price,
                     price.multiply(c.getQty()), cp.getShortDescription(), cp.getDescription(), cp.getHowToUse(),
-                    cp.getIngredients(), inStock);
+                    cp.getIngredients(), inStock, !choices.isEmpty(), choices);
         }).toList();
 
         BigDecimal sum = items.stream().map(KitDetailDto.Item::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -333,6 +379,11 @@ public class KitService {
                 sum.subtract(packagePrice).max(BigDecimal.ZERO), whole.signum() > 0, whole, items);
     }
 
+    /** How an option is named beside its product: its colour / size / shade, or null for a one-option product. */
+    public static String optionLabel(ProductVariant v) {
+        return CatalogLabel.of(v);
+    }
+
     /** How a variant is named on a kit's page: its colour / size / shade, or nothing for a one-option product. */
     private static final class CatalogLabel {
         private CatalogLabel() {}
@@ -343,19 +394,134 @@ public class KitService {
         }
     }
 
-    /** The one method {@code CheckoutService} calls — empty for any variant that isn't a kit, or
-     *  for a kit whose components have all since become unavailable. */
-    @Transactional(readOnly = true)
-    public List<KitComponentLine> componentsForVariant(UUID variantId) {
-        return kits.findByVariantId(variantId)
-                .map(k -> componentRepository.findByKitIdOrderByLineNoAsc(k.getId()).stream()
-                        .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
-                        .map(c -> new KitComponentLine(c.getComponentVariant(), c.getQty()))
-                        .toList())
-                .orElse(List.of());
+    /**
+     * One product of a kit as a shopper takes it: the variant the kit comes with ({@code defaultVariant}) and the one
+     * they picked instead ({@code variant}, the same when they changed nothing), with how many ONE kit uses. This is
+     * what the cart prices, the shelf is counted against and checkout reserves (owner, 2026-10-19: a shopper may swap the
+     * colour or size of a product in a kit, and the price follows).
+     */
+    public record SelectedPart(UUID componentId, ProductVariant defaultVariant, ProductVariant variant,
+                               BigDecimal qtyPerKit, boolean customerCanChange) {
+        public boolean changed() {
+            return !defaultVariant.getId().equals(variant.getId());
+        }
+
+        /** Still purchasable on its own, like every other product of a kit ({@link KitDtos#isComponentAvailable}). */
+        public boolean available() {
+            return KitDtos.isComponentAvailable(variant);
+        }
+
+        /** What ONE kit costs more (less when negative) because of this pick: quantity x (picked price - default price). */
+        public BigDecimal unitDelta() {
+            return priceOf(variant).subtract(priceOf(defaultVariant)).multiply(qtyPerKit);
+        }
     }
 
-    public record KitComponentLine(ProductVariant variant, BigDecimal qtyPerKit) {}
+    private static BigDecimal priceOf(ProductVariant v) {
+        return v.getSellingPrice() == null ? BigDecimal.ZERO : v.getSellingPrice();
+    }
+
+    /**
+     * The products of a kit as a shopper with these picks takes them, in the kit's own order; empty for a variant that is
+     * not a kit or a kit whose products have all become unavailable. A product that can no longer be bought is left out,
+     * as everywhere. A pick that does not fit any more (the product left the kit, staff switched swapping off, the option
+     * belongs to another product) is ignored rather than refused, so an old basket line still reads; a pick that fits but
+     * can no longer be bought is KEPT and shows as unavailable, so a shopper is never silently handed a different colour
+     * than the one they chose. This is the one method the cart and checkout expand a kit through.
+     */
+    @Transactional(readOnly = true)
+    public List<SelectedPart> selectionFor(UUID kitVariantId, Map<UUID, UUID> choices) {
+        Optional<Kit> kit = kits.findByVariantId(kitVariantId);
+        if (kit.isEmpty()) {
+            return List.of();
+        }
+        List<KitComponent> comps = componentRepository.findByKitIdOrderByLineNoAsc(kit.get().getId()).stream()
+                .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
+                .toList();
+        Map<UUID, UUID> picks = choices == null ? Map.of() : choices;
+        Map<UUID, ProductVariant> picked = picks.isEmpty() ? Map.of()
+                : variantRepository.findAllById(picks.values()).stream()
+                        .collect(Collectors.toMap(ProductVariant::getId, v -> v, (a, b) -> a));
+        List<SelectedPart> parts = new ArrayList<>();
+        for (KitComponent c : comps) {
+            ProductVariant def = c.getComponentVariant();
+            ProductVariant chosen = def;
+            UUID pickId = picks.get(def.getId());
+            ProductVariant candidate = pickId == null ? null : picked.get(pickId);
+            if (c.isCustomerCanChange() && candidate != null
+                    && candidate.getProduct().getId().equals(def.getProduct().getId())) {
+                chosen = candidate;
+            }
+            parts.add(new SelectedPart(c.getId(), def, chosen, c.getQty(), c.isCustomerCanChange()));
+        }
+        return parts;
+    }
+
+    /** What ONE kit costs more (or less) with these picks than as it comes, to the cent; zero for no picks. */
+    @Transactional(readOnly = true)
+    public BigDecimal priceDelta(UUID kitVariantId, Map<UUID, UUID> choices) {
+        if (choices == null || choices.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        return selectionFor(kitVariantId, choices).stream()
+                .filter(SelectedPart::changed)
+                .map(SelectedPart::unitDelta)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Checks what a shopper asks for when they add a kit and keeps only the picks that differ from what it comes with
+     * (so "no change" is the empty map and the same picks always make the same basket line). Refuses, with a message
+     * the shopper can act on, a pick for a product that is not in the kit, one staff do not allow to be changed, an
+     * option that belongs to another product, and one that cannot be bought.
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, UUID> normalizeChoices(UUID kitVariantId, Map<UUID, UUID> requested) {
+        if (requested == null || requested.isEmpty()) {
+            return Map.of();
+        }
+        Kit kit = kits.findByVariantId(kitVariantId)
+                .orElseThrow(() -> new UnprocessableException("Only a kit has products inside to change."));
+        Map<UUID, KitComponent> byDefault = componentRepository.findByKitIdOrderByLineNoAsc(kit.getId()).stream()
+                .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
+                .collect(Collectors.toMap(c -> c.getComponentVariant().getId(), c -> c, (a, b) -> a));
+        if (requested.size() > byDefault.size()) {
+            // More picks than the kit has products: some are not in it. Refused before anything is looked up.
+            throw new UnprocessableException(
+                    "One of the products you changed is not in this kit any more. Please reload the kit.");
+        }
+        Map<UUID, ProductVariant> pickedById = variantRepository.findAllById(
+                        requested.values().stream().filter(Objects::nonNull).toList()).stream()
+                .collect(Collectors.toMap(ProductVariant::getId, v -> v, (a, b) -> a));
+        Map<UUID, UUID> kept = new LinkedHashMap<>();
+        for (Map.Entry<UUID, UUID> pick : requested.entrySet()) {
+            KitComponent component = byDefault.get(pick.getKey());
+            if (component == null) {
+                throw new UnprocessableException(
+                        "One of the products you changed is not in this kit any more. Please reload the kit.");
+            }
+            ProductVariant def = component.getComponentVariant();
+            if (pick.getValue() == null || pick.getValue().equals(def.getId())) {
+                continue; // as it comes: nothing to remember
+            }
+            String product = def.getProduct().getName();
+            if (!component.isCustomerCanChange()) {
+                throw new UnprocessableException(product + " can't be changed in this kit.");
+            }
+            ProductVariant picked = pickedById.get(pick.getValue());
+            if (picked == null || !picked.getProduct().getId().equals(def.getProduct().getId())) {
+                throw new UnprocessableException("Please pick a colour or size of " + product + ".");
+            }
+            if (!KitDtos.isComponentAvailable(picked) || picked.getProduct().isMockData()) {
+                String label = CatalogLabel.of(picked);
+                throw new UnprocessableException(
+                        product + (label == null ? "" : " (" + label + ")") + " can't be ordered right now.");
+            }
+            kept.put(def.getId(), picked.getId());
+        }
+        return kept;
+    }
 
     private KitPublicDto toPublicDto(Kit k, List<KitComponent> comps, Map<UUID, String> imageByVariant,
                                       boolean inStock) {

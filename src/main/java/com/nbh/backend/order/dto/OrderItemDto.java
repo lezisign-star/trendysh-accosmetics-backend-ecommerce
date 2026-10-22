@@ -29,7 +29,13 @@ public record OrderItemDto(
         /** The ordered size on its own ("50ml"); null when the variant has none. */
         String optionSize,
         /** The photo the variant had when it was ordered; null for an order placed before photos were frozen. */
-        String imageUrl
+        String imageUrl,
+        UUID id,
+        /**
+         * Set on a line that is one of the products inside a kit: the id of the kit's own line. The kit's line carries the
+         * price (and is the one the order's total adds up); its products are listed under it, as the shopper picked them.
+         */
+        UUID kitLineId
 ) {
     public static OrderItemDto from(CustomerOrderItem item) {
         return new OrderItemDto(
@@ -37,6 +43,7 @@ public record OrderItemDto(
                 item.soldProductName(), item.soldVariantName(),
                 item.getQty(), item.getUnitPrice(), item.getLineTotal(), item.isWholesaleApplied(),
                 item.getVariant().getProduct().getId(), item.soldOptionLabel(),
-                item.soldOptionColor(), item.soldSwatchHex(), item.soldOptionSize(), item.soldImageUrl());
+                item.soldOptionColor(), item.soldSwatchHex(), item.soldOptionSize(), item.soldImageUrl(),
+                item.getId(), item.getParentItem() == null ? null : item.getParentItem().getId());
     }
 }

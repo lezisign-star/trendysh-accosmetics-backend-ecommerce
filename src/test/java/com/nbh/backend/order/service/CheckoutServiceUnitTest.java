@@ -147,8 +147,8 @@ class CheckoutServiceUnitTest {
         ProductVariant demoComponent = cartItem(new BigDecimal("300.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false).getVariant();
         demoComponent.getProduct().setMockData(true);
         when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
-        when(kitService.componentsForVariant(kitLine.getVariant().getId()))
-                .thenReturn(List.of(new com.nbh.backend.kits.service.KitService.KitComponentLine(demoComponent, BigDecimal.ONE)));
+        when(kitService.selectionFor(eq(kitLine.getVariant().getId()), any()))
+                .thenReturn(List.of(part(demoComponent, BigDecimal.ONE)));
 
         assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
                 .isInstanceOf(com.nbh.backend.common.exception.UnprocessableException.class)
@@ -216,9 +216,8 @@ class CheckoutServiceUnitTest {
         polish.setOptionColor("Ruby Red");
         polish.setSwatchHex("#9B111E");
         when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
-        when(kitService.componentsForVariant(kitLine.getVariant().getId())).thenReturn(List.of(
-                new com.nbh.backend.kits.service.KitService.KitComponentLine(base, BigDecimal.ONE),
-                new com.nbh.backend.kits.service.KitService.KitComponentLine(polish, new BigDecimal("2"))));
+        when(kitService.selectionFor(eq(kitLine.getVariant().getId()), any())).thenReturn(List.of(
+                part(base, BigDecimal.ONE), part(polish, new BigDecimal("2"))));
         when(variantCovers.urlsFor(any())).thenReturn(java.util.Map.of(
                 polish.getId(), "https://res.cloudinary.com/demo/image/upload/gel-rr.jpg"));
 
@@ -282,6 +281,11 @@ class CheckoutServiceUnitTest {
         assertThat(payment.getPaymentReference()).isNull();
         verify(reservationService).reserve(any(), any(), any(), any(), any(),
                 org.mockito.ArgumentMatchers.eq(Instant.parse("2026-01-01T00:15:00Z")));
+    }
+
+    /** A product of a kit as it comes (nothing picked instead): the kit's own variant for it and the variant packed are one. */
+    private static com.nbh.backend.kits.service.KitService.SelectedPart part(ProductVariant variant, BigDecimal qtyPerKit) {
+        return new com.nbh.backend.kits.service.KitService.SelectedPart(UUID.randomUUID(), variant, variant, qtyPerKit, true);
     }
 
     private CartItem cartItem(BigDecimal unitPrice, BigDecimal qty, BigDecimal vatRate, boolean vatExempt) {

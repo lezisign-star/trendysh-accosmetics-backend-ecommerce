@@ -2,6 +2,7 @@ package com.nbh.backend.cart.service;
 
 import com.nbh.backend.cart.dto.CartDto;
 import com.nbh.backend.cart.dto.CartItemDto;
+import com.nbh.backend.cart.dto.KitPartDto;
 import com.nbh.backend.cart.entity.Cart;
 import com.nbh.backend.cart.entity.CartItem;
 import com.nbh.backend.cart.repository.CartItemRepository;
@@ -11,9 +12,12 @@ import com.nbh.backend.catalog.entity.PromoCampaign;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PromoCampaignService;
+import com.nbh.backend.catalog.service.VariantCovers;
 import com.nbh.backend.common.exception.PriceChangedException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.kits.service.KitAvailabilityService;
+import com.nbh.backend.kits.service.KitChoices;
+import com.nbh.backend.kits.service.KitService;
 import com.nbh.backend.stock.service.QuantityRules;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
@@ -35,6 +39,10 @@ import java.util.UUID;
  * guarantee against overselling happens once at checkout, when
  * {@link com.nbh.backend.order.service.CheckoutService} calls
  * {@link com.nbh.backend.stock.service.StockReservationService#reserve}.
+ *
+ * <p>A kit line may carry the shopper's picks (another colour or size of a product inside the kit, owner 2026-10-19):
+ * the line is then identified by the kit AND its picks, priced at the kit's price plus the difference the picks make
+ * ({@link KitService#priceDelta}) and counted against the shelves of the variants picked.
  */
 @Service
 public class CartService {
@@ -46,6 +54,8 @@ public class CartService {
     private final KitAvailabilityService kitAvailability;
     private final EffectivePriceResolver priceResolver;
     private final PromoCampaignService promoCampaignService;
+    private final KitService kitService;
+    private final VariantCovers variantCovers;
 
     public CartService(CartRepository cartRepository,
                         CartItemRepository cartItemRepository,
@@ -53,7 +63,9 @@ public class CartService {
                         StockAvailabilityService availabilityService,
                         KitAvailabilityService kitAvailability,
                         EffectivePriceResolver priceResolver,
-                        PromoCampaignService promoCampaignService) {
+                        PromoCampaignService promoCampaignService,
+                        KitService kitService,
+                        VariantCovers variantCovers) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.variantRepository = variantRepository;
@@ -61,6 +73,8 @@ public class CartService {
         this.kitAvailability = kitAvailability;
         this.priceResolver = priceResolver;
         this.promoCampaignService = promoCampaignService;
+        this.kitService = kitService;
+        this.variantCovers = variantCovers;
     }
 
     @Transactional
@@ -120,6 +134,17 @@ public class CartService {
                 throw new UnprocessableException(item.getProductNameSnapshot()
                         + " is no longer available. Please remove it from your cart and try again.");
             }
+            // What the shopper picked inside a kit has to be buyable too, or the order could not be packed as shown.
+            if (item.getVariant().isKit() && !item.getChoices().isEmpty()) {
+                for (KitService.SelectedPart part : kitService.selectionFor(item.getVariant().getId(), item.getChoices())) {
+                    if (!part.available()) {
+                        String option = KitService.optionLabel(part.variant());
+                        throw new UnprocessableException(part.variant().getProduct().getName()
+                                + (option == null ? "" : " (" + option + ")") + " in " + item.getProductNameSnapshot()
+                                + " is no longer available. Please remove the kit from your cart and choose again.");
+                    }
+                }
+            }
         }
         BigDecimal subtotal = refreshed.items().stream()
                 .map(CartItem::getLineTotal)
@@ -132,6 +157,15 @@ public class CartService {
 
     @Transactional
     public CartDto addItem(String sessionId, UUID variantId, BigDecimal qty) {
+        return addItem(sessionId, variantId, qty, null);
+    }
+
+    /**
+     * {@code kitChoices} is only for a kit: what the shopper picked instead of what it comes with (the default variant's id
+     * to another colour or size of the same product). The same kit with different picks is a different basket line.
+     */
+    @Transactional
+    public CartDto addItem(String sessionId, UUID variantId, BigDecimal qty, Map<UUID, UUID> kitChoices) {
         if (qty.signum() <= 0) {
             throw new IllegalArgumentException("qty must be positive");
         }
@@ -141,17 +175,23 @@ public class CartService {
         requireSellable(variant);
         QuantityRules.requireSensible(variant.getProduct().getName(), variant, qty);
 
-        CartItem item = cartItemRepository.findByCartIdAndVariantId(cart.getId(), variantId)
+        // What was picked inside a kit is checked here and kept only where it differs from the kit as it comes.
+        Map<UUID, UUID> picks = kitChoices == null || kitChoices.isEmpty()
+                ? Map.of() : kitService.normalizeChoices(variantId, kitChoices);
+        String choiceKey = KitChoices.keyOf(picks);
+        CartItem item = cartItemRepository.findByCartIdAndVariantIdAndChoiceKey(cart.getId(), variantId, choiceKey)
                 .orElseGet(() -> {
                     CartItem newItem = new CartItem();
                     newItem.setCart(cart);
                     newItem.setVariant(variant);
                     newItem.setQty(BigDecimal.ZERO);
+                    newItem.setChoices(new HashMap<>(picks));
+                    newItem.setChoiceKey(choiceKey);
                     return newItem;
                 });
         // The whole line, not just this click: with 3 in stock and 2 already in the basket,
         // adding 2 more used to pass because each add was compared to stock on its own.
-        checkCourtesyAvailability(variant, item.getQty().add(qty));
+        checkCourtesyAvailability(variant, item.getQty().add(qty), item.getChoices());
         item.setQty(item.getQty().add(qty));
         applyPriceForQty(item);
         item.setProductNameSnapshot(variant.getProduct().getName());
@@ -173,7 +213,7 @@ public class CartService {
 
         requireSellable(item.getVariant());
         QuantityRules.requireSensible(item.getVariant().getProduct().getName(), item.getVariant(), qty);
-        checkCourtesyAvailability(item.getVariant(), qty);
+        checkCourtesyAvailability(item.getVariant(), qty, item.getChoices());
         item.setQty(qty);
         // Repriced here rather than left to toDto's refresh: crossing a wholesale threshold is the
         // shopper's own doing, not a price that moved under them, so it must not come back flagged
@@ -187,14 +227,31 @@ public class CartService {
     /**
      * The real, server-computed price for the line's current quantity — a variant's own deal, else an
      * active site-wide campaign, else its wholesale price if the quantity qualifies (cheapest of those
-     * wins), else the plain selling price (see EffectivePriceResolver). This snapshot is what checkout
-     * later trusts without re-resolving, so it must be right here, not just at display time.
+     * wins), else the plain selling price (see EffectivePriceResolver); for a kit with picks, plus what the picks
+     * add or take off. This snapshot is what checkout later trusts without re-resolving, so it must be right here,
+     * not just at display time.
      */
     private void applyPriceForQty(CartItem item) {
-        EffectivePriceResolver.EffectivePrice price =
-                priceResolver.resolve(item.getVariant(), promoCampaignService.getActiveOrNull(), item.getQty());
+        EffectivePriceResolver.EffectivePrice price = withPicks(item,
+                priceResolver.resolve(item.getVariant(), promoCampaignService.getActiveOrNull(), item.getQty()));
         item.setUnitPriceSnapshot(price.effectivePrice());
         item.setWholesaleApplied(price.source() == EffectivePriceResolver.Source.WHOLESALE);
+    }
+
+    /**
+     * A kit's price as it comes, moved by the shopper's picks: the quantity of each product they changed times the
+     * difference between the selling price of what they picked and of what the kit comes with. Never below zero.
+     */
+    private EffectivePriceResolver.EffectivePrice withPicks(CartItem item, EffectivePriceResolver.EffectivePrice price) {
+        if (!item.getVariant().isKit() || item.getChoices().isEmpty()) {
+            return price;
+        }
+        BigDecimal delta = kitService.priceDelta(item.getVariant().getId(), item.getChoices());
+        if (delta.signum() == 0) {
+            return price;
+        }
+        return new EffectivePriceResolver.EffectivePrice(price.originalPrice().add(delta).max(BigDecimal.ZERO),
+                price.effectivePrice().add(delta).max(BigDecimal.ZERO), price.dealEndsAt(), price.source());
     }
 
     @Transactional
@@ -269,13 +326,19 @@ public class CartService {
      */
     private static final BigDecimal LOW_STOCK_THRESHOLD = new BigDecimal("5");
 
-    private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty) {
+    private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty, Map<UUID, UUID> picks) {
         // A kit holds no StockBalance of its own — what it can sell is however many whole kits its components
-        // can still make up. Checkout still reserves each component and is the final word.
-        BigDecimal available = variant.isKit()
-                ? kitAvailability.wholeKitsAvailable(java.util.List.of(variant.getId()))
-                        .getOrDefault(variant.getId(), BigDecimal.ZERO)
-                : availabilityService.available(variant.getId());
+        // can still make up (with the shopper's picks, from the shelves of the colours and sizes they chose).
+        // Checkout still reserves each component and is the final word.
+        BigDecimal available;
+        if (!variant.isKit()) {
+            available = availabilityService.available(variant.getId());
+        } else if (picks.isEmpty()) {
+            available = kitAvailability.wholeKitsAvailable(java.util.List.of(variant.getId()))
+                    .getOrDefault(variant.getId(), BigDecimal.ZERO);
+        } else {
+            available = kitAvailability.wholeKitsFrom(partsOf(kitService.selectionFor(variant.getId(), picks)));
+        }
         if (available.compareTo(requestedQty) >= 0) {
             return;
         }
@@ -290,6 +353,11 @@ public class CartService {
         throw new IllegalArgumentException("That quantity of " + name + " isn't available right now");
     }
 
+    /** The parts a shelf is counted against: for each product of the kit, the variant that will be packed. */
+    private static List<KitAvailabilityService.Part> partsOf(List<KitService.SelectedPart> selection) {
+        return selection.stream().map(p -> new KitAvailabilityService.Part(p.variant(), p.qtyPerKit())).toList();
+    }
+
     /**
      * Every read of the basket first looks each line's price up again (a variant's deal, else an active
      * site-wide campaign, else the plain price — see {@link EffectivePriceResolver}) and stores it, so
@@ -302,40 +370,78 @@ public class CartService {
      */
     private CartDto toDto(Cart cart) {
         Refreshed refreshed = refreshPrices(cart);
-        Map<UUID, BigDecimal> stockLeft = stockLeftFor(refreshed.items());
+        // What is inside each kit line, with the shopper's picks applied (empty for every other line).
+        Map<UUID, List<KitService.SelectedPart>> selections = new HashMap<>();
+        for (CartItem item : refreshed.items()) {
+            if (item.getVariant().isKit()) {
+                selections.put(item.getId(), kitService.selectionFor(item.getVariant().getId(), item.getChoices()));
+            }
+        }
+        Map<UUID, BigDecimal> stockLeft = stockLeftFor(refreshed.items(), selections);
+        // One photo lookup for everything shown from a kit: the products inside it and the kit's own thumbnail.
+        Map<UUID, ProductVariant> shown = new HashMap<>();
+        selections.values().forEach(parts -> parts.forEach(p -> shown.putIfAbsent(p.variant().getId(), p.variant())));
+        refreshed.items().stream().filter(i -> i.getVariant().isKit())
+                .forEach(i -> shown.putIfAbsent(i.getVariant().getId(), i.getVariant()));
+        Map<UUID, String> covers = variantCovers.urlsFor(shown.values());
         List<CartItemDto> items = refreshed.items().stream()
-                .map(item -> CartItemDto.from(item, isPurchasable(item.getVariant()),
-                        stockLeft.getOrDefault(item.getVariant().getId(), BigDecimal.ZERO),
-                        refreshed.changedFrom().get(item.getId())))
+                .map(item -> {
+                    List<KitService.SelectedPart> parts = selections.getOrDefault(item.getId(), List.of());
+                    boolean available = isPurchasable(item.getVariant())
+                            && parts.stream().allMatch(KitService.SelectedPart::available);
+                    return CartItemDto.from(item, available,
+                            stockLeft.getOrDefault(item.getId(), BigDecimal.ZERO),
+                            refreshed.changedFrom().get(item.getId()), kitPartDtos(parts, covers),
+                            item.getVariant().isKit() ? covers.get(item.getVariant().getId()) : null);
+                })
                 .toList();
         return CartDto.from(cart, items);
     }
 
+    private static List<KitPartDto> kitPartDtos(List<KitService.SelectedPart> parts, Map<UUID, String> covers) {
+        return parts.stream().map(p -> new KitPartDto(
+                p.variant().getId(), p.defaultVariant().getId(), p.variant().getProduct().getName(),
+                KitService.optionLabel(p.variant()), p.variant().getOptionColor(), p.variant().getOptionSize(),
+                p.variant().getSwatchHex(), p.qtyPerKit(), covers.get(p.variant().getId()),
+                p.changed(), p.available())).toList();
+    }
+
     /**
-     * What each line can still be sold, keyed by variant: its own stock, or for a kit the whole kits its
-     * components can make. Lines draw on one shelf, so they are served in the order they were added: a
-     * line's figure is what is left AFTER the lines before it took their share. A kit and a loose unit of
-     * one of its parts, or two kits sharing a part, therefore cannot both look fine while together asking for
-     * more than there is (checkout adds up what every line needs from the same part before it reserves, and
-     * would refuse an order the cart had just called fine). The line that does not fit is the one flagged.
+     * What each line can still be sold, keyed by the BASKET LINE (the same kit with different picks is several lines):
+     * its own stock, or for a kit the whole kits its components can make, from the shelves of the variants picked.
+     * Lines draw on one shelf, so they are served in the order they were added: a line's figure is what is left AFTER
+     * the lines before it took their share. A kit and a loose unit of one of its parts, or two kits sharing a part,
+     * therefore cannot both look fine while together asking for more than there is (checkout adds up what every line
+     * needs from the same part before it reserves, and would refuse an order the cart had just called fine). The line
+     * that does not fit is the one flagged.
      */
-    private Map<UUID, BigDecimal> stockLeftFor(List<CartItem> items) {
+    private Map<UUID, BigDecimal> stockLeftFor(List<CartItem> items, Map<UUID, List<KitService.SelectedPart>> selections) {
         List<CartItem> inOrder = items.stream()
                 .sorted(java.util.Comparator.comparing(CartItem::getCreatedAt,
                         java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
                 .toList();
-        List<UUID> kitIds = inOrder.stream().map(CartItem::getVariant).filter(ProductVariant::isKit)
-                .map(ProductVariant::getId).distinct().toList();
-        Map<UUID, List<KitAvailabilityService.Part>> partsByKit = kitAvailability.partsOf(kitIds);
+        // A kit taken as it comes counts its own parts; one with picks counts the variants picked.
+        List<UUID> plainKitIds = inOrder.stream()
+                .filter(l -> l.getVariant().isKit() && l.getChoices().isEmpty())
+                .map(l -> l.getVariant().getId()).distinct().toList();
+        Map<UUID, List<KitAvailabilityService.Part>> defaultParts = kitAvailability.partsOf(plainKitIds);
+        Map<UUID, List<KitAvailabilityService.Part>> partsByLine = new HashMap<>();
+        for (CartItem line : inOrder) {
+            if (!line.getVariant().isKit()) {
+                continue;
+            }
+            partsByLine.put(line.getId(), line.getChoices().isEmpty()
+                    ? defaultParts.getOrDefault(line.getVariant().getId(), List.of())
+                    : partsOf(selections.getOrDefault(line.getId(), List.of())));
+        }
 
         // The real variants whose shelf matters: a plain line's own, a kit's parts.
         java.util.Set<UUID> shelfIds = new java.util.HashSet<>();
         for (CartItem line : inOrder) {
-            ProductVariant v = line.getVariant();
-            if (v.isKit()) {
-                partsByKit.getOrDefault(v.getId(), List.of()).forEach(p -> shelfIds.add(p.variant().getId()));
+            if (line.getVariant().isKit()) {
+                partsByLine.getOrDefault(line.getId(), List.of()).forEach(p -> shelfIds.add(p.variant().getId()));
             } else {
-                shelfIds.add(v.getId());
+                shelfIds.add(line.getVariant().getId());
             }
         }
         Map<UUID, BigDecimal> remaining = new HashMap<>(availabilityService.available(shelfIds));
@@ -345,11 +451,11 @@ public class CartService {
             ProductVariant v = line.getVariant();
             if (!v.isKit()) {
                 BigDecimal left = remaining.getOrDefault(v.getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
-                result.put(v.getId(), left);
+                result.put(line.getId(), left);
                 remaining.put(v.getId(), left.subtract(line.getQty().min(left)));
                 continue;
             }
-            List<KitAvailabilityService.Part> parts = partsByKit.getOrDefault(v.getId(), List.of());
+            List<KitAvailabilityService.Part> parts = partsByLine.getOrDefault(line.getId(), List.of());
             BigDecimal whole = null;
             for (KitAvailabilityService.Part part : parts) {
                 BigDecimal have = remaining.getOrDefault(part.variant().getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
@@ -357,7 +463,7 @@ public class CartService {
                 whole = whole == null ? kitsFromThis : whole.min(kitsFromThis);
             }
             BigDecimal left = whole == null ? BigDecimal.ZERO : whole;
-            result.put(v.getId(), left);
+            result.put(line.getId(), left);
             BigDecimal taken = line.getQty().min(left);
             for (KitAvailabilityService.Part part : parts) {
                 BigDecimal id = remaining.getOrDefault(part.variant().getId(), BigDecimal.ZERO);
@@ -390,8 +496,9 @@ public class CartService {
     }
 
     /**
-     * Today's price for a line. A product that can no longer be bought (unpublished, deleted, no price)
-     * keeps the price it had: there is nothing to look up, and the line is reported as unavailable instead.
+     * Today's price for a line (a kit with picks: its price plus what the picks make of it). A product that can no longer
+     * be bought (unpublished, deleted, no price) keeps the price it had: there is nothing to look up, and the line is
+     * reported as unavailable instead.
      */
     private EffectivePriceResolver.EffectivePrice currentPrice(CartItem item, PromoCampaign campaign) {
         ProductVariant variant = item.getVariant();
@@ -399,6 +506,6 @@ public class CartService {
             return new EffectivePriceResolver.EffectivePrice(item.getUnitPriceSnapshot(), item.getUnitPriceSnapshot(),
                     null, EffectivePriceResolver.Source.NONE);
         }
-        return priceResolver.resolve(variant, campaign, item.getQty());
+        return withPicks(item, priceResolver.resolve(variant, campaign, item.getQty()));
     }
 }

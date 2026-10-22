@@ -3,6 +3,7 @@ package com.nbh.backend.cart.dto;
 import com.nbh.backend.cart.entity.CartItem;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -17,6 +18,11 @@ import java.util.UUID;
  * price; {@code wholesaleMinQty}/{@code wholesalePrice} (the variant's raw tier, nullable) are
  * present even before the tier is reached, so the frontend can show "add N more to unlock KES X
  * each" ahead of time, not just once it applies.
+ *
+ * {@code kitItems} lists what is inside a kit line, with the shopper's picks applied (empty for any other line), and
+ * {@code kitChoices} is the picks themselves (default variant id to chosen variant id), so the kit's page can be opened
+ * with them already chosen. {@code imageUrl} is a kit line's own photo (the professional at work): a kit is not in the
+ * shop's product list, so the storefront cannot look its photo up there; null for every other line.
  */
 public record CartItemDto(
         UUID id,
@@ -40,7 +46,10 @@ public record CartItemDto(
         String optionLabel,
         String optionColor,
         String optionSize,
-        String swatchHex
+        String swatchHex,
+        List<KitPartDto> kitItems,
+        java.util.Map<UUID, UUID> kitChoices,
+        String imageUrl
 ) {
     public static CartItemDto from(CartItem item) {
         return from(item, true, null, null);
@@ -48,6 +57,11 @@ public record CartItemDto(
 
     public static CartItemDto from(CartItem item, boolean available, BigDecimal stockLeft,
                                    BigDecimal previousUnitPrice) {
+        return from(item, available, stockLeft, previousUnitPrice, List.of(), null);
+    }
+
+    public static CartItemDto from(CartItem item, boolean available, BigDecimal stockLeft,
+                                   BigDecimal previousUnitPrice, List<KitPartDto> kitItems, String imageUrl) {
         return new CartItemDto(
                 item.getId(), item.getVariant().getId(),
                 item.getVariant().getProduct().getId(), item.getVariant().getProduct().getSlug(),
@@ -57,6 +71,6 @@ public record CartItemDto(
                 available, stockLeft, previousUnitPrice, item.isWholesaleApplied(),
                 item.getVariant().getWholesaleMinQty(), item.getVariant().getWholesalePrice(),
                 item.getVariant().shortOption(), item.getVariant().getOptionColor(), item.getVariant().getOptionSize(),
-                item.getVariant().getSwatchHex());
+                item.getVariant().getSwatchHex(), kitItems, new java.util.HashMap<>(item.getChoices()), imageUrl);
     }
 }

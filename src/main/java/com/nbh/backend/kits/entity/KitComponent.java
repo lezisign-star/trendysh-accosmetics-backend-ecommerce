@@ -28,4 +28,11 @@ public class KitComponent extends BaseEntity {
 
     @Column(nullable = false, precision = 14, scale = 3)
     private BigDecimal qty;
+
+    /**
+     * Whether a customer may pick another variant (colour or size) of this product inside the kit; the product itself
+     * and its quantity never change. On unless staff turn it off for this product.
+     */
+    @Column(name = "customer_can_change", nullable = false)
+    private boolean customerCanChange = true;
 }
