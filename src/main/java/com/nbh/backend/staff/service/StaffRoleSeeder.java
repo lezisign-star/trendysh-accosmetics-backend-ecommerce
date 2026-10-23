@@ -76,6 +76,7 @@ public class StaffRoleSeeder {
                 "Runs day-to-day operations: stock, POS, orders, staff view.",
                 EnumSet.of(
                         Permission.ORDER_VIEW, Permission.ORDER_MANAGE_ALL,
+                        Permission.ORDER_ENTER, Permission.ORDER_PRICE_APPROVE,
                         Permission.PRODUCT_VIEW, Permission.PRODUCT_MANAGE,
                         Permission.STOCK_VIEW, Permission.STOCK_RECEIVE, Permission.STOCK_ADJUST,
                         Permission.STOCK_COUNT,
@@ -89,9 +90,9 @@ public class StaffRoleSeeder {
 
         roles.put("CASHIER", new RoleDefinition(
                 "Cashier",
-                "Front-counter POS operator. No stock adjustment, no refunds, no settings.",
+                "Front-counter POS operator. Can enter an order for a customer who phones. No stock adjustment, no refunds, no settings.",
                 EnumSet.of(
-                        Permission.ORDER_VIEW,
+                        Permission.ORDER_VIEW, Permission.ORDER_ENTER,
                         Permission.PRODUCT_VIEW,
                         Permission.STOCK_VIEW,
                         Permission.POS_SELL, Permission.POS_OPEN_SESSION, Permission.POS_CLOSE_SESSION,
@@ -100,8 +101,9 @@ public class StaffRoleSeeder {
 
         roles.put("STOCK_CONTROLLER", new RoleDefinition(
                 "Stock Controller",
-                "Receives goods and runs stock-takes. No POS, no order/refund access.",
+                "Receives goods and runs stock-takes. Can enter an order for a customer who phones; no POS, no other order or refund access.",
                 EnumSet.of(
+                        Permission.ORDER_ENTER,
                         Permission.PRODUCT_VIEW, Permission.PRODUCT_MANAGE,
                         Permission.STOCK_VIEW, Permission.STOCK_RECEIVE, Permission.STOCK_ADJUST,
                         Permission.STOCK_COUNT

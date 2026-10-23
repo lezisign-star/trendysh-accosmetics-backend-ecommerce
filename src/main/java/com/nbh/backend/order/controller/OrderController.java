@@ -9,11 +9,11 @@ import com.nbh.backend.order.dto.OrderReturnRequest;
 import com.nbh.backend.payment.dto.PaymentCodeStatus;
 import com.nbh.backend.payment.entity.PaymentClaim;
 import com.nbh.backend.payment.repository.PaymentClaimRepository;
-import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.order.dto.OrderSummaryDto;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.order.service.OrderDetailService;
 import com.nbh.backend.order.service.OrderFulfilmentService;
 import com.nbh.backend.order.service.OrderReturnService;
 import com.nbh.backend.staff.entity.StaffUser;
@@ -41,17 +41,17 @@ public class OrderController {
     private final CustomerOrderRepository orderRepository;
     private final OrderFulfilmentService fulfilmentService;
     private final OrderReturnService returnService;
-    private final PaymentRecordRepository paymentRecordRepository;
     private final PaymentClaimRepository claimRepository;
+    private final OrderDetailService orderDetails;
 
     public OrderController(CustomerOrderRepository orderRepository, OrderFulfilmentService fulfilmentService,
-                            OrderReturnService returnService, PaymentRecordRepository paymentRecordRepository,
-                            PaymentClaimRepository claimRepository) {
+                            OrderReturnService returnService, PaymentClaimRepository claimRepository,
+                            OrderDetailService orderDetails) {
         this.orderRepository = orderRepository;
         this.fulfilmentService = fulfilmentService;
         this.returnService = returnService;
-        this.paymentRecordRepository = paymentRecordRepository;
         this.claimRepository = claimRepository;
+        this.orderDetails = orderDetails;
     }
 
     /**
@@ -145,8 +145,7 @@ public class OrderController {
     public AdminOrderDetailDto get(@PathVariable java.util.UUID id) {
         CustomerOrder order = orderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("No order: " + id));
-        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id),
-                claimRepository.findByOrderIdNewestFirst(id));
+        return orderDetails.detail(order);
     }
 
     /** Who's actually carrying a DELIVERY_COURIER order, and the price agreed by phone. See {@code OrderFulfilmentService.assignTransporter}. */
@@ -252,8 +251,7 @@ public class OrderController {
     @Transactional
     public AdminOrderDetailDto postReturn(@PathVariable java.util.UUID id, @jakarta.validation.Valid @RequestBody OrderReturnRequest request) {
         CustomerOrder order = returnService.post(id, request);
-        return AdminOrderDetailDto.from(order, paymentRecordRepository.findByOrderId(id),
-                claimRepository.findByOrderIdNewestFirst(id));
+        return orderDetails.detail(order);
     }
 
     public record CancelOrderRequest(String reason) {}

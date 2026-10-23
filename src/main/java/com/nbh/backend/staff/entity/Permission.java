@@ -15,6 +15,16 @@ public enum Permission {
     // Orders (online)
     ORDER_VIEW,
     ORDER_MANAGE_ALL,
+    /**
+     * Enter an order for a customer who phoned, messaged on WhatsApp or stood at the counter (owner, 2026-10-23: every
+     * role but the read-only one). Narrower than {@link #ORDER_MANAGE_ALL}: it places the order and nothing else.
+     */
+    ORDER_ENTER,
+    /**
+     * Change a line's price on an order being entered without anyone else's OK, and be named as the person who OKs
+     * someone else's change (owner and managers). Everyone else records who gave a verbal OK and what was said.
+     */
+    ORDER_PRICE_APPROVE,
 
     // Catalogue
     PRODUCT_VIEW,

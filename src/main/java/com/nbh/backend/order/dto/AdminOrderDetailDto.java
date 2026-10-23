@@ -57,7 +57,9 @@ public record AdminOrderDetailDto(
         /** The M-PESA codes the customer sent for this order, newest first. Empty means none has been entered yet. */
         List<Claim> claims,
         /** The member of staff who entered this order for a customer; null for an order the customer placed. */
-        String placedBy
+        String placedBy,
+        /** Lines whose price staff changed while entering the order (V72), with the reason and the verbal OK; empty for none. */
+        List<PriceChangeDtos.PriceChangeView> priceChanges
 ) {
     /**
      * Who the order is attached to, so staff can see at a glance whether it counts toward a customer's account
@@ -167,6 +169,16 @@ public record AdminOrderDetailDto(
                 payments.stream().map(Payment::from).toList(),
                 Account.from(o.getCustomerAccount()),
                 claims.stream().map(Claim::from).toList(),
-                o.getPlacedBy());
+                o.getPlacedBy(),
+                List.of());
+    }
+
+    /** The same order with the price changes recorded on it (kept in their own table, so the factories above leave them out). */
+    public AdminOrderDetailDto withPriceChanges(List<PriceChangeDtos.PriceChangeView> changes) {
+        return new AdminOrderDetailDto(id, orderNo, status, fulfilmentType, deliveryMethod, customerName, guestEmail,
+                guestPhone, deliveryAddress, deliveryContactPhone, deliveryDetails, subtotal, vatTotal, deliveryFee,
+                grandTotal, createdAt, placedAt, transporterName, transporterPhone, agreedDeliveryPrice, handoffStage,
+                handoffReference, handoffNote, customerInformedAt, tumaboda, items, payments, account, claims, placedBy,
+                changes);
     }
 }

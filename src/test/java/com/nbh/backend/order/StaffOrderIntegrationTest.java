@@ -30,6 +30,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -217,14 +221,57 @@ class StaffOrderIntegrationTest {
         return json.readTree(result.getResponse().getContentAsString());
     }
 
+    /** A member of staff with one of the shop's default roles, who can sign in (so can be named as the person who agreed a price). */
+    private StaffUser newStaff(String roleName) {
+        StaffUser user = new StaffUser();
+        user.setEmail(roleName.toLowerCase().replace('_', '-') + "-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com");
+        user.setPassword(passwordEncoder.encode("irrelevant-password"));
+        user.setFirstName(roleName.charAt(0) + roleName.substring(1).toLowerCase().replace('_', ' '));
+        user.setLastName("Tester " + UUID.randomUUID().toString().substring(0, 4));
+        user.setStaffRole(staffRoles.findByName(roleName).orElseThrow());
+        return staffUsers.save(user);
+    }
+
+    private String tokenOf(StaffUser user) {
+        return jwtService.generateAccessToken(user);
+    }
+
     private String viewerToken() {
-        StaffUser viewer = new StaffUser();
-        viewer.setEmail("viewer-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com");
-        viewer.setPassword(passwordEncoder.encode("irrelevant-password"));
-        viewer.setFirstName("Read");
-        viewer.setLastName("Only");
-        viewer.setStaffRole(staffRoles.findByName("VIEWER").orElseThrow());
-        return jwtService.generateAccessToken(staffUsers.save(viewer));
+        return tokenOf(newStaff("VIEWER"));
+    }
+
+    private JsonNode placeOk(Map<String, Object> body, String bearer) throws Exception {
+        MvcResult result = place(body, bearer);
+        assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200);
+        return json.readTree(result.getResponse().getContentAsString());
+    }
+
+    private JsonNode okAs(MockHttpServletRequestBuilder request, String body, String bearer) throws Exception {
+        MvcResult result = call(request, body, bearer);
+        assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200);
+        String content = result.getResponse().getContentAsString();
+        return content.isBlank() ? null : json.readTree(content);
+    }
+
+    /** One price change as the staff screen sends it. */
+    private static Map<String, Object> change(String cartItemId, String newPrice, String reason, StaffUser confirmer, String said) {
+        Map<String, Object> change = new LinkedHashMap<>();
+        change.put("cartItemId", cartItemId);
+        change.put("newUnitPrice", newPrice);
+        change.put("reason", reason);
+        if (confirmer != null) change.put("confirmerId", confirmer.getId().toString());
+        if (said != null) change.put("whatWasSaid", said);
+        return change;
+    }
+
+    /** The id of the basket's n-th line, which is what a price change names. */
+    private String lineId(String session, int index) throws Exception {
+        return cartOk(get("/api/v1/cart"), null, session).get("items").get(index).get("id").asText();
+    }
+
+    private long ordersFor(String phone) {
+        return jdbc.queryForObject("SELECT count(*) FROM customer_order WHERE guest_phone = ?", Long.class,
+                "254" + phone.substring(1));
     }
 
     // ---- entering an order ----
@@ -438,18 +485,517 @@ class StaffOrderIntegrationTest {
         assertThat(cartOk(get("/api/v1/cart"), null, session).get("items")).as("the basket is still open").hasSize(1);
     }
 
-    @Test
-    void onlyAManagerCanEnterAnOrder() throws Exception {
-        Fixture f = fixture();
-        String session = basket(addBody(f.oilId(), 1, null));
+    // ---- who may enter an order ----
 
-        MvcResult viewer = place(orderBody(session, "450", phone()), viewerToken());
+    @Test
+    void everyRoleButTheReadOnlyOneCanEnterAnOrder() throws Exception {
+        Fixture f = fixture();
+        for (String role : new String[]{"MANAGER", "CASHIER", "STOCK_CONTROLLER"}) {
+            StaffUser who = newStaff(role);
+            String session = basket(addBody(f.oilId(), 1, null));
+            JsonNode placed = placeOk(orderBody(session, "450", phone()), tokenOf(who));
+            assertThat(placed.get("order").get("placedBy").asText()).as(role).isEqualTo(who.getFullName());
+            assertThat(placed.get("order").get("status").asText()).as(role).isEqualTo("PENDING_PAYMENT");
+        }
+
+        String session = basket(addBody(f.oilId(), 1, null));
+        String customerPhone = phone();
+        MvcResult viewer = place(orderBody(session, "450", customerPhone), viewerToken());
         assertThat(viewer.getResponse().getStatus()).isEqualTo(403);
+        assertThat(ordersFor(customerPhone)).isZero();
         assertThat(cartOk(get("/api/v1/cart"), null, session).get("items")).as("nothing was placed").hasSize(1);
 
         MvcResult anonymous = mvc.perform(post("/api/v1/admin/orders").contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsString(orderBody(session, "450", phone())))).andReturn();
         assertThat(anonymous.getResponse().getStatus()).isIn(401, 403);
+    }
+
+    @Test
+    void onlyPeopleWhoTakePaymentsCanRecordOneWhileEnteringAnOrder() throws Exception {
+        Fixture f = fixture();
+        String session = basket(addBody(f.oilId(), 1, null));
+        String customerPhone = phone();
+        Map<String, Object> body = orderBody(session, "450", customerPhone);
+        body.put("payNow", Map.of("method", "CASH"));
+
+        MvcResult stockController = place(body, tokenOf(newStaff("STOCK_CONTROLLER")));
+        assertThat(stockController.getResponse().getStatus()).isEqualTo(403);
+        assertThat(stockController.getResponse().getContentAsString()).contains("cannot record a payment");
+        assertThat(ordersFor(customerPhone)).as("nothing was placed").isZero();
+
+        JsonNode cashier = placeOk(body, tokenOf(newStaff("CASHIER")));
+        assertThat(cashier.get("order").get("status").asText()).as("a cashier takes the money at the counter").isEqualTo("PAID");
+    }
+
+    // ---- the same basket submitted twice ----
+
+    @Test
+    void submittingTheSameBasketAgainTellsStaffTheOrderWasAlreadyPlaced() throws Exception {
+        Fixture f = fixture();
+        String session = basket(addBody(f.oilId(), 1, null));
+        String customerPhone = phone();
+        Map<String, Object> body = orderBody(session, "450", customerPhone);
+        placeOk(body);
+
+        MvcResult again = place(body, token);
+
+        assertThat(again.getResponse().getStatus()).isEqualTo(409);
+        assertThat(again.getResponse().getContentAsString()).contains("already placed");
+        assertThat(ordersFor(customerPhone)).isEqualTo(1);
+    }
+
+    /**
+     * The staff version of the double-click bug found in the 2026-10-06 live QA (see {@link ConcurrentCheckoutRaceTest}),
+     * and found again in the kits audit: the order screen read the basket before the checkout lock was taken, so a second
+     * submit that waited for the lock carried on with a copy that still said "open". A cash sale with no receipt number
+     * is the worst case, because nothing else (a reused M-PESA code) would have stopped the copy being paid as well.
+     */
+    @Test
+    void aStaffOrderSubmittedSeveralTimesAtTheSameMomentMakesExactlyOneOrder() throws Exception {
+        Fixture f = fixture();
+        String session = basket(addBody(f.oilId(), 2, null));
+        String customerPhone = phone();
+        Map<String, Object> order = orderBody(session, "900", customerPhone);
+        order.put("payNow", Map.of("method", "CASH"));
+        String body = json.writeValueAsString(order);
+
+        int submits = 6;
+        ExecutorService pool = Executors.newFixedThreadPool(submits);
+        CountDownLatch go = new CountDownLatch(1);
+        List<Future<Integer>> results = new ArrayList<>();
+        for (int i = 0; i < submits; i++) {
+            results.add(pool.submit(() -> {
+                go.await();
+                return call(post("/api/v1/admin/orders"), body, token).getResponse().getStatus();
+            }));
+        }
+        go.countDown();
+        int placed = 0;
+        int refused = 0;
+        for (Future<Integer> result : results) {
+            int status = result.get();
+            if (status == 200) placed++;
+            else if (status == 409) refused++;
+        }
+        pool.shutdown();
+
+        assertThat(placed).as("submits that made an order").isEqualTo(1);
+        assertThat(refused).as("submits told it was already placed").isEqualTo(submits - 1);
+        assertThat(ordersFor(customerPhone)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_reservation WHERE variant_id = ?::uuid", Long.class,
+                f.oilId())).as("stock holds on the product").isEqualTo(1L);
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM payment_record p JOIN customer_order o ON o.id = p.order_id
+                WHERE o.guest_phone = ? AND p.status = 'SUCCESS'""", Long.class, "254" + customerPhone.substring(1)))
+                .as("payments recorded").isEqualTo(1L);
+    }
+
+    // ---- the customer on the phone ----
+
+    private JsonNode lookup(String number, String bearer) throws Exception {
+        return okAs(get("/api/v1/admin/orders/customer-lookup").param("phone", number), null, bearer);
+    }
+
+    @Test
+    void aReturningCustomerIsFoundByPhoneInAnySpellingAndTheNewestOrderFillsTheForm() throws Exception {
+        Fixture f = fixture();
+        String customerPhone = phone();
+        Map<String, Object> first = orderBody(basket(addBody(f.oilId(), 1, null)), "450", customerPhone);
+        first.put("customerName", "Wanjiku Mwangi");
+        String firstEmail = "wanjiku-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com";
+        first.put("email", firstEmail);
+        placeOk(first);
+
+        JsonNode found = lookup("+254" + customerPhone.substring(1), token);
+        assertThat(found.get("found").asBoolean()).isTrue();
+        assertThat(found.get("phone").asText()).as("in the form the shop stores it").isEqualTo("254" + customerPhone.substring(1));
+        assertThat(found.get("name").asText()).isEqualTo("Wanjiku Mwangi");
+        assertThat(found.get("email").asText()).isEqualTo(firstEmail);
+        assertThat(found.get("orders").asLong()).isEqualTo(1);
+        assertThat(found.get("fulfilmentType").asText()).isEqualTo("PICKUP");
+        assertThat(found.get("deliveryAddress").asText()).isEqualTo("Simara Mall — Shop B33");
+
+        // a later order of theirs is what the form starts from, however the number is written
+        Map<String, Object> second = orderBody(basket(addBody(f.oilId(), 1, null)), "450", customerPhone);
+        second.put("customerName", "W. Mwangi");
+        second.put("email", "");
+        second.put("fulfilmentType", "DELIVERY_COURIER");
+        second.put("deliveryMethod", "MATATU");
+        second.put("deliveryAddress", "Kilimani, Argwings Kodhek Rd");
+        placeOk(second);
+
+        String spaced = customerPhone.substring(0, 4) + " " + customerPhone.substring(4, 7) + " " + customerPhone.substring(7);
+        JsonNode again = lookup(spaced, token);
+        assertThat(again.get("orders").asLong()).isEqualTo(2);
+        assertThat(again.get("name").asText()).isEqualTo("W. Mwangi");
+        assertThat(again.get("email").isNull()).isTrue();
+        assertThat(again.get("fulfilmentType").asText()).isEqualTo("DELIVERY_COURIER");
+        assertThat(again.get("deliveryMethod").asText()).isEqualTo("MATATU");
+        assertThat(again.get("deliveryAddress").asText()).isEqualTo("Kilimani, Argwings Kodhek Rd");
+    }
+
+    @Test
+    void aNumberThatNeverOrderedIsNotFoundAndAHalfNumberIsRefused() throws Exception {
+        JsonNode none = lookup(phone(), token);
+        assertThat(none.get("found").asBoolean()).isFalse();
+        assertThat(none.get("name").isNull()).isTrue();
+        assertThat(none.get("orders").asLong()).isZero();
+
+        MvcResult half = call(get("/api/v1/admin/orders/customer-lookup").param("phone", "0720"), null, token);
+        assertThat(half.getResponse().getStatus()).as("only a whole number can be looked up, so customers cannot be browsed")
+                .isEqualTo(422);
+    }
+
+    @Test
+    void theCustomerLookupIsForPeopleWhoCanEnterOrders() throws Exception {
+        MvcResult viewer = call(get("/api/v1/admin/orders/customer-lookup").param("phone", phone()), null, viewerToken());
+        assertThat(viewer.getResponse().getStatus()).isEqualTo(403);
+        MvcResult cashier = call(get("/api/v1/admin/orders/customer-lookup").param("phone", phone()), null,
+                tokenOf(newStaff("CASHIER")));
+        assertThat(cashier.getResponse().getStatus()).isEqualTo(200);
+        MvcResult anonymous = mvc.perform(get("/api/v1/admin/orders/customer-lookup").param("phone", phone())).andReturn();
+        assertThat(anonymous.getResponse().getStatus()).isIn(401, 403);
+    }
+
+    // ---- changing a price while entering an order ----
+
+    /** An order for one oil whose price a cashier changed, with the manager named as the person who agreed. */
+    private JsonNode enterWithAgreedPrice(Fixture f, StaffUser enteredBy, StaffUser agreedWith, String price) throws Exception {
+        String session = basket(addBody(f.oilId(), 1, null));
+        Map<String, Object> body = orderBody(session, price, phone());
+        body.put("priceChanges", List.of(change(lineId(session, 0), price, "Regular customer", agreedWith,
+                "Said " + price + " is fine")));
+        return placeOk(body, tokenOf(enteredBy)).get("order");
+    }
+
+    @Test
+    void aManagerChangesAPriceWithAReasonAndTheCustomerIsChargedThatPrice() throws Exception {
+        Fixture f = fixture();
+        StaffUser manager = newStaff("MANAGER");
+        String session = basket(addBody(f.oilId(), 2, null));
+        Map<String, Object> body = orderBody(session, "800", phone());
+        body.put("priceChanges", List.of(change(lineId(session, 0), "400", "Regular customer, buys every week", null, null)));
+
+        JsonNode order = placeOk(body, tokenOf(manager)).get("order");
+
+        assertThat(order.get("subtotal").decimalValue()).isEqualByComparingTo("800");
+        assertThat(order.get("grandTotal").decimalValue()).isEqualByComparingTo("800");
+        assertThat(order.get("items").get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("400");
+        assertThat(order.get("items").get(0).get("lineTotal").decimalValue()).isEqualByComparingTo("800");
+        assertThat(order.get("payments").get(0).get("amount").decimalValue()).as("the customer is asked for the new price")
+                .isEqualByComparingTo("800");
+
+        JsonNode recorded = order.get("priceChanges");
+        assertThat(recorded).hasSize(1);
+        JsonNode record = recorded.get(0);
+        assertThat(record.get("listUnitPrice").decimalValue()).as("the shop's own price is kept").isEqualByComparingTo("450");
+        assertThat(record.get("newUnitPrice").decimalValue()).isEqualByComparingTo("400");
+        assertThat(record.get("qty").decimalValue()).isEqualByComparingTo("2");
+        assertThat(record.get("amountOff").decimalValue()).as("(450 - 400) x 2").isEqualByComparingTo("100");
+        assertThat(record.get("reason").asText()).isEqualTo("Regular customer, buys every week");
+        assertThat(record.get("enteredBy").asText()).isEqualTo(manager.getFullName());
+        assertThat(record.get("status").asText()).as("a manager needs nobody's OK").isEqualTo("NOT_NEEDED");
+        assertThat(record.get("confirmer").isNull()).isTrue();
+        assertThat(record.get("orderNo").asText()).isEqualTo(order.get("orderNo").asText());
+        assertThat(record.get("itemId").asText()).isEqualTo(order.get("items").get(0).get("itemId").asText());
+
+        // still there when staff read the order afresh
+        JsonNode reread = ok(get("/api/v1/orders/" + order.get("id").asText()), null);
+        assertThat(reread.get("priceChanges")).hasSize(1);
+        assertThat(reread.get("priceChanges").get(0).get("id").asText()).isEqualTo(record.get("id").asText());
+
+        // an order with no price change shows none
+        JsonNode plain = placeOk(orderBody(basket(addBody(f.oilId(), 1, null)), "450", phone()), tokenOf(manager)).get("order");
+        assertThat(plain.get("priceChanges")).isEmpty();
+    }
+
+    @Test
+    void aCashierMustNameWhoAgreedTheNewPriceAndWriteDownWhatWasSaid() throws Exception {
+        Fixture f = fixture();
+        StaffUser cashier = newStaff("CASHIER");
+        StaffUser manager = newStaff("MANAGER");
+        String session = basket(addBody(f.oilId(), 1, null));
+        String line = lineId(session, 0);
+        String customerPhone = phone();
+
+        Map<String, Object> nobody = orderBody(session, "400", customerPhone);
+        nobody.put("priceChanges", List.of(change(line, "400", "Loyal customer", null, null)));
+        MvcResult noOne = place(nobody, tokenOf(cashier));
+        assertThat(noOne.getResponse().getStatus()).isEqualTo(422);
+        assertThat(noOne.getResponse().getContentAsString()).contains("who agreed");
+
+        Map<String, Object> silent = orderBody(session, "400", customerPhone);
+        silent.put("priceChanges", List.of(change(line, "400", "Loyal customer", manager, null)));
+        MvcResult nothingSaid = place(silent, tokenOf(cashier));
+        assertThat(nothingSaid.getResponse().getStatus()).isEqualTo(422);
+        assertThat(nothingSaid.getResponse().getContentAsString()).contains("Write down what");
+        assertThat(ordersFor(customerPhone)).as("nothing was placed").isZero();
+
+        Map<String, Object> agreed = orderBody(session, "400", customerPhone);
+        agreed.put("priceChanges", List.of(change(line, "400", "Loyal customer", manager,
+                "Said KES 400 is fine for her, she buys every week")));
+        JsonNode order = placeOk(agreed, tokenOf(cashier)).get("order");
+
+        assertThat(order.get("subtotal").decimalValue()).isEqualByComparingTo("400");
+        JsonNode record = order.get("priceChanges").get(0);
+        assertThat(record.get("status").asText()).isEqualTo("PENDING");
+        assertThat(record.get("confirmer").asText()).isEqualTo(manager.getFullName());
+        assertThat(record.get("whatWasSaid").asText()).isEqualTo("Said KES 400 is fine for her, she buys every week");
+        assertThat(record.get("enteredBy").asText()).isEqualTo(cashier.getFullName());
+        assertThat(record.get("answeredAt").isNull()).isTrue();
+    }
+
+    @Test
+    void theNamedConfirmerSeesTheChangeWaitingAndConfirmsOrDisputesIt() throws Exception {
+        Fixture f = fixture();
+        StaffUser cashier = newStaff("CASHIER");
+        StaffUser manager = newStaff("MANAGER");
+        String managerToken = tokenOf(manager);
+        JsonNode first = enterWithAgreedPrice(f, cashier, manager, "400");
+        JsonNode second = enterWithAgreedPrice(f, cashier, manager, "420");
+
+        JsonNode waiting = okAs(get("/api/v1/admin/price-changes/waiting"), null, managerToken);
+        assertThat(waiting).hasSize(2);
+        assertThat(waiting.get(0).get("orderNo").asText()).as("the longest waiting first").isEqualTo(first.get("orderNo").asText());
+        assertThat(okAs(get("/api/v1/admin/price-changes/waiting/count"), null, managerToken).get("count").asInt()).isEqualTo(2);
+        // on nobody else's dashboard, and not for a role that cannot approve
+        assertThat(okAs(get("/api/v1/admin/price-changes/waiting"), null, tokenOf(newStaff("MANAGER")))).isEmpty();
+        assertThat(call(get("/api/v1/admin/price-changes/waiting"), null, tokenOf(cashier)).getResponse().getStatus())
+                .isEqualTo(403);
+
+        String firstId = waiting.get(0).get("id").asText();
+        String secondId = waiting.get(1).get("id").asText();
+        JsonNode confirmed = okAs(post("/api/v1/admin/price-changes/" + firstId + "/confirm"),
+                "{\"note\":\"Yes, I told her 400\"}", managerToken);
+        assertThat(confirmed.get("status").asText()).isEqualTo("CONFIRMED");
+        assertThat(confirmed.get("answeredBy").asText()).isEqualTo(manager.getFullName());
+        assertThat(confirmed.get("answerNote").asText()).isEqualTo("Yes, I told her 400");
+        assertThat(confirmed.get("answeredAt").isNull()).isFalse();
+
+        MvcResult twice = call(post("/api/v1/admin/price-changes/" + firstId + "/dispute"), "{\"note\":\"changed my mind\"}",
+                managerToken);
+        assertThat(twice.getResponse().getStatus()).as("an answer is final").isEqualTo(409);
+
+        MvcResult noNote = call(post("/api/v1/admin/price-changes/" + secondId + "/dispute"), "{}", managerToken);
+        assertThat(noNote.getResponse().getStatus()).isEqualTo(422);
+        assertThat(noNote.getResponse().getContentAsString()).contains("what is wrong");
+        JsonNode disputed = okAs(post("/api/v1/admin/price-changes/" + secondId + "/dispute"),
+                "{\"note\":\"I never agreed to 420\"}", managerToken);
+        assertThat(disputed.get("status").asText()).isEqualTo("DISPUTED");
+
+        assertThat(okAs(get("/api/v1/admin/price-changes/waiting"), null, managerToken)).as("nothing left waiting").isEmpty();
+        // a dispute puts the change in front of the owner but changes nothing about the order
+        JsonNode after = ok(get("/api/v1/orders/" + second.get("id").asText()), null);
+        assertThat(after.get("status").asText()).isEqualTo("PENDING_PAYMENT");
+        assertThat(after.get("grandTotal").decimalValue()).isEqualByComparingTo("420");
+        assertThat(after.get("priceChanges").get(0).get("status").asText()).isEqualTo("DISPUTED");
+        assertThat(after.get("priceChanges").get(0).get("answerNote").asText()).isEqualTo("I never agreed to 420");
+    }
+
+    @Test
+    void thePersonWhoEnteredAPriceChangeCannotAnswerItButAnotherApproverCan() throws Exception {
+        Fixture f = fixture();
+        StaffUser enteredBy = newStaff("MANAGER");
+        StaffUser namedConfirmer = newStaff("MANAGER");
+        JsonNode order = enterWithAgreedPrice(f, enteredBy, namedConfirmer, "400");
+        String id = order.get("priceChanges").get(0).get("id").asText();
+
+        MvcResult own = call(post("/api/v1/admin/price-changes/" + id + "/confirm"), null, tokenOf(enteredBy));
+        assertThat(own.getResponse().getStatus()).isEqualTo(403);
+
+        // the owner can answer for a manager who is away, and the record says who did
+        StaffUser other = newStaff("MANAGER");
+        JsonNode answered = okAs(post("/api/v1/admin/price-changes/" + id + "/confirm"), null, tokenOf(other));
+        assertThat(answered.get("status").asText()).isEqualTo("CONFIRMED");
+        assertThat(answered.get("answeredBy").asText()).isEqualTo(other.getFullName());
+        assertThat(answered.get("confirmer").asText()).as("the person it was agreed with is still named").isEqualTo(namedConfirmer.getFullName());
+    }
+
+    @Test
+    void thePersonAgreedWithMustBeSomeoneWhoMayApproveAndCanSignIn() throws Exception {
+        Fixture f = fixture();
+        StaffUser cashier = newStaff("CASHIER");
+        StaffUser away = newStaff("MANAGER");
+        away.setEnabled(false);
+        staffUsers.save(away);
+        StaffUser notYetSignedIn = newStaff("MANAGER");
+        notYetSignedIn.setMustChangePassword(true);
+        staffUsers.save(notYetSignedIn);
+        String session = basket(addBody(f.oilId(), 1, null));
+        String line = lineId(session, 0);
+        String customerPhone = phone();
+
+        for (StaffUser named : new StaffUser[]{cashier, away, notYetSignedIn, newStaff("STOCK_CONTROLLER")}) {
+            Map<String, Object> body = orderBody(session, "400", customerPhone);
+            body.put("priceChanges", List.of(change(line, "400", "Loyal customer", named, "OK")));
+            MvcResult refused = place(body, tokenOf(cashier));
+            assertThat(refused.getResponse().getStatus()).as(named.getEmail()).isEqualTo(422);
+            assertThat(refused.getResponse().getContentAsString()).contains("from the list");
+        }
+        Map<String, Object> stranger = orderBody(session, "400", customerPhone);
+        Map<String, Object> strangerChange = change(line, "400", "Loyal customer", null, "OK");
+        strangerChange.put("confirmerId", UUID.randomUUID().toString());
+        stranger.put("priceChanges", List.of(strangerChange));
+        assertThat(place(stranger, tokenOf(cashier)).getResponse().getStatus()).isEqualTo(422);
+        assertThat(ordersFor(customerPhone)).isZero();
+    }
+
+    @Test
+    void thePriceApproversAreTheOwnerAndManagersWhoCanSignInNeverThePersonAsking() throws Exception {
+        StaffUser cashier = newStaff("CASHIER");
+        StaffUser manager = newStaff("MANAGER");
+        StaffUser away = newStaff("MANAGER");
+        away.setEnabled(false);
+        staffUsers.save(away);
+        StaffUser stockController = newStaff("STOCK_CONTROLLER");
+
+        List<String> forCashier = new ArrayList<>();
+        okAs(get("/api/v1/admin/orders/price-approvers"), null, tokenOf(cashier)).forEach(a -> forCashier.add(a.get("id").asText()));
+        assertThat(forCashier).contains(manager.getId().toString())
+                .doesNotContain(away.getId().toString(), cashier.getId().toString(), stockController.getId().toString());
+
+        StaffUser colleague = newStaff("MANAGER");
+        JsonNode forManager = okAs(get("/api/v1/admin/orders/price-approvers"), null, tokenOf(manager));
+        List<String> managerSees = new ArrayList<>();
+        forManager.forEach(a -> managerSees.add(a.get("id").asText()));
+        assertThat(managerSees).as("a colleague, but not themselves").contains(colleague.getId().toString())
+                .doesNotContain(manager.getId().toString());
+        for (JsonNode approver : forManager) {
+            if (colleague.getId().toString().equals(approver.get("id").asText())) {
+                assertThat(approver.get("name").asText()).isEqualTo(colleague.getFullName());
+                assertThat(approver.get("role").asText()).isEqualTo("Manager");
+            }
+        }
+
+        assertThat(call(get("/api/v1/admin/orders/price-approvers"), null, viewerToken()).getResponse().getStatus()).isEqualTo(403);
+    }
+
+    @Test
+    void theTotalMustIncludeThePriceChangeOrNothingIsPlaced() throws Exception {
+        Fixture f = fixture();
+        StaffUser manager = newStaff("MANAGER");
+        String session = basket(addBody(f.oilId(), 1, null));
+        String customerPhone = phone();
+        long recordedBefore = jdbc.queryForObject("SELECT count(*) FROM order_price_change", Long.class);
+        Map<String, Object> body = orderBody(session, "450", customerPhone); // the total WITHOUT the change
+        body.put("priceChanges", List.of(change(lineId(session, 0), "400", "Loyal customer", null, null)));
+
+        MvcResult refused = place(body, tokenOf(manager));
+
+        assertThat(refused.getResponse().getStatus()).isEqualTo(409);
+        assertThat(refused.getResponse().getContentAsString()).contains("Some prices changed");
+        assertThat(ordersFor(customerPhone)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM order_price_change", Long.class)).isEqualTo(recordedBefore);
+    }
+
+    @Test
+    void aChangeThatChangesNothingNamesNoSuchLineOrRepeatsALineIsRefused() throws Exception {
+        Fixture f = fixture();
+        String manager = tokenOf(newStaff("MANAGER"));
+        String session = basket(addBody(f.oilId(), 1, null), addBody(f.cleanserId(), 1, null));
+        String oil = lineId(session, 0);
+        String customerPhone = phone();
+
+        Map<String, Object> same = orderBody(session, "750", customerPhone);
+        same.put("priceChanges", List.of(change(oil, "450", "No change really", null, null)));
+        MvcResult noChange = place(same, manager);
+        assertThat(noChange.getResponse().getStatus()).isEqualTo(422);
+        assertThat(noChange.getResponse().getContentAsString()).contains("already 450");
+
+        Map<String, Object> stranger = orderBody(session, "750", customerPhone);
+        stranger.put("priceChanges", List.of(change(UUID.randomUUID().toString(), "100", "Not in this basket", null, null)));
+        MvcResult noSuchLine = place(stranger, manager);
+        assertThat(noSuchLine.getResponse().getStatus()).isEqualTo(422);
+        assertThat(noSuchLine.getResponse().getContentAsString()).contains("no longer in the basket");
+
+        Map<String, Object> twice = orderBody(session, "750", customerPhone);
+        twice.put("priceChanges", List.of(change(oil, "400", "First", null, null), change(oil, "350", "Second", null, null)));
+        MvcResult repeated = place(twice, manager);
+        assertThat(repeated.getResponse().getStatus()).isEqualTo(422);
+        assertThat(repeated.getResponse().getContentAsString()).contains("only have one price change");
+
+        Map<String, Object> negative = orderBody(session, "750", customerPhone);
+        negative.put("priceChanges", List.of(change(oil, "-5", "Below nothing", null, null)));
+        assertThat(place(negative, manager).getResponse().getStatus()).isEqualTo(400);
+
+        Map<String, Object> noReason = orderBody(session, "750", customerPhone);
+        noReason.put("priceChanges", List.of(change(oil, "400", "", null, null)));
+        assertThat(place(noReason, manager).getResponse().getStatus()).as("a reason is always needed").isEqualTo(400);
+
+        assertThat(ordersFor(customerPhone)).as("nothing was placed by any of them").isZero();
+    }
+
+    @Test
+    void theWholePriceOfAKitLineCanBeChangedAndItsProductsAreLeftAlone() throws Exception {
+        Fixture f = fixture();
+        StaffUser manager = newStaff("MANAGER");
+        String session = basket(addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())));
+        Map<String, Object> body = orderBody(session, "1200", phone());
+        body.put("priceChanges", List.of(change(lineId(session, 0), "1200", "Kit for a new salon, 100 off", null, null)));
+
+        JsonNode order = placeOk(body, tokenOf(manager)).get("order");
+
+        assertThat(order.get("subtotal").decimalValue()).isEqualByComparingTo("1200");
+        JsonNode kitLine = order.get("items").get(0);
+        assertThat(kitLine.get("unitPrice").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(kitLine.get("components")).as("the kit's products are listed as they were picked").hasSize(2);
+        JsonNode record = order.get("priceChanges").get(0);
+        assertThat(record.get("listUnitPrice").decimalValue()).as("1000 + 2 x (650 - 500)").isEqualByComparingTo("1300");
+        assertThat(record.get("amountOff").decimalValue()).isEqualByComparingTo("100");
+        assertThat(record.get("itemId").asText()).as("on the kit's own line").isEqualTo(kitLine.get("itemId").asText());
+    }
+
+    @Test
+    void aLineCanBeGivenFreeButTheWholeOrderCannotComeToNothing() throws Exception {
+        Fixture f = fixture();
+        String manager = tokenOf(newStaff("MANAGER"));
+        String session = basket(addBody(f.oilId(), 1, null), addBody(f.cleanserId(), 1, null));
+        String oil = lineId(session, 0);
+        String cleanser = lineId(session, 1);
+        String customerPhone = phone();
+
+        Map<String, Object> everything = orderBody(session, "0", customerPhone);
+        everything.put("priceChanges", List.of(change(oil, "0", "Gift", null, null), change(cleanser, "0", "Gift", null, null)));
+        MvcResult nothing = place(everything, manager);
+        assertThat(nothing.getResponse().getStatus()).isEqualTo(422);
+        assertThat(nothing.getResponse().getContentAsString()).contains("come to nothing");
+        assertThat(ordersFor(customerPhone)).isZero();
+
+        Map<String, Object> oneFree = orderBody(session, "300", phone());
+        oneFree.put("priceChanges", List.of(change(oil, "0", "Free sample for a first order", null, null)));
+        JsonNode order = placeOk(oneFree, manager).get("order");
+        assertThat(order.get("subtotal").decimalValue()).isEqualByComparingTo("300");
+        assertThat(order.get("priceChanges").get(0).get("amountOff").decimalValue()).isEqualByComparingTo("450");
+    }
+
+    @Test
+    void thePriceChangeListIsForPeopleWhoOverseeTheMoney() throws Exception {
+        Fixture f = fixture();
+        StaffUser cashier = newStaff("CASHIER");
+        StaffUser manager = newStaff("MANAGER");
+        JsonNode order = enterWithAgreedPrice(f, cashier, manager, "400");
+        String orderNo = order.get("orderNo").asText();
+
+        assertThat(namesOrder(okAs(get("/api/v1/admin/price-changes"), null, token), orderNo)).as("the last 30 days").isTrue();
+        assertThat(namesOrder(okAs(get("/api/v1/admin/price-changes").param("status", "PENDING"), null, token), orderNo)).isTrue();
+        assertThat(namesOrder(okAs(get("/api/v1/admin/price-changes").param("status", "CONFIRMED"), null, token), orderNo))
+                .as("not once it is waiting for an answer").isFalse();
+        assertThat(namesOrder(okAs(get("/api/v1/admin/price-changes")
+                .param("from", "2020-01-01T00:00:00Z").param("to", "2020-01-02T00:00:00Z"), null, token), orderNo))
+                .as("another period").isFalse();
+
+        // a read-only account oversees the money and may look; a cashier or stock controller may not
+        assertThat(call(get("/api/v1/admin/price-changes"), null, viewerToken()).getResponse().getStatus()).isEqualTo(200);
+        assertThat(call(get("/api/v1/admin/price-changes"), null, tokenOf(cashier)).getResponse().getStatus()).isEqualTo(403);
+        assertThat(call(get("/api/v1/admin/price-changes"), null, tokenOf(newStaff("STOCK_CONTROLLER"))).getResponse().getStatus())
+                .isEqualTo(403);
+    }
+
+    private static boolean namesOrder(JsonNode page, String orderNo) {
+        for (JsonNode row : page.get("content")) {
+            if (orderNo.equals(row.get("orderNo").asText())) return true;
+        }
+        return false;
     }
 
     // ---- the pick-and-pack list ----

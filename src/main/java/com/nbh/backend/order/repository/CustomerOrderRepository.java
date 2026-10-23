@@ -419,4 +419,17 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     Page<com.nbh.backend.customer.dto.AdminCustomerDto> searchCustomers(@Param("q") String q,
                                                                           @Param("phoneQ") String phoneQ,
                                                                           Pageable pageable);
+
+    /**
+     * The orders placed with this phone number (stored in its 254… form), newest first, among the ones the staff screens
+     * are showing: the real orders, or the demo ones while the demo catalogue is on. The first is what an order entered for
+     * the same customer starts from, and the total is how many times they have ordered.
+     */
+    @Query("""
+            SELECT o FROM CustomerOrder o
+            WHERE o.guestPhone = :phone
+              AND ((o.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (o.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
+            ORDER BY o.createdAt DESC
+            """)
+    Page<CustomerOrder> newestForPhone(@Param("phone") String phone, Pageable pageable);
 }
