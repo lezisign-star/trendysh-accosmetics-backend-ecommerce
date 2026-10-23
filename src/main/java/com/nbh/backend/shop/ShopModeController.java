@@ -1,5 +1,7 @@
 package com.nbh.backend.shop;
 
+import com.nbh.backend.common.exception.ConfigurationException;
+import com.nbh.backend.payment.service.BankPaymentSettings;
 import com.nbh.backend.shop.ShopModeDtos.ShopModeAdminDto;
 import com.nbh.backend.shop.ShopModeDtos.ShopModeDto;
 import com.nbh.backend.shop.ShopModeDtos.SetShopModeRequest;
@@ -22,14 +24,25 @@ import org.springframework.web.bind.annotation.RestController;
 public class ShopModeController {
 
     private final ShopSettingsService settings;
+    private final BankPaymentSettings bankSettings;
 
-    public ShopModeController(ShopSettingsService settings) {
+    public ShopModeController(ShopSettingsService settings, BankPaymentSettings bankSettings) {
         this.settings = settings;
+        this.bankSettings = bankSettings;
     }
 
     @GetMapping("/api/v1/catalog/shop-mode")
     public ShopModeDto publicMode() {
-        return new ShopModeDto(settings.get().getOrderingMode());
+        return new ShopModeDto(settings.get().getOrderingMode(), supportWhatsapp());
+    }
+
+    /** Every visit asks this: a payment settings row that is not seeded yet must not stop the storefront learning the mode. */
+    private String supportWhatsapp() {
+        try {
+            return bankSettings.supportWhatsapp();
+        } catch (ConfigurationException notSeeded) {
+            return BankPaymentSettings.DEFAULT_SUPPORT_PHONE;
+        }
     }
 
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','DEVELOPER')")

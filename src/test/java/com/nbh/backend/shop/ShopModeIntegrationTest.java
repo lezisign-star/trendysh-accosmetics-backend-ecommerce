@@ -3,6 +3,9 @@ package com.nbh.backend.shop;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nbh.backend.common.security.JwtService;
+import com.nbh.backend.payment.entity.PaymentSettings;
+import com.nbh.backend.payment.repository.PaymentSettingsRepository;
+import com.nbh.backend.payment.service.BankPaymentSettings;
 import com.nbh.backend.staff.entity.StaffUser;
 import com.nbh.backend.staff.repository.StaffRoleRepository;
 import com.nbh.backend.staff.repository.StaffUserRepository;
@@ -40,6 +43,7 @@ class ShopModeIntegrationTest {
     @Autowired private StaffRoleRepository staffRoles;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private ShopSettingsService settings;
+    @Autowired private PaymentSettingsRepository paymentSettings;
 
     private String tokenFor(String role) {
         StaffUser user = new StaffUser();
@@ -70,6 +74,29 @@ class ShopModeIntegrationTest {
     @Test
     void aNewShopTakesOrdersOnWhatsAppAndTheStorefrontReadsThatWithoutSigningIn() throws Exception {
         assertThat(publicMode()).isEqualTo("WHATSAPP");
+    }
+
+    @Test
+    void theStorefrontReadsTheWhatsAppNumberSavedInAdminSoEveryShopperSendsOrdersThere() throws Exception {
+        PaymentSettings row = paymentSettings.findFirstByOrderByCreatedAtAsc().orElseThrow();
+        String before = row.getSupportWhatsapp();
+        try {
+            row.setSupportWhatsapp("0711 222 333");
+            paymentSettings.save(row);
+            JsonNode answer = json.readTree(mvc.perform(get("/api/v1/catalog/shop-mode")).andReturn()
+                    .getResponse().getContentAsString());
+            assertThat(answer.get("supportWhatsapp").asText()).isEqualTo("0711 222 333");
+
+            row.setSupportWhatsapp(null);
+            paymentSettings.save(row);
+            answer = json.readTree(mvc.perform(get("/api/v1/catalog/shop-mode")).andReturn()
+                    .getResponse().getContentAsString());
+            assertThat(answer.get("supportWhatsapp").asText()).isEqualTo(BankPaymentSettings.DEFAULT_SUPPORT_PHONE);
+        } finally {
+            PaymentSettings back = paymentSettings.findFirstByOrderByCreatedAtAsc().orElseThrow();
+            back.setSupportWhatsapp(before);
+            paymentSettings.save(back);
+        }
     }
 
     @Test

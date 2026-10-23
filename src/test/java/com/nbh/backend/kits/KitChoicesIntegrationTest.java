@@ -265,6 +265,84 @@ class KitChoicesIntegrationTest {
         assertThat(checked).isTrue();
     }
 
+    private JsonNode listedKit(String kitVariantId) throws Exception {
+        JsonNode list = json.readTree(mvc.perform(get("/api/v1/catalog/kits")).andReturn().getResponse().getContentAsString());
+        for (JsonNode kit : list) {
+            if (kit.get("variantId").asText().equals(kitVariantId)) return kit;
+        }
+        throw new AssertionError("kit not listed: " + kitVariantId);
+    }
+
+    @Test
+    void oneByOneAndTheSavingFollowADealOnAProductInsideWhileThePicksStillMoveTheKitBySellingPrice() throws Exception {
+        Fixture f = fixture(true, 10);
+        // Ruby Red (500) is on a deal at 450 for a day: bought loose the kit's products cost 2 x 450 + 300 = 1200
+        jdbc.update("UPDATE product_variant SET deal_price = 450, deal_ends_at = now() + interval '1 day' WHERE id = ?::uuid",
+                f.redId());
+
+        JsonNode page = json.readTree(mvc.perform(get("/api/v1/catalog/kits/" + f.kitSlug())).andReturn()
+                .getResponse().getContentAsString());
+        assertThat(page.get("sumOfComponents").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(page.get("savings").decimalValue()).isEqualByComparingTo("200");
+        JsonNode lashes = null;
+        for (JsonNode item : page.get("items")) {
+            if (item.get("variantId").asText().equals(f.redId())) lashes = item;
+        }
+        assertThat(lashes).isNotNull();
+        assertThat(lashes.get("unitPrice").decimalValue()).isEqualByComparingTo("450");
+        Map<String, JsonNode> byId = new HashMap<>();
+        lashes.get("choices").forEach(c -> byId.put(c.get("variantId").asText(), c));
+        assertThat(byId.get(f.redId()).get("unitPrice").decimalValue()).isEqualByComparingTo("450");
+        // what a pick does to the kit's price is still 2 x (650 - 500): the kit never takes the deal
+        assertThat(byId.get(f.pinkId()).get("priceDelta").decimalValue()).isEqualByComparingTo("300");
+
+        JsonNode card = listedKit(f.kitVariantId());
+        assertThat(card.get("sumOfComponents").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(card.get("savings").decimalValue()).isEqualByComparingTo("200");
+
+        // and the cart still charges the kit's own price
+        String session = UUID.randomUUID().toString();
+        JsonNode cart = cartOk(post("/api/v1/cart/items"), addBody(f.kitVariantId(), 1, null), session);
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+    }
+
+    @Test
+    void aKitWhoseUsualColourIsSoldOutIsListedAsOneToPickAnotherColourFor() throws Exception {
+        Map<String, String> lashes = newProduct(unique("Card Lashes"), new String[]{"Ruby Red", "500"},
+                new String[]{"Rose Pink", "650"});
+        Map<String, String> cleanser = newProduct(unique("Card Cleanser"), new String[]{"Default", "300"});
+        String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink"), cleanserId = cleanser.get("Default");
+        // nothing of Ruby Red on the shelf
+        receiveStock(Map.of(pink, new BigDecimal("10"), cleanserId, new BigDecimal("10")));
+        JsonNode swappable = ok(post("/api/v1/admin/kits"), kitBody(unique("Card Kit"), newProfession(), newCategory(),
+                "1000", component(red, "2", true), component(cleanserId, "1", true)));
+        JsonNode fixed = ok(post("/api/v1/admin/kits"), kitBody(unique("Card Kit Fixed"), newProfession(), newCategory(),
+                "1000", component(red, "2", false), component(cleanserId, "1", true)));
+
+        JsonNode card = listedKit(swappable.get("variantId").asText());
+        assertThat(card.get("inStock").asBoolean()).isFalse();
+        assertThat(card.get("pickToOrder").asBoolean()).isTrue();
+
+        // the colour can't be changed there: plainly out of stock
+        JsonNode fixedCard = listedKit(fixed.get("variantId").asText());
+        assertThat(fixedCard.get("inStock").asBoolean()).isFalse();
+        assertThat(fixedCard.get("pickToOrder").asBoolean()).isFalse();
+
+        // and the cart takes the kit with the colour that is on the shelf
+        String session = UUID.randomUUID().toString();
+        MvcResult added = cartRaw(post("/api/v1/cart/items"), addBody(swappable.get("variantId").asText(), 1,
+                Map.of(red, pink)), session);
+        assertThat(added.getResponse().getStatus()).as(added.getResponse().getContentAsString()).isEqualTo(200);
+    }
+
+    @Test
+    void aKitThatIsInStockIsNeverMarkedAsOneToPickFor() throws Exception {
+        Fixture f = fixture(true, 10);
+        JsonNode card = listedKit(f.kitVariantId());
+        assertThat(card.get("inStock").asBoolean()).isTrue();
+        assertThat(card.get("pickToOrder").asBoolean()).isFalse();
+    }
+
     // ---- the cart prices and separates the picks ----
 
     @Test

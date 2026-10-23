@@ -1,19 +1,25 @@
 package com.nbh.backend.payment.service;
 
+import com.nbh.backend.common.event.DataChangedEvent;
 import com.nbh.backend.common.exception.ConfigurationException;
 import com.nbh.backend.payment.dto.PaymentSettingsDto;
 import com.nbh.backend.payment.entity.PaymentSettings;
 import com.nbh.backend.payment.repository.PaymentSettingsRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Objects;
 
 @Service
 public class PaymentSettingsService {
 
     private final PaymentSettingsRepository repository;
+    private final ApplicationEventPublisher events;
 
-    public PaymentSettingsService(PaymentSettingsRepository repository) {
+    public PaymentSettingsService(PaymentSettingsRepository repository, ApplicationEventPublisher events) {
         this.repository = repository;
+        this.events = events;
     }
 
     @Transactional(readOnly = true)
@@ -37,8 +43,14 @@ public class PaymentSettingsService {
         settings.setAccountNumber(blankToNull(request.accountNumber()));
         settings.setAccountBranch(blankToNull(request.accountBranch()));
         String support = blankToNull(request.supportWhatsapp());
+        String before = settings.getSupportWhatsapp();
         settings.setSupportWhatsapp(support == null ? BankPaymentSettings.DEFAULT_SUPPORT_PHONE : support);
-        return PaymentSettingsDto.from(repository.save(settings));
+        PaymentSettings saved = repository.save(settings);
+        if (!Objects.equals(before, saved.getSupportWhatsapp())) {
+            // The storefront takes the number from the shop-mode answer: the catalogue hint makes open pages ask again.
+            events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.CATALOG));
+        }
+        return PaymentSettingsDto.from(saved);
     }
 
     private PaymentSettings current() {

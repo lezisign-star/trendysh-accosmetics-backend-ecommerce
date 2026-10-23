@@ -4,11 +4,14 @@ import com.nbh.backend.catalog.entity.Category;
 import com.nbh.backend.catalog.entity.Product;
 import com.nbh.backend.catalog.entity.ProductImage;
 import com.nbh.backend.catalog.entity.ProductVariant;
+import com.nbh.backend.catalog.entity.PromoCampaign;
 import com.nbh.backend.catalog.repository.CategoryRepository;
 import com.nbh.backend.catalog.repository.ProductImageRepository;
 import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
+import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PhotoOwnership;
+import com.nbh.backend.catalog.service.PromoCampaignService;
 import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.common.exception.UnprocessableException;
 import com.nbh.backend.kits.dto.KitDetailDto;
@@ -64,12 +67,17 @@ public class KitService {
     private final ProfessionRepository professions;
     private final KitAvailabilityService kitAvailability;
     private final StockAvailabilityService stockAvailability;
+    private final EffectivePriceResolver priceResolver;
+    private final PromoCampaignService promoCampaigns;
 
     public KitService(KitRepository kits, KitComponentRepository componentRepository,
                        ProductVariantRepository variantRepository, ProductRepository productRepository,
                        CategoryRepository categoryRepository, ProductImageRepository imageRepository,
                        ProfessionRepository professions, KitAvailabilityService kitAvailability,
-                       StockAvailabilityService stockAvailability) {
+                       StockAvailabilityService stockAvailability, EffectivePriceResolver priceResolver,
+                       PromoCampaignService promoCampaigns) {
+        this.priceResolver = priceResolver;
+        this.promoCampaigns = promoCampaigns;
         this.kits = kits;
         this.componentRepository = componentRepository;
         this.variantRepository = variantRepository;
@@ -270,16 +278,69 @@ public class KitService {
         }
         Map<UUID, String> imageByVariant = coverImageByVariant(shown.values());
         Map<UUID, BigDecimal> wholeKits = kitAvailability.wholeKitsAvailable(active, componentsByKit);
+        PromoCampaign campaign = promoCampaigns.getActiveOrNull();
+        // A kit can never legitimately have zero components (creation requires at least one), so an absent map entry
+        // means every one of them is unavailable right now.
+        List<Kit> listed = active.stream().filter(k -> componentsByKit.containsKey(k.getId())).toList();
+        Set<UUID> pickToOrder = kitsOrderableWithAnotherOption(listed.stream()
+                .filter(k -> wholeKits.getOrDefault(k.getVariant().getId(), BigDecimal.ZERO).signum() <= 0)
+                .toList(), componentsByKit);
 
-        return active.stream()
-                // A kit with NOTHING left purchasable disappears from the storefront entirely — the
-                // moment a component is re-enabled it reappears on its own, no admin action needed.
-                // A kit can never legitimately have zero components (creation requires at least
-                // one), so an absent map entry here means every one of them is unavailable right now.
-                .filter(k -> componentsByKit.containsKey(k.getId()))
+        // A kit with NOTHING left purchasable disappears from the storefront entirely — the moment a component is
+        // re-enabled it reappears on its own, no admin action needed.
+        return listed.stream()
                 .map(k -> toPublicDto(k, componentsByKit.get(k.getId()), imageByVariant,
-                        wholeKits.getOrDefault(k.getVariant().getId(), BigDecimal.ZERO).signum() > 0))
+                        wholeKits.getOrDefault(k.getVariant().getId(), BigDecimal.ZERO).signum() > 0,
+                        pickToOrder.contains(k.getVariant().getId()), campaign))
                 .toList();
+    }
+
+    /**
+     * Of these kits (each out of stock as it comes), the ones a shopper can still order by picking another colour or size
+     * on the kit's page: some product is off the shelf in the option the kit comes with, and every such product may be
+     * changed and has another option on the shelf (the same options the kit's page offers). Keyed by the kit's variant.
+     * Only a hint for the list's card; the kit's page and the cart judge the real picks.
+     */
+    private Set<UUID> kitsOrderableWithAnotherOption(List<Kit> soldOut, Map<UUID, List<KitComponent>> componentsByKit) {
+        if (soldOut.isEmpty()) {
+            return Set.of();
+        }
+        List<KitComponent> comps = soldOut.stream().flatMap(k -> componentsByKit.get(k.getId()).stream()).toList();
+        List<UUID> productIds = comps.stream().filter(KitComponent::isCustomerCanChange)
+                .map(c -> c.getComponentVariant().getProduct().getId()).distinct().toList();
+        Map<UUID, List<ProductVariant>> optionsByProduct = productIds.isEmpty() ? Map.of()
+                : variantRepository.findByProductIdInAndDeletedFalse(productIds).stream()
+                        .filter(v -> KitDtos.isComponentAvailable(v) && !v.isKit() && !v.getProduct().isMockData())
+                        .collect(Collectors.groupingBy(v -> v.getProduct().getId()));
+        Set<UUID> shelfIds = new HashSet<>();
+        comps.forEach(c -> shelfIds.add(c.getComponentVariant().getId()));
+        optionsByProduct.values().forEach(options -> options.forEach(v -> shelfIds.add(v.getId())));
+        Map<UUID, BigDecimal> onShelf = stockAvailability.available(shelfIds);
+
+        Set<UUID> orderable = new HashSet<>();
+        for (Kit k : soldOut) {
+            boolean needsPick = false;
+            boolean fixable = true;
+            for (KitComponent c : componentsByKit.get(k.getId())) {
+                ProductVariant def = c.getComponentVariant();
+                if (onShelf.getOrDefault(def.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0) {
+                    continue;
+                }
+                needsPick = true;
+                boolean another = c.isCustomerCanChange()
+                        && optionsByProduct.getOrDefault(def.getProduct().getId(), List.of()).stream()
+                                .anyMatch(v -> !v.getId().equals(def.getId())
+                                        && onShelf.getOrDefault(v.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0);
+                if (!another) {
+                    fixable = false;
+                    break;
+                }
+            }
+            if (needsPick && fixable) {
+                orderable.add(k.getVariant().getId());
+            }
+        }
+        return orderable;
     }
 
     /** Whether a kit is on sale right now: its own product is real (or demo, while demo mode is on), live and priced. */
@@ -345,10 +406,14 @@ public class KitService {
             }
         }
         Map<UUID, BigDecimal> onShelf = stockAvailability.available(shelfIds);
+        PromoCampaign campaign = promoCampaigns.getActiveOrNull();
         List<KitDetailDto.Item> items = comps.stream().map(c -> {
             ProductVariant cv = c.getComponentVariant();
             Product cp = cv.getProduct();
+            // What a pick does to the kit's price is worked on selling prices (as the cart does); what the product costs
+            // "on its own" is what it would be charged bought loose today, deal or campaign included (owner, 2026-10-23).
             BigDecimal price = priceOf(cv);
+            BigDecimal loose = loosePrice(cv, campaign);
             List<String> photos = gallery.apply(cv);
             boolean inStock = onShelf.getOrDefault(cv.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0;
             List<ProductVariant> options = optionsByComponent.getOrDefault(c.getId(), List.of());
@@ -357,15 +422,15 @@ public class KitService {
                 BigDecimal optionPrice = priceOf(v);
                 String label = CatalogLabel.of(v);
                 return new KitDetailDto.Choice(v.getId(), label != null ? label : v.getVariantName(),
-                        v.getOptionColor(), v.getOptionSize(), v.getSwatchHex(), optionPrice,
+                        v.getOptionColor(), v.getOptionSize(), v.getSwatchHex(), loosePrice(v, campaign),
                         optionPrice.subtract(price).multiply(c.getQty()).setScale(2, RoundingMode.HALF_UP),
                         optionPhotos.isEmpty() ? null : optionPhotos.get(0), optionPhotos,
                         onShelf.getOrDefault(v.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0,
                         v.getId().equals(cv.getId()));
             }).toList();
             return new KitDetailDto.Item(c.getId(), cv.getId(), cp.getId(), cp.getSlug(), cp.getName(),
-                    CatalogLabel.of(cv), photos.isEmpty() ? null : photos.get(0), photos, c.getQty(), price,
-                    price.multiply(c.getQty()), cp.getShortDescription(), cp.getDescription(), cp.getHowToUse(),
+                    CatalogLabel.of(cv), photos.isEmpty() ? null : photos.get(0), photos, c.getQty(), loose,
+                    loose.multiply(c.getQty()), cp.getShortDescription(), cp.getDescription(), cp.getHowToUse(),
                     cp.getIngredients(), inStock, !choices.isEmpty(), choices);
         }).toList();
 
@@ -422,6 +487,16 @@ public class KitService {
 
     private static BigDecimal priceOf(ProductVariant v) {
         return v.getSellingPrice() == null ? BigDecimal.ZERO : v.getSellingPrice();
+    }
+
+    /**
+     * What a kit's product costs bought on its own right now: its deal or the running campaign included (never wholesale),
+     * so "one by one" and "you save" stay true during a sale. The kit's own price never takes either.
+     */
+    private BigDecimal loosePrice(ProductVariant v, PromoCampaign campaign) {
+        return v.getSellingPrice() == null
+                ? BigDecimal.ZERO
+                : priceResolver.resolve(v, campaign, BigDecimal.ZERO).effectivePrice();
     }
 
     /**
@@ -577,12 +652,13 @@ public class KitService {
     }
 
     private KitPublicDto toPublicDto(Kit k, List<KitComponent> comps, Map<UUID, String> imageByVariant,
-                                      boolean inStock) {
+                                      boolean inStock, boolean pickToOrder, PromoCampaign campaign) {
         ProductVariant variant = k.getVariant();
         Product product = variant.getProduct();
         List<KitPublicDto.Item> items = comps.stream().map(c -> {
             ProductVariant cv = c.getComponentVariant();
-            BigDecimal price = cv.getSellingPrice() == null ? BigDecimal.ZERO : cv.getSellingPrice();
+            // What it costs bought on its own today, so the card's "you save" stays true during a deal or campaign.
+            BigDecimal price = loosePrice(cv, campaign);
             return new KitPublicDto.Item(cv.getId(), cv.getProduct().getName(),
                     imageByVariant.get(cv.getId()), c.getQty(), price, price.multiply(c.getQty()));
         }).toList();
@@ -595,7 +671,7 @@ public class KitService {
         return new KitPublicDto(variant.getId(), product.getId(), product.getSlug(), product.getName(),
                 profession.getId(), profession.getLabel(), profession.getSlug(), k.getDescription(),
                 imageByVariant.get(variant.getId()),
-                packagePrice, sum, sum.subtract(packagePrice).max(BigDecimal.ZERO), inStock, items);
+                packagePrice, sum, sum.subtract(packagePrice).max(BigDecimal.ZERO), inStock, pickToOrder, items);
     }
 
     // ---- professions (kit form's dropdown + inline "+ New" quick-add) ----
