@@ -1,5 +1,25 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
+## 2026-10-23 (START HERE) — orders from a call, sales and money, and the kits audit follow-ups: where it stands
+
+**The full handoff for a new session is `J:\frontend\nairobi-beauty-hub-main\docs\handoff-2026-10-23.md`** (read it first). Backend
+side, all committed locally and **not pushed** (this repo is 8 commits ahead of `origin/main`; push it FIRST, only after the audit
+of the new code passes and the owner says go; Railway holds the push for an approval click):
+- `332b6a1` kits audit follow-ups: `KitService.selection()` (`Selection(parts, outOfDate)`: a pick that no longer applies stops the
+  line, with "choose again"), shared shelves (`KitAvailabilityService.wholeKits`), whole pieces in a kit, cancel and mark-failed
+  release holds in variant order.
+- `6ace1cf` orders from a call: permissions `ORDER_ENTER` and `ORDER_PRICE_APPROVE`; `POST /admin/orders` takes
+  `priceChanges[]`; `GET /admin/orders/customer-lookup`, `/price-approvers`; **V72** `order_price_change`; `/admin/price-changes`
+  (list, `/waiting`, confirm, dispute); `OrderDetailService`; the staff double-submit race fixed (lock first, second submit 409).
+- `a93ec6e` sales and money: package `finance` (`/admin/finance/summary|payments|payments.csv|price-history|orders/{id}/trail`,
+  PAYMENT_VIEW or ANALYTICS_VIEW); **V73** `variant_price_history` + trigger + `product_variant.updated_by` (Spring auditing says
+  who is saving); manual payment confirmation now keeps the staff name.
+- Tests: `StaffOrderIntegrationTest` 35, `KitChoicesIntegrationTest` 15, `FinanceIntegrationTest` 11, `PriceChangeMigrationTest` 5; the
+  full suite passed (1168) just before the finance commit: **re-run it on HEAD before pushing** (about 15 minutes; see the
+  handoff doc for the scripts).
+- Not done: the audit of this new code, editing an order after it is placed, refunds in the money view, the kit discount floor
+  (owner decision), and the shopper-side audit findings (frontend).
+
 ## 2026-10-22 (ordering mode) — a switch for how the shop takes orders: on the website, or by WhatsApp only until the owner launches
 
 Owner's decisions of 21 Oct for trendyshaccosmetic.com: it becomes the full shop (the same app as the .site) but, until online ordering launches, a shopper sends their basket on WhatsApp instead of checking out; the owner (and the developer) flip it to full ordering in Admin > Settings, no redeploy.
