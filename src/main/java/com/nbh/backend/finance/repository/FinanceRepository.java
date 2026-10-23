@@ -206,6 +206,12 @@ public interface FinanceRepository extends Repository<CustomerOrder, UUID> {
         /** True when the confirmation is Safaricom's own M-PESA callback. */
         boolean getMpesaCallback();
 
+        /**
+         * True when the payment had been marked failed and was confirmed after all (PaymentService keeps the earlier note
+         * and the confirmation's own under "now"; the columns above read the "now" one).
+         */
+        boolean getRevived();
+
         String getClaimCode();
 
         String getClaimResolvedBy();
@@ -267,8 +273,8 @@ public interface FinanceRepository extends Repository<CustomerOrder, UUID> {
     String LEDGER_FROM = """
             FROM payment_record p
             JOIN customer_order o ON o.id = p.order_id
-            LEFT JOIN payment_claim cl ON cl.id = CAST(NULLIF(p.raw_response ->> 'claimId', '') AS uuid)
-            LEFT JOIN bank_credit bc ON bc.id = CAST(NULLIF(p.raw_response ->> 'creditId', '') AS uuid)
+            LEFT JOIN payment_claim cl ON cl.id = CAST(NULLIF((COALESCE(NULLIF(p.raw_response -> 'now', 'null'::jsonb), p.raw_response)) ->> 'claimId', '') AS uuid)
+            LEFT JOIN bank_credit bc ON bc.id = CAST(NULLIF((COALESCE(NULLIF(p.raw_response -> 'now', 'null'::jsonb), p.raw_response)) ->> 'creditId', '') AS uuid)
             WHERE p.status = 'SUCCESS' AND o.placed_at >= :from AND o.placed_at < :to
               AND (:method = '' OR p.method = :method)
               AND (:source = 'ALL' OR (:source = 'STAFF' AND o.placed_by IS NOT NULL)
@@ -290,8 +296,9 @@ public interface FinanceRepository extends Repository<CustomerOrder, UUID> {
                    o.customer_name AS "customerName", o.guest_phone AS "customerPhone", p.method AS method,
                    p.amount AS amount, p.provider_reference AS reference, o.subtotal AS products,
                    o.delivery_fee AS delivery, o.placed_by AS "placedBy",
-                   p.raw_response ->> 'type' AS "confirmType", p.raw_response ->> 'by' AS "confirmBy",
-                   (p.raw_response -> 'Body' IS NOT NULL) AS "mpesaCallback",
+                   (COALESCE(NULLIF(p.raw_response -> 'now', 'null'::jsonb), p.raw_response)) ->> 'type' AS "confirmType", (COALESCE(NULLIF(p.raw_response -> 'now', 'null'::jsonb), p.raw_response)) ->> 'by' AS "confirmBy",
+                   COALESCE(p.raw_response ->> 'type' = 'revived_after_failure', false) AS "revived",
+                   ((COALESCE(NULLIF(p.raw_response -> 'now', 'null'::jsonb), p.raw_response)) -> 'Body' IS NOT NULL) AS "mpesaCallback",
                    cl.transaction_code AS "claimCode", cl.resolved_by AS "claimResolvedBy",
                    bc.bank_txn_id AS "bankTxnId", bc.resolved_by AS "bankResolvedBy",
                    (SELECT COUNT(*) FROM order_price_change c WHERE c.order_id = o.id) AS "priceChanges",

@@ -23,6 +23,14 @@ class FinancePhoneSearchTest {
     }
 
     @Test
+    void theSpreadsheetWritesAPhoneAsPeopleDoSoExcelKeepsItsDigits() {
+        assertThat(FinanceService.phone("254712345678")).isEqualTo("0712 345 678");
+        assertThat(FinanceService.phone("254110222333")).isEqualTo("0110 222 333");
+        assertThat(FinanceService.phone("+44 20 7946 0958")).isEqualTo("+44 20 7946 0958");
+        assertThat(FinanceService.phone(null)).isNull();
+    }
+
+    @Test
     void tooFewDigitsMatchNoPhone() {
         assertThat(FinanceService.phoneLike("07")).isEqualTo(FinanceService.NO_PHONE);
         assertThat(FinanceService.phoneLike("")).isEqualTo(FinanceService.NO_PHONE);

@@ -199,7 +199,8 @@ class TodaysOrderFeaturesIntegrationTest {
         MvcResult tooMany = mvc.perform(jsonBody(post(path),
                 "{\"lines\":[{\"itemId\":\"" + itemId + "\",\"qty\":\"5\",\"restock\":true}]}")
                 .header("Authorization", "Bearer " + token)).andReturn();
-        String message = tooMany.getResponse().getContentAsString();
+        // the message alone: the timestamp beside it can hold "1.000" ("...T14:09:21.000325900Z")
+        String message = json.readTree(tooMany.getResponse().getContentAsString()).get("error").asText();
         assertThat(message).contains("Today Test").contains("only 1 can still be returned")
                 .contains("1 were sold, 0 already came back").doesNotContain("1.000").doesNotContain("0.000");
 

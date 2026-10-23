@@ -213,8 +213,16 @@ public class FinanceService {
                 r.getPriceChanges(), r.getAmountOff());
     }
 
-    /** What made a payment count, and who: {@code [how, by]}, by null when the record does not say. */
+    /**
+     * What made a payment count, and who: {@code [how, by]}, by null when the record does not say. A payment confirmed after
+     * it had been marked failed says so.
+     */
     private static String[] how(LedgerRow r) {
+        String[] how = howConfirmed(r);
+        return r.getRevived() ? new String[]{how[0] + " (after it was marked failed)", how[1]} : how;
+    }
+
+    private static String[] howConfirmed(LedgerRow r) {
         String type = r.getConfirmType();
         if ("staff_entered_order".equals(type)) {
             return new String[]{"Taken by staff with the order", r.getConfirmBy()};
@@ -235,23 +243,43 @@ public class FinanceService {
         return new String[]{"Confirmed", null};
     }
 
-    /** The ledger as a CSV file (Excel opens it): one line per payment, at most {@link #MAX_EXPORT_ROWS}. */
+    /**
+     * The ledger as a CSV file (Excel opens it): one line per payment. More than {@link #MAX_EXPORT_ROWS} is refused rather
+     * than cut short, so a total added up from the file is never quietly less than the period's.
+     */
     @Transactional(readOnly = true)
     public String ledgerCsv(Instant from, Instant to, String method, String source, String q) {
-        List<LedgerEntry> rows = ledger(from, to, method, source, q, PageRequest.of(0, MAX_EXPORT_ROWS)).getContent();
+        Page<LedgerEntry> page = ledger(from, to, method, source, q, PageRequest.of(0, MAX_EXPORT_ROWS));
+        if (page.getTotalElements() > MAX_EXPORT_ROWS) {
+            throw new UnprocessableException("That is " + page.getTotalElements() + " payments, more than one spreadsheet"
+                    + " holds (" + MAX_EXPORT_ROWS + "). Choose a shorter period or a filter.");
+        }
+        List<LedgerEntry> rows = page.getContent();
         StringBuilder csv = new StringBuilder("﻿");
         csv.append("Paid at (Nairobi),Order,Customer,Phone,Way of payment,Amount (KSh),Reference,Products (KSh),")
                 .append("Delivery fee (KSh),Entered by,How it was confirmed,Confirmed by,Customer's code,Bank transaction,")
                 .append("Price changes,Given away (KSh)\r\n");
         for (LedgerEntry e : rows) {
             csv.append(String.join(",",
-                    text(STAMP.format(e.paidAt())), text(e.orderNo()), text(e.customerName()), text(e.customerPhone()),
+                    text(STAMP.format(e.paidAt())), text(e.orderNo()), text(e.customerName()), text(phone(e.customerPhone())),
                     text(e.method()), number(e.amount()), text(e.reference()), number(e.products()), number(e.delivery()),
                     text(e.placedBy()), text(e.confirmedHow()), text(e.confirmedBy()), text(e.customerCode()),
                     text(e.bankTransaction()), String.valueOf(e.priceChanges()), number(e.amountOff())))
                     .append("\r\n");
         }
         return csv.toString();
+    }
+
+    /**
+     * A phone as people write it ("0712 345 678"): stored as 254712345678, a bare number Excel would show as 2.54712E+11 and
+     * lose the digits of once the file is saved again. Anything else is left as it is.
+     */
+    static String phone(String stored) {
+        if (stored != null && stored.matches("254[17]\\d{8}")) {
+            String local = "0" + stored.substring(3);
+            return local.substring(0, 4) + " " + local.substring(4, 7) + " " + local.substring(7);
+        }
+        return stored;
     }
 
     private static String number(BigDecimal value) {
@@ -403,9 +431,21 @@ public class FinanceService {
         };
     }
 
-    /** How a successful payment was confirmed and by whom, from the note kept with it. */
+    /**
+     * How a successful payment was confirmed and by whom, from the note kept with it. A payment confirmed after it had been
+     * marked failed keeps the confirmation's note under "now" (see PaymentService.confirmSuccess) and says so.
+     */
     private String confirmation(PaymentRecord p) {
-        JsonNode note = json(p.getRawResponse());
+        JsonNode kept = json(p.getRawResponse());
+        if (kept != null && "revived_after_failure".equals(text(kept, "type"))) {
+            JsonNode now = kept.get("now");
+            String how = confirmationFrom(now == null || now.isNull() ? null : now);
+            return (how == null ? "Confirmed" : how) + " after it had been marked failed";
+        }
+        return confirmationFrom(kept);
+    }
+
+    private String confirmationFrom(JsonNode note) {
         String type = note == null ? null : text(note, "type");
         String by = note == null ? null : text(note, "by");
         if ("staff_entered_order".equals(type)) {

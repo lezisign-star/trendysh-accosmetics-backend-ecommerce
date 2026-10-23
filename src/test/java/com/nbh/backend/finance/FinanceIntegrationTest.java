@@ -320,6 +320,40 @@ class FinanceIntegrationTest {
     }
 
     @Test
+    void aPaymentConfirmedAfterItWasMarkedFailedSaysSoWithWhoConfirmedIt() throws Exception {
+        String oil = newProduct("450");
+        Instant from = Instant.now();
+        String session = "revived-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), "{\"variantId\":\"" + oil + "\",\"qty\":1}", session);
+        String body = "{\"customerName\":\"Revived Customer\",\"guestEmail\":\"rev-" + UUID.randomUUID().toString().substring(0, 8)
+                + "@example.com\",\"guestPhone\":\"" + phone() + "\",\"fulfilmentType\":\"PICKUP\",\"deliveryAddress\":\"Junction — Stalls D5\"}";
+        JsonNode order = cartOk(post("/api/v1/checkout"), body, session).get("order");
+        String orderId = order.get("id").asText();
+        String paymentId = ok(get("/api/v1/orders/" + orderId), null).get("payments").get(0).get("id").asText();
+        ok(post("/api/v1/payments/" + paymentId + "/fail-manual"), "{\"reason\":\"no payment seen\"}");
+        String reference = code();
+        ok(post("/api/v1/payments/" + paymentId + "/confirm-manual"),
+                json.writeValueAsString(Map.of("reference", reference, "notes", "Customer showed the message", "method", "MPESA",
+                        "revive", true)));
+
+        JsonNode row = finance("payments?q=" + order.get("orderNo").asText(), from).get("content").get(0);
+        assertThat(row.get("confirmedHow").asText()).isEqualTo("Confirmed by staff (after it was marked failed)");
+        assertThat(row.get("confirmedBy").asText()).as("who confirmed it is read from the confirmation itself")
+                .isEqualTo(admin.getFullName());
+
+        JsonNode trail = ok(get("/api/v1/admin/finance/orders/" + orderId + "/trail"), null);
+        boolean said = false;
+        for (JsonNode step : trail.get("steps")) {
+            if ("PAYMENT_CONFIRMED".equals(step.get("kind").asText())) {
+                assertThat(step.get("detail").asText()).startsWith("Confirmed by " + admin.getFullName())
+                        .endsWith("after it had been marked failed");
+                said = true;
+            }
+        }
+        assertThat(said).isTrue();
+    }
+
+    @Test
     void aSearchForPercentSignsOrUnderscoresFindsThemAsLettersNotWildcards() throws Exception {
         String oil = newProduct("450");
         Instant from = Instant.now();
@@ -438,17 +472,20 @@ class FinanceIntegrationTest {
     void onlyThePeopleWhoOverseeTheMoneyCanReadIt() throws Exception {
         Instant from = Instant.now().minusSeconds(60);
         String path = "/api/v1/admin/finance/summary?" + period(from);
-        // the owner, a manager and the read-only reporting account may; a cashier, a stock controller and a stranger may not
+        // the owner and a manager may; the read-only Viewer (owner, 2026-10-23), a cashier, a stock controller and a
+        // stranger may not
         assertThat(call(get(path), null, jwtService.generateAccessToken(newStaff("MANAGER"))).getResponse().getStatus()).isEqualTo(200);
-        assertThat(call(get(path), null, jwtService.generateAccessToken(newStaff("VIEWER"))).getResponse().getStatus()).isEqualTo(200);
+        assertThat(call(get(path), null, jwtService.generateAccessToken(newStaff("VIEWER"))).getResponse().getStatus()).isEqualTo(403);
         assertThat(call(get(path), null, jwtService.generateAccessToken(newStaff("CASHIER"))).getResponse().getStatus()).isEqualTo(403);
         assertThat(call(get(path), null, jwtService.generateAccessToken(newStaff("STOCK_CONTROLLER"))).getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(get(path)).andReturn().getResponse().getStatus()).isIn(401, 403);
 
         String viewer = jwtService.generateAccessToken(newStaff("VIEWER"));
-        assertThat(call(get("/api/v1/admin/finance/payments?" + period(from)), null, viewer).getResponse().getStatus()).isEqualTo(200);
-        assertThat(call(get("/api/v1/admin/finance/payments.csv?" + period(from)), null, viewer).getResponse().getStatus()).isEqualTo(200);
-        assertThat(call(get("/api/v1/admin/finance/price-history?" + period(from)), null, viewer).getResponse().getStatus()).isEqualTo(200);
+        assertThat(call(get("/api/v1/admin/finance/payments?" + period(from)), null, viewer).getResponse().getStatus()).isEqualTo(403);
+        assertThat(call(get("/api/v1/admin/finance/payments.csv?" + period(from)), null, viewer).getResponse().getStatus())
+                .as("the spreadsheet holds customers' phones").isEqualTo(403);
+        assertThat(call(get("/api/v1/admin/finance/price-history?" + period(from)), null, viewer).getResponse().getStatus()).isEqualTo(403);
+        assertThat(call(get("/api/v1/admin/price-changes?" + period(from)), null, viewer).getResponse().getStatus()).isEqualTo(403);
         String cashier = jwtService.generateAccessToken(newStaff("CASHIER"));
         assertThat(call(get("/api/v1/admin/finance/payments?" + period(from)), null, cashier).getResponse().getStatus()).isEqualTo(403);
         assertThat(call(get("/api/v1/admin/finance/payments.csv?" + period(from)), null, cashier).getResponse().getStatus()).isEqualTo(403);

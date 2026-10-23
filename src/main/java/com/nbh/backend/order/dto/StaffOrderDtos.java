@@ -41,7 +41,7 @@ public final class StaffOrderDtos {
             @Valid DeliveryDetails deliveryDetails,
             @NotNull @PositiveOrZero BigDecimal expectedSubtotal,
             @Valid PayNow payNow,
-            @Valid @Size(max = 50) List<PriceChangeInput> priceChanges
+            @Valid @Size(max = 50) List<@NotNull @Valid PriceChangeInput> priceChanges
     ) {}
 
     /** The payment staff are taking now. {@code reference} is the M-PESA code, bank reference or receipt number. */
