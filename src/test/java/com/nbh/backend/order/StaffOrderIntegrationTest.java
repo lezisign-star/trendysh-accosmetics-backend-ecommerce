@@ -181,7 +181,7 @@ class StaffOrderIntegrationTest {
         kit.put("categoryId", newCategory());
         kit.put("description", "For a technician");
         kit.put("finalPrice", "1000");
-        kit.put("components", List.of(Map.of("variantId", red, "qty", "2"), Map.of("variantId", cleanserId, "qty", "1")));
+        kit.put("components", List.of(Map.of("variantId", red, "qty", "2", "customerCanChange", true), Map.of("variantId", cleanserId, "qty", "1")));
         JsonNode created = ok(post("/api/v1/admin/kits"), json.writeValueAsString(kit));
         return new Fixture(created.get("variantId").asText(), red, pink, cleanserId, oilId);
     }
@@ -281,11 +281,11 @@ class StaffOrderIntegrationTest {
         Fixture f = fixture();
         String session = basket(addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())), addBody(f.oilId(), 2, null));
 
-        JsonNode placed = placeOk(orderBody(session, "2200", phone()));
+        JsonNode placed = placeOk(orderBody(session, "2131", phone()));
         JsonNode order = placed.get("order");
 
         assertThat(order.get("status").asText()).isEqualTo("PENDING_PAYMENT");
-        assertThat(order.get("subtotal").decimalValue()).as("1000 + 2 x (650 - 500) for the kit, and 2 x 450").isEqualByComparingTo("2200");
+        assertThat(order.get("subtotal").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300 for the kit, and 2 x 450").isEqualByComparingTo("2131");
         assertThat(order.get("placedBy").asText()).isEqualTo(admin.getFullName());
         assertThat(placed.get("payRef").isNull()).as("the customer can pay later with the link").isFalse();
         assertThat(placed.get("paymentRecordId").asText()).isNotBlank();
@@ -293,7 +293,7 @@ class StaffOrderIntegrationTest {
         // the lines in the order they were entered: the kit, then the oil; the kit's own products in the kit's order
         JsonNode lines = order.get("items");
         assertThat(lines).hasSize(2);
-        assertThat(lines.get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("1300");
+        assertThat(lines.get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("1231");
         assertThat(lines.get(1).get("unitPrice").decimalValue()).isEqualByComparingTo("450");
         JsonNode inside = lines.get(0).get("components");
         assertThat(inside).hasSize(2);
@@ -931,7 +931,7 @@ class StaffOrderIntegrationTest {
         StaffUser manager = newStaff("MANAGER");
         String session = basket(addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())));
         Map<String, Object> body = orderBody(session, "1200", phone());
-        body.put("priceChanges", List.of(change(lineId(session, 0), "1200", "Kit for a new salon, 100 off", null, null)));
+        body.put("priceChanges", List.of(change(lineId(session, 0), "1200", "Kit for a new salon, 31 off", null, null)));
 
         JsonNode order = placeOk(body, tokenOf(manager)).get("order");
 
@@ -940,8 +940,8 @@ class StaffOrderIntegrationTest {
         assertThat(kitLine.get("unitPrice").decimalValue()).isEqualByComparingTo("1200");
         assertThat(kitLine.get("components")).as("the kit's products are listed as they were picked").hasSize(2);
         JsonNode record = order.get("priceChanges").get(0);
-        assertThat(record.get("listUnitPrice").decimalValue()).as("1000 + 2 x (650 - 500)").isEqualByComparingTo("1300");
-        assertThat(record.get("amountOff").decimalValue()).isEqualByComparingTo("100");
+        assertThat(record.get("listUnitPrice").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300").isEqualByComparingTo("1231");
+        assertThat(record.get("amountOff").decimalValue()).isEqualByComparingTo("31");
         assertThat(record.get("itemId").asText()).as("on the kit's own line").isEqualTo(kitLine.get("itemId").asText());
     }
 
@@ -984,8 +984,9 @@ class StaffOrderIntegrationTest {
                 .param("from", "2020-01-01T00:00:00Z").param("to", "2020-01-02T00:00:00Z"), null, token), orderNo))
                 .as("another period").isFalse();
 
-        // a read-only account oversees the money and may look; a cashier or stock controller may not
-        assertThat(call(get("/api/v1/admin/price-changes"), null, viewerToken()).getResponse().getStatus()).isEqualTo(200);
+        // only those who approve prices or oversee the money may look: not the Viewer, a cashier or a stock controller
+        assertThat(call(get("/api/v1/admin/price-changes"), null, viewerToken()).getResponse().getStatus())
+                .as("not the read-only Viewer (owner, 2026-10-23)").isEqualTo(403);
         assertThat(call(get("/api/v1/admin/price-changes"), null, tokenOf(cashier)).getResponse().getStatus()).isEqualTo(403);
         assertThat(call(get("/api/v1/admin/price-changes"), null, tokenOf(newStaff("STOCK_CONTROLLER"))).getResponse().getStatus())
                 .isEqualTo(403);
@@ -1019,7 +1020,8 @@ class StaffOrderIntegrationTest {
 
     private JsonNode paidKitOrder(Fixture f) throws Exception {
         String session = basket(addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())), addBody(f.oilId(), 1, null));
-        Map<String, Object> body = orderBody(session, "1750", phone());
+        // 1231 for the kit with pink (1000 + 2 x 150 x 1000/1300), 450 for the oil
+        Map<String, Object> body = orderBody(session, "1681", phone());
         body.put("payNow", Map.of("method", "CASH"));
         return placeOk(body).get("order");
     }

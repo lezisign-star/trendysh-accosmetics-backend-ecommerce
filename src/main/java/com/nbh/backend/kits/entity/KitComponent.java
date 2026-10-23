@@ -31,8 +31,8 @@ public class KitComponent extends BaseEntity {
 
     /**
      * Whether a customer may pick another variant (colour or size) of this product inside the kit; the product itself
-     * and its quantity never change. On unless staff turn it off for this product.
+     * and its quantity never change. Off unless staff switch it on for this product (owner, 2026-10-23).
      */
     @Column(name = "customer_can_change", nullable = false)
-    private boolean customerCanChange = true;
+    private boolean customerCanChange = false;
 }

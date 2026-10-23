@@ -47,6 +47,11 @@ public enum Permission {
     PAYMENT_VIEW,
     PAYMENT_MANAGE,
     PAYMENT_REFUND,
+    /**
+     * Sales &amp; money: what the website made, every payment with its trail (and the spreadsheet of them, with customers'
+     * phones), the price changes staff made. Not for the read-only Viewer (owner, 2026-10-23).
+     */
+    FINANCE_VIEW,
 
     // Staff / role management
     USER_VIEW,

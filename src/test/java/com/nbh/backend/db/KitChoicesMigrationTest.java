@@ -20,8 +20,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * V69 lets a customer pick another colour or size of a product inside a kit: a "customer can change" switch on each kit
  * product, a choice key on each basket line (so the same kit with different picks is a different line) and a table for the
  * picks. This brings a scratch schema to V68, seeds a kit and baskets shaped like the live shop's (a kit with two products,
- * a basket holding the kit and a plain product), and only then applies V69 and the rest: every existing kit product must
- * stay swappable, every existing basket line must keep meaning "the kit as it comes", and nothing may be rewritten.
+ * a basket holding the kit and a plain product), and only then applies V69 and the rest: every existing basket line must
+ * keep meaning "the kit as it comes" and nothing may be rewritten. V74 then turns swapping off for every kit product
+ * (owner, 2026-10-23: off unless staff switch it on; no kit was live yet).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class KitChoicesMigrationTest {
@@ -146,9 +147,11 @@ class KitChoicesMigrationTest {
     }
 
     @Test
-    void everyProductInAnExistingKitCanStillBeSwapped() throws Exception {
+    void swappingIsOffForEveryExistingKitProductUntilStaffSwitchItOn() throws Exception {
         assertThat(one("SELECT count(*) FROM kit_component")).isEqualTo("2");
-        assertThat(one("SELECT count(*) FROM kit_component WHERE customer_can_change")).isEqualTo("2");
+        assertThat(one("SELECT count(*) FROM kit_component WHERE customer_can_change")).isEqualTo("0");
+        assertThat(one("SELECT column_default FROM information_schema.columns WHERE table_schema = current_schema()"
+                + " AND table_name = 'kit_component' AND column_name = 'customer_can_change'")).isEqualTo("false");
     }
 
     @Test

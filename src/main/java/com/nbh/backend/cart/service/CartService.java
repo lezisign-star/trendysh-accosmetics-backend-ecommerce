@@ -256,8 +256,8 @@ public class CartService {
     }
 
     /**
-     * A kit's price as it comes, moved by the shopper's picks: the quantity of each product they changed times the
-     * difference between the selling price of what they picked and of what the kit comes with. Never below zero.
+     * A kit's price as it comes, moved by the shopper's picks: for each product they changed, the quantity times the
+     * difference in selling price, at the kit's share of its products' price ({@link KitService#priceDelta}). Never below zero.
      */
     private EffectivePriceResolver.EffectivePrice withPicks(CartItem item, EffectivePriceResolver.EffectivePrice price) {
         if (!item.getVariant().isKit() || item.getChoices().isEmpty()) {

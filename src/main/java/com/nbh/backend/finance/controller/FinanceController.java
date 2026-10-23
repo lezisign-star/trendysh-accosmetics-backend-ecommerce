@@ -23,13 +23,13 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Money the website has taken, for the people who oversee it: the owner, the developer, managers and the read-only
- * reporting role. {@code from} and {@code to} are instants (a period is [from, to)); left out, the period is the last 30
+ * Money the website has taken, for the people who oversee it ({@code FINANCE_VIEW}: the owner, the developer and managers;
+ * not the read-only Viewer, owner 2026-10-23). {@code from} and {@code to} are instants (a period is [from, to)); left out, the period is the last 30
  * days. Everything here only reads. See {@link FinanceService}.
  */
 @RestController
 @RequestMapping("/api/v1/admin/finance")
-@PreAuthorize("hasAnyAuthority('PERM_PAYMENT_VIEW','PERM_ANALYTICS_VIEW')")
+@PreAuthorize("hasAuthority('PERM_FINANCE_VIEW')")
 public class FinanceController {
 
     private static final int MAX_PAGE_SIZE = 100;

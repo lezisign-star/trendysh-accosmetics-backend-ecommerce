@@ -407,6 +407,10 @@ public class KitService {
         }
         Map<UUID, BigDecimal> onShelf = stockAvailability.available(shelfIds);
         PromoCampaign campaign = promoCampaigns.getActiveOrNull();
+        // A pick keeps the kit's discount as a share (see priceDelta): the same arithmetic the cart charges with.
+        BigDecimal share = kitShare(priceOf(k.getVariant()), comps.stream()
+                .map(c -> priceOf(c.getComponentVariant()).multiply(c.getQty()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
         List<KitDetailDto.Item> items = comps.stream().map(c -> {
             ProductVariant cv = c.getComponentVariant();
             Product cp = cv.getProduct();
@@ -423,7 +427,7 @@ public class KitService {
                 String label = CatalogLabel.of(v);
                 return new KitDetailDto.Choice(v.getId(), label != null ? label : v.getVariantName(),
                         v.getOptionColor(), v.getOptionSize(), v.getSwatchHex(), loosePrice(v, campaign),
-                        optionPrice.subtract(price).multiply(c.getQty()).setScale(2, RoundingMode.HALF_UP),
+                        pickDelta(optionPrice.subtract(price).multiply(c.getQty()), share),
                         optionPhotos.isEmpty() ? null : optionPhotos.get(0), optionPhotos,
                         onShelf.getOrDefault(v.getId(), BigDecimal.ZERO).compareTo(c.getQty()) >= 0,
                         v.getId().equals(cv.getId()));
@@ -585,17 +589,46 @@ public class KitService {
         return new Selection(parts, outOfDate);
     }
 
-    /** What ONE kit costs more (or less) with these picks than as it comes, to the cent; zero for no picks. */
+    /**
+     * What ONE kit costs more (or less) with these picks than as it comes; zero for no picks. The kit's discount is a share
+     * of its products' price, not a fixed sum (owner, 2026-10-23), so each pick moves the price by its difference in
+     * selling price times that share ({@link #pickDelta}): cheaper picks make the kit cheaper by less than they save, and a
+     * kit can never become free by swapping.
+     */
     @Transactional(readOnly = true)
     public BigDecimal priceDelta(UUID kitVariantId, Map<UUID, UUID> choices) {
         if (choices == null || choices.isEmpty()) {
             return BigDecimal.ZERO;
         }
-        return selectionFor(kitVariantId, choices).stream()
+        List<SelectedPart> parts = selectionFor(kitVariantId, choices);
+        BigDecimal packagePrice = kits.findByVariantId(kitVariantId).map(k -> priceOf(k.getVariant()))
+                .orElse(BigDecimal.ZERO);
+        BigDecimal share = kitShare(packagePrice, parts.stream()
+                .map(p -> priceOf(p.defaultVariant()).multiply(p.qtyPerKit()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
+        return parts.stream()
                 .filter(SelectedPart::changed)
-                .map(SelectedPart::unitDelta)
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
+                .map(p -> pickDelta(p.unitDelta(), share))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /**
+     * The kit's price as a share of what its products sell for as it comes (0.8 for a kit at 20% off); 1 when the products
+     * have no price to compare with.
+     */
+    public static BigDecimal kitShare(BigDecimal packagePrice, BigDecimal defaultsTotal) {
+        if (defaultsTotal.signum() <= 0) {
+            return BigDecimal.ONE;
+        }
+        return packagePrice.divide(defaultsTotal, 10, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * What one pick adds to (or takes off) the kit's price: its difference in selling price times the kit's share, in
+     * whole shillings. The kit's page shows exactly this per option and the cart adds up the same figures, so the two agree.
+     */
+    public static BigDecimal pickDelta(BigDecimal sellingDifference, BigDecimal share) {
+        return sellingDifference.multiply(share).setScale(0, RoundingMode.HALF_UP);
     }
 
     /**

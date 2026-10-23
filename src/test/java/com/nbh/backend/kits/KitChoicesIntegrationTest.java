@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nbh.backend.catalog.entity.Category;
 import com.nbh.backend.catalog.repository.CategoryRepository;
 import com.nbh.backend.common.security.JwtService;
+import com.nbh.backend.kits.service.KitService;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
 import com.nbh.backend.staff.repository.StaffUserRepository;
@@ -230,9 +231,10 @@ class KitChoicesIntegrationTest {
         lashes.get("choices").forEach(c -> byId.put(c.get("variantId").asText(), c));
         assertThat(byId.get(f.redId()).get("isDefault").asBoolean()).isTrue();
         assertThat(byId.get(f.redId()).get("priceDelta").decimalValue()).isEqualByComparingTo("0");
-        // two lashes per kit: 2 x (650 - 500) more, and 2 x (400 - 500) less
-        assertThat(byId.get(f.pinkId()).get("priceDelta").decimalValue()).isEqualByComparingTo("300");
-        assertThat(byId.get(f.budgetId()).get("priceDelta").decimalValue()).isEqualByComparingTo("-200");
+        // two lashes per kit: 2 x (650 - 500) more and 2 x (400 - 500) less, each at the kit's share (1000 of 1300),
+        // in whole shillings: the discount is a percentage, so a pick keeps it
+        assertThat(byId.get(f.pinkId()).get("priceDelta").decimalValue()).isEqualByComparingTo("231");
+        assertThat(byId.get(f.budgetId()).get("priceDelta").decimalValue()).isEqualByComparingTo("-154");
         assertThat(byId.get(f.pinkId()).get("inStock").asBoolean()).isTrue();
         // a one-option product has nothing to choose
         assertThat(cleanser).isNotNull();
@@ -293,8 +295,9 @@ class KitChoicesIntegrationTest {
         Map<String, JsonNode> byId = new HashMap<>();
         lashes.get("choices").forEach(c -> byId.put(c.get("variantId").asText(), c));
         assertThat(byId.get(f.redId()).get("unitPrice").decimalValue()).isEqualByComparingTo("450");
-        // what a pick does to the kit's price is still 2 x (650 - 500): the kit never takes the deal
-        assertThat(byId.get(f.pinkId()).get("priceDelta").decimalValue()).isEqualByComparingTo("300");
+        // what a pick does to the kit's price is still worked on selling prices (2 x (650 - 500) at 1000/1300): the kit
+        // never takes the deal
+        assertThat(byId.get(f.pinkId()).get("priceDelta").decimalValue()).isEqualByComparingTo("231");
 
         JsonNode card = listedKit(f.kitVariantId());
         assertThat(card.get("sumOfComponents").decimalValue()).isEqualByComparingTo("1200");
@@ -361,9 +364,9 @@ class KitChoicesIntegrationTest {
         }
         assertThat(plain.get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
         assertThat(plain.get("qty").decimalValue()).isEqualByComparingTo("1");
-        assertThat(pink.get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 500)").isEqualByComparingTo("1300");
+        assertThat(pink.get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300").isEqualByComparingTo("1231");
         assertThat(pink.get("qty").decimalValue()).as("the same picks add to the same line").isEqualByComparingTo("2");
-        assertThat(cart.get("subtotal").decimalValue()).isEqualByComparingTo("3600");
+        assertThat(cart.get("subtotal").decimalValue()).isEqualByComparingTo("3462");
 
         // what is inside the picked line, with the pick applied
         boolean sawPink = false;
@@ -387,7 +390,8 @@ class KitChoicesIntegrationTest {
         String session = "cheaper-" + UUID.randomUUID();
 
         JsonNode cheaper = cartOk(post("/api/v1/cart/items"), addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.budgetId())), session);
-        assertThat(line(cheaper, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (400 - 500)").isEqualByComparingTo("800");
+        // the kit keeps its share: cheaper lashes take 154 off, not the whole 200 they save
+        assertThat(line(cheaper, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (400 - 500) x 1000/1300").isEqualByComparingTo("846");
 
         // "picking" what the kit already has is the kit as it comes: it joins the plain line, not a new one
         String second = "default-pick-" + UUID.randomUUID();
@@ -504,8 +508,8 @@ class KitChoicesIntegrationTest {
 
         JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
         assertThat(line(cart, 0).get("available").asBoolean()).as("pink is still on sale").isTrue();
-        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 500), as they were shown")
-                .isEqualByComparingTo("1300");
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300, as they were shown")
+                .isEqualByComparingTo("1231");
         assertThat(line(cart, 0).get("kitItems")).as("the lashes are still in the kit, in pink").hasSize(2);
         JsonNode order = cartOk(post("/api/v1/checkout"), checkoutBody(), session).get("order");
         JsonNode detail = ok(get("/api/v1/orders/" + order.get("id").asText()), null);
@@ -527,11 +531,12 @@ class KitChoicesIntegrationTest {
 
         JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
         assertThat(line(cart, 0).get("available").asBoolean()).isTrue();
-        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 400): pink is still what they get")
-                .isEqualByComparingTo("1500");
+        // the kit now comes with 2 x 400 + 300 = 1100 of products for 1000: pink adds 2 x (650 - 400) x 1000/1100
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 455: pink is still what they get")
+                .isEqualByComparingTo("1455");
         JsonNode order = cartOk(post("/api/v1/checkout"), checkoutBody(), session).get("order");
         JsonNode detail = ok(get("/api/v1/orders/" + order.get("id").asText()), null);
-        assertThat(detail.get("subtotal").decimalValue()).isEqualByComparingTo("1500");
+        assertThat(detail.get("subtotal").decimalValue()).isEqualByComparingTo("1455");
         List<String> packed = new java.util.ArrayList<>();
         detail.get("items").get(0).get("components").forEach(c -> packed.add(c.get("variantId").asText()));
         assertThat(packed).contains(f.pinkId()).doesNotContain(f.redId(), f.budgetId());
@@ -611,9 +616,9 @@ class KitChoicesIntegrationTest {
         JsonNode detail = ok(get("/api/v1/orders/" + orderId), null);
         assertThat(detail.get("items")).hasSize(1);
         JsonNode kitLine = detail.get("items").get(0);
-        assertThat(kitLine.get("unitPrice").decimalValue()).isEqualByComparingTo("1300");
-        assertThat(kitLine.get("lineTotal").decimalValue()).isEqualByComparingTo("2600");
-        assertThat(detail.get("subtotal").decimalValue()).isEqualByComparingTo("2600");
+        assertThat(kitLine.get("unitPrice").decimalValue()).isEqualByComparingTo("1231");
+        assertThat(kitLine.get("lineTotal").decimalValue()).isEqualByComparingTo("2462");
+        assertThat(detail.get("subtotal").decimalValue()).isEqualByComparingTo("2462");
         assertThat(kitLine.get("components")).hasSize(2);
         boolean pinkListed = false;
         for (JsonNode component : kitLine.get("components")) {
@@ -666,7 +671,48 @@ class KitChoicesIntegrationTest {
         jdbc.update("UPDATE product_variant SET selling_price = 700 WHERE id = ?::uuid", f.pinkId());
 
         JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
-        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (700 - 500)").isEqualByComparingTo("1400");
-        assertThat(line(cart, 0).get("previousUnitPrice").decimalValue()).isEqualByComparingTo("1300");
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (700 - 500) x 1000/1300").isEqualByComparingTo("1308");
+        assertThat(line(cart, 0).get("previousUnitPrice").decimalValue()).isEqualByComparingTo("1231");
+    }
+
+    @Test
+    void swappingIsOffUnlessStaffSwitchItOn() throws Exception {
+        Map<String, String> lashes = newProduct(unique("Off Lashes"), new String[]{"Ruby Red", "500"},
+                new String[]{"Rose Pink", "650"});
+        String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink");
+        receiveStock(Map.of(red, new BigDecimal("10"), pink, new BigDecimal("10")));
+        JsonNode kit = ok(post("/api/v1/admin/kits"), kitBody(unique("Off Kit"), newProfession(), newCategory(), "450",
+                "{\"variantId\":\"" + red + "\",\"qty\":\"1\"}"));
+        assertThat(kit.get("components").get(0).get("customerCanChange").asBoolean()).isFalse();
+
+        String slug = jdbc.queryForObject("SELECT slug FROM product WHERE id = ?::uuid", String.class, kit.get("productId").asText());
+        JsonNode page = json.readTree(mvc.perform(get("/api/v1/catalog/kits/" + slug)).andReturn().getResponse().getContentAsString());
+        assertThat(page.get("items").get(0).get("canChange").asBoolean()).isFalse();
+        MvcResult refused = cartRaw(post("/api/v1/cart/items"),
+                addBody(kit.get("variantId").asText(), 1, Map.of(red, pink)), "off-" + UUID.randomUUID());
+        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+    }
+
+    @Test
+    void swappingInTheCheapestOptionsNeverMakesAKitFree() throws Exception {
+        // the kit's discount is 75% of its products' price (two 1 L at 3000 for 1500): two 50 ml at 100 keep that share
+        Map<String, String> oil = newProduct(unique("Share Oil"), new String[]{"1 L", "3000"}, new String[]{"50 ml", "100"});
+        receiveStock(Map.of(oil.get("1 L"), new BigDecimal("10"), oil.get("50 ml"), new BigDecimal("10")));
+        JsonNode kit = ok(post("/api/v1/admin/kits"), kitBody(unique("Share Kit"), newProfession(), newCategory(), "1500",
+                component(oil.get("1 L"), "2", true)));
+        String session = "share-" + UUID.randomUUID();
+        JsonNode cart = cartOk(post("/api/v1/cart/items"),
+                addBody(kit.get("variantId").asText(), 1, Map.of(oil.get("1 L"), oil.get("50 ml"))), session);
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1500 + 2 x (100 - 3000) x 1500/6000")
+                .isEqualByComparingTo("50");
+    }
+
+    @Test
+    void theShareIsWorkedOutFromTheKitsPriceAndItsProductsAndRoundedToWholeShillings() {
+        BigDecimal share = KitService.kitShare(new BigDecimal("1000"), new BigDecimal("1300"));
+        assertThat(KitService.pickDelta(new BigDecimal("300"), share)).isEqualByComparingTo("231");
+        assertThat(KitService.pickDelta(new BigDecimal("-200"), share)).isEqualByComparingTo("-154");
+        // nothing to compare with: the difference as it is
+        assertThat(KitService.kitShare(new BigDecimal("1000"), BigDecimal.ZERO)).isEqualByComparingTo("1");
     }
 }

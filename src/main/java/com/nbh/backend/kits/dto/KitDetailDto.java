@@ -15,7 +15,9 @@ import java.util.UUID;
  *
  * <p>An item the shopper may change ({@code canChange}) lists the {@code choices}: the colours and sizes of that product
  * that can be bought, the one the kit comes with marked {@code isDefault}. A choice's {@code priceDelta} is what ONE kit
- * costs more (or less) with it instead of the default: the quantity the kit holds times the difference in selling price.
+ * costs more (or less) with it instead of the default: the quantity the kit holds times the difference in selling price,
+ * times the kit's share of its products' price (its discount is a percentage), in whole shillings
+ * (see {@code KitService#priceDelta}).
  */
 public record KitDetailDto(
         UUID variantId, UUID productId, String slug, String name,

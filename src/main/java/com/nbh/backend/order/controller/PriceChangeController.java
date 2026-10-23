@@ -56,7 +56,7 @@ public class PriceChangeController {
     }
 
     /** Every price change in a period (default: the last 30 days), newest first, optionally only with some answers. */
-    @PreAuthorize("hasAnyAuthority('PERM_ORDER_PRICE_APPROVE','PERM_ANALYTICS_VIEW','PERM_PAYMENT_VIEW','PERM_ORDER_MANAGE_ALL')")
+    @PreAuthorize("hasAnyAuthority('PERM_ORDER_PRICE_APPROVE','PERM_FINANCE_VIEW')")
     @GetMapping
     public Page<PriceChangeView> inPeriod(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,

@@ -21,7 +21,7 @@ public final class KitDtos {
 
     /**
      * {@code customerCanChange} is whether a shopper may pick another colour or size of this product inside the kit;
-     * left out (an older client) it means yes, the way it is for every kit made before the switch existed.
+     * left out it means no: swapping is off unless staff switch it on (owner, 2026-10-23).
      */
     public record ComponentInput(@NotNull UUID variantId, @NotBlank String qty, Boolean customerCanChange) {
         public ComponentInput(UUID variantId, String qty) {
@@ -29,7 +29,7 @@ public final class KitDtos {
         }
 
         public boolean canChange() {
-            return customerCanChange == null || customerCanChange;
+            return Boolean.TRUE.equals(customerCanChange);
         }
     }
 
