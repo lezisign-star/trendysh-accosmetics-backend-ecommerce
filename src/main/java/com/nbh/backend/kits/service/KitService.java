@@ -25,6 +25,7 @@ import com.nbh.backend.kits.entity.Profession;
 import com.nbh.backend.kits.repository.KitComponentRepository;
 import com.nbh.backend.kits.repository.KitRepository;
 import com.nbh.backend.kits.repository.ProfessionRepository;
+import com.nbh.backend.stock.service.QuantityRules;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -143,6 +144,8 @@ public class KitService {
             if (qty.signum() <= 0) {
                 throw new UnprocessableException(v.getSku() + ": quantity must be positive");
             }
+            // The same rule as every other typed-in quantity: a product counted in pieces goes into a kit in whole pieces.
+            QuantityRules.requireSensible(v.getSku(), v, qty);
             variantById.put(c.variantId(), v);
             qtyByVariant.put(c.variantId(), qty);
         }
@@ -422,39 +425,89 @@ public class KitService {
     }
 
     /**
-     * The products of a kit as a shopper with these picks takes them, in the kit's own order; empty for a variant that is
-     * not a kit or a kit whose products have all become unavailable. A product that can no longer be bought is left out,
-     * as everywhere. A pick that does not fit any more (the product left the kit, staff switched swapping off, the option
-     * belongs to another product) is ignored rather than refused, so an old basket line still reads; a pick that fits but
-     * can no longer be bought is KEPT and shows as unavailable, so a shopper is never silently handed a different colour
-     * than the one they chose. This is the one method the cart and checkout expand a kit through.
+     * What a shopper's kit holds with their picks applied ({@link #parts}), and whether any pick of theirs can no longer
+     * be honoured ({@link #outOfDate}: staff switched swapping off for the product, or the colour or size they picked is
+     * gone). An out-of-date line must be refused with "choose again", never quietly packed as another colour or size.
      */
+    public record Selection(List<SelectedPart> parts, boolean outOfDate) {}
+
+    /** Just the products of {@link #selection}, for callers that only need what is inside. */
     @Transactional(readOnly = true)
     public List<SelectedPart> selectionFor(UUID kitVariantId, Map<UUID, UUID> choices) {
+        return selection(kitVariantId, choices).parts();
+    }
+
+    /**
+     * The products of a kit as a shopper with these picks takes them, in the kit's own order; empty for a variant that is
+     * not a kit or a kit whose products have all become unavailable. A product the kit comes with that can no longer be
+     * bought is left out, as everywhere, unless the shopper picked another colour or size of it that can. A pick that
+     * fits but can no longer be bought is KEPT and shows as unavailable, and a pick that no longer fits a product still in
+     * the kit is reported as {@link Selection#outOfDate}: a shopper is never silently handed a different colour than the
+     * one they chose. A pick is made against the variant the kit came with; if staff have since changed that default to
+     * another colour or size of the same product, the pick still finds its product, so the shopper keeps what they chose.
+     * A pick for a product that has left the kit is simply moot. This is the one method the cart and checkout expand a kit
+     * through.
+     */
+    @Transactional(readOnly = true)
+    public Selection selection(UUID kitVariantId, Map<UUID, UUID> choices) {
         Optional<Kit> kit = kits.findByVariantId(kitVariantId);
         if (kit.isEmpty()) {
-            return List.of();
+            return new Selection(List.of(), false);
         }
-        List<KitComponent> comps = componentRepository.findByKitIdOrderByLineNoAsc(kit.get().getId()).stream()
-                .filter(c -> KitDtos.isComponentAvailable(c.getComponentVariant()))
-                .toList();
+        List<KitComponent> all = componentRepository.findByKitIdOrderByLineNoAsc(kit.get().getId());
         Map<UUID, UUID> picks = choices == null ? Map.of() : choices;
         Map<UUID, ProductVariant> picked = picks.isEmpty() ? Map.of()
                 : variantRepository.findAllById(picks.values()).stream()
                         .collect(Collectors.toMap(ProductVariant::getId, v -> v, (a, b) -> a));
+        Map<UUID, KitComponent> byDefault = new HashMap<>();
+        for (KitComponent c : all) {
+            byDefault.putIfAbsent(c.getComponentVariant().getId(), c);
+        }
+
+        // Which product each pick is for, and what it was swapped to.
+        Map<UUID, ProductVariant> chosenFor = new HashMap<>();
+        boolean outOfDate = false;
+        for (Map.Entry<UUID, UUID> pick : picks.entrySet()) {
+            ProductVariant candidate = picked.get(pick.getValue());
+            KitComponent component = byDefault.get(pick.getKey());
+            if (component == null) {
+                if (candidate == null) {
+                    outOfDate = true; // neither what it was made against nor what was picked exists any more
+                    continue;
+                }
+                List<KitComponent> ofProduct = all.stream()
+                        .filter(c -> c.getComponentVariant().getProduct().getId().equals(candidate.getProduct().getId()))
+                        .toList();
+                if (ofProduct.isEmpty()) {
+                    continue; // the product has left the kit: there is nothing left to pick for
+                }
+                if (ofProduct.size() > 1) {
+                    outOfDate = true; // several shades of that product are in the kit: which one it was for is lost
+                    continue;
+                }
+                component = ofProduct.get(0);
+            }
+            if (candidate == null || !component.isCustomerCanChange()
+                    || !candidate.getProduct().getId().equals(component.getComponentVariant().getProduct().getId())) {
+                outOfDate = true;
+                continue;
+            }
+            if (chosenFor.putIfAbsent(component.getId(), candidate) != null) {
+                outOfDate = true; // two picks for one product
+            }
+        }
+
         List<SelectedPart> parts = new ArrayList<>();
-        for (KitComponent c : comps) {
+        for (KitComponent c : all) {
             ProductVariant def = c.getComponentVariant();
-            ProductVariant chosen = def;
-            UUID pickId = picks.get(def.getId());
-            ProductVariant candidate = pickId == null ? null : picked.get(pickId);
-            if (c.isCustomerCanChange() && candidate != null
-                    && candidate.getProduct().getId().equals(def.getProduct().getId())) {
-                chosen = candidate;
+            ProductVariant chosen = chosenFor.getOrDefault(c.getId(), def);
+            boolean swapped = !chosen.getId().equals(def.getId());
+            if (!swapped && !KitDtos.isComponentAvailable(def)) {
+                continue; // the kit keeps selling with what is left of it
             }
             parts.add(new SelectedPart(c.getId(), def, chosen, c.getQty(), c.isCustomerCanChange()));
         }
-        return parts;
+        return new Selection(parts, outOfDate);
     }
 
     /** What ONE kit costs more (or less) with these picks than as it comes, to the cent; zero for no picks. */

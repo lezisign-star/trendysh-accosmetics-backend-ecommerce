@@ -205,10 +205,13 @@ public class PaymentService {
         payment.setRawResponse(rawResponse);
         paymentRecordRepository.save(payment);
 
-        for (CustomerOrderItem item : order.getItems()) {
-            if (item.getReservation() != null) {
-                reservationService.release(item.getReservation().getId());
-            }
+        // Variant-id order, like confirmSuccess above: see OrderFulfilmentService.cancel for the deadlock this avoids.
+        List<CustomerOrderItem> held = order.getItems().stream()
+                .filter(item -> item.getReservation() != null)
+                .sorted(Comparator.comparing(item -> item.getVariant().getId()))
+                .toList();
+        for (CustomerOrderItem item : held) {
+            reservationService.release(item.getReservation().getId());
         }
         order.setStatus(OrderStatus.PAYMENT_FAILED);
         orderRepository.save(order);

@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -385,8 +386,13 @@ class KitChoicesIntegrationTest {
         assertThat(plain.get("items")).hasSize(2);
     }
 
+    /**
+     * Found by the kits audit (2026-10-23): when staff switched swapping off, an old line quietly went back to the colour
+     * the kit comes with, and with colours of the same price nothing at all told the shopper. A pick that no longer applies
+     * now stops the line instead, with a message that says to choose again.
+     */
     @Test
-    void switchingSwappingOffLaterReturnsAnOldLineToTheKitAsItComes() throws Exception {
+    void switchingSwappingOffLaterStopsAnOldLineInsteadOfQuietlyPackingAnotherColour() throws Exception {
         Fixture f = fixture(true, 10);
         String session = "switched-" + UUID.randomUUID();
         cartOk(post("/api/v1/cart/items"), addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
@@ -396,10 +402,93 @@ class KitChoicesIntegrationTest {
                 kit.get("categoryId").asText(), "1000", component(f.redId(), "2", false), component(f.cleanserId(), "1", true)));
 
         JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
-        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("the pick is ignored once it is not allowed").isEqualByComparingTo("1000");
-        for (JsonNode part : line(cart, 0).get("kitItems")) {
-            assertThat(part.get("changed").asBoolean()).isFalse();
-        }
+        assertThat(line(cart, 0).get("available").asBoolean()).as("the line says it cannot be ordered as it is").isFalse();
+        MvcResult refused = cartRaw(post("/api/v1/checkout"), checkoutBody(), session);
+        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+        assertThat(refused.getResponse().getContentAsString()).contains("not on offer any more").contains("choose again");
+
+        // taking the kit out and adding it again as it comes works, at the package price
+        String lineId = line(cart, 0).get("id").asText();
+        cartOk(delete("/api/v1/cart/items/" + lineId), null, session);
+        JsonNode again = cartOk(post("/api/v1/cart/items"), addBody(f.kitVariantId(), 1, null), session);
+        assertThat(line(again, 0).get("available").asBoolean()).isTrue();
+        assertThat(line(again, 0).get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(cartRaw(post("/api/v1/checkout"), checkoutBody(), session).getResponse().getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void aDefaultTakenOffSaleDoesNotTakeAShoppersPickedColourOutOfTheKit() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "default-gone-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        jdbc.update("UPDATE product_variant SET is_active = false WHERE id = ?::uuid", f.redId());
+
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(line(cart, 0).get("available").asBoolean()).as("pink is still on sale").isTrue();
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 500), as they were shown")
+                .isEqualByComparingTo("1300");
+        assertThat(line(cart, 0).get("kitItems")).as("the lashes are still in the kit, in pink").hasSize(2);
+        JsonNode order = cartOk(post("/api/v1/checkout"), checkoutBody(), session).get("order");
+        JsonNode detail = ok(get("/api/v1/orders/" + order.get("id").asText()), null);
+        List<String> packed = new java.util.ArrayList<>();
+        detail.get("items").get(0).get("components").forEach(c -> packed.add(c.get("variantId").asText()));
+        assertThat(packed).contains(f.pinkId(), f.cleanserId()).doesNotContain(f.redId());
+    }
+
+    @Test
+    void aKitsDefaultChangedByStaffStillGivesTheShopperTheColourTheyPicked() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "default-changed-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        // staff make black the colour the kit comes with, instead of red
+        JsonNode kit = ok(get("/api/v1/admin/kits/" + f.kitId()), null);
+        ok(put("/api/v1/admin/kits/" + f.kitId()), kitBody(kit.get("name").asText(), kit.get("professionId").asText(),
+                kit.get("categoryId").asText(), "1000", component(f.budgetId(), "2", true), component(f.cleanserId(), "1", true)));
+
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(line(cart, 0).get("available").asBoolean()).isTrue();
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 400): pink is still what they get")
+                .isEqualByComparingTo("1500");
+        JsonNode order = cartOk(post("/api/v1/checkout"), checkoutBody(), session).get("order");
+        JsonNode detail = ok(get("/api/v1/orders/" + order.get("id").asText()), null);
+        assertThat(detail.get("subtotal").decimalValue()).isEqualByComparingTo("1500");
+        List<String> packed = new java.util.ArrayList<>();
+        detail.get("items").get(0).get("components").forEach(c -> packed.add(c.get("variantId").asText()));
+        assertThat(packed).contains(f.pinkId()).doesNotContain(f.redId(), f.budgetId());
+    }
+
+    @Test
+    void twoProductsPickedToTheSameColourShareItsShelf() throws Exception {
+        // A kit can hold two shades of one product (red and pink lashes, one of each); picking pink for the red one makes
+        // both pink, so one kit needs two pink. With 3 on the shelf that is one kit, not three.
+        Map<String, String> lashes = newProduct(unique("Shared Shelf Lashes"), new String[]{"Ruby Red", "500"},
+                new String[]{"Rose Pink", "650"});
+        String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink");
+        receiveStock(Map.of(red, new BigDecimal("10"), pink, new BigDecimal("3")));
+        JsonNode kit = ok(post("/api/v1/admin/kits"), kitBody(unique("Shared Shelf Kit"), newProfession(), newCategory(), "1000",
+                component(red, "1", true), component(pink, "1", true)));
+        String kitVariantId = kit.get("variantId").asText();
+        String session = "shared-shelf-" + UUID.randomUUID();
+
+        MvcResult two = cartRaw(post("/api/v1/cart/items"), addBody(kitVariantId, 2, Map.of(red, pink)), session);
+        assertThat(two.getResponse().getStatus()).as("two kits would need 4 pink").isEqualTo(400);
+        assertThat(two.getResponse().getContentAsString()).contains("Only 1");
+
+        JsonNode one = cartOk(post("/api/v1/cart/items"), addBody(kitVariantId, 1, Map.of(red, pink)), session);
+        assertThat(line(one, 0).get("stockLeft").decimalValue()).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void aKitCannotHoldPartOfAPiece() throws Exception {
+        Map<String, String> oil = newProduct(unique("Whole Piece Oil"), new String[]{"Default", "450"});
+        JsonNode body = json.readTree(kitBody(unique("Half Kit"), newProfession(), newCategory(), "100",
+                component(oil.get("Default"), "1.5", true)));
+        MvcResult refused = mvc.perform(post("/api/v1/admin/kits").header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content(body.toString())).andReturn();
+        assertThat(refused.getResponse().getStatus()).isEqualTo(400);
+        assertThat(refused.getResponse().getContentAsString()).contains("whole number");
     }
 
     @Test

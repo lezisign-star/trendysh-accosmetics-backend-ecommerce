@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -430,11 +431,16 @@ public class OrderFulfilmentService {
                     + " and TumaBoda has no cancel option. Contact TumaBoda to stop the delivery, then cancel here.");
         }
 
-        for (CustomerOrderItem item : order.getItems()) {
-            if (item.getReservation() != null
-                    && item.getReservation().getStatus() == StockReservation.ReservationStatus.ACTIVE) {
-                reservationService.release(item.getReservation().getId());
-            }
+        // In variant-id order, as checkout reserves and confirmSuccess confirms: releasing in the order the lines were entered
+        // in could take two stock balances in the opposite order to a checkout touching the same two, and Postgres would
+        // abort one of the two requests as a deadlock.
+        List<CustomerOrderItem> held = order.getItems().stream()
+                .filter(item -> item.getReservation() != null
+                        && item.getReservation().getStatus() == StockReservation.ReservationStatus.ACTIVE)
+                .sorted(java.util.Comparator.comparing(item -> item.getVariant().getId()))
+                .toList();
+        for (CustomerOrderItem item : held) {
+            reservationService.release(item.getReservation().getId());
         }
 
         order.setStatus(OrderStatus.CANCELLED);

@@ -85,10 +85,28 @@ public class KitAvailabilityService {
         }
         Map<UUID, BigDecimal> onShelf = stockAvailability.available(
                 parts.stream().map(p -> p.variant().getId()).distinct().toList());
-        BigDecimal whole = null;
+        return wholeKits(parts, onShelf::get);
+    }
+
+    /**
+     * How many whole kits these parts make from the shelf figures given. Parts that draw on the same variant share its
+     * shelf (two products of a kit can be picked to the same colour, or a kit can hold two shades of one product that a
+     * pick makes the same), so what one kit uses of it is their quantities added up: counting each part against the whole
+     * shelf said "in stock" for a kit that checkout, which reserves part by part, then refused.
+     *
+     * @param shelf what is on the shelf for a variant; null counts as none
+     */
+    public static BigDecimal wholeKits(List<Part> parts, java.util.function.Function<UUID, BigDecimal> shelf) {
+        Map<UUID, BigDecimal> perKit = new java.util.LinkedHashMap<>();
         for (Part part : parts) {
-            BigDecimal have = onShelf.getOrDefault(part.variant().getId(), BigDecimal.ZERO);
-            BigDecimal kitsFromThis = have.signum() <= 0 ? BigDecimal.ZERO : have.divide(part.qty(), 0, RoundingMode.DOWN);
+            perKit.merge(part.variant().getId(), part.qty(), BigDecimal::add);
+        }
+        BigDecimal whole = null;
+        for (Map.Entry<UUID, BigDecimal> use : perKit.entrySet()) {
+            BigDecimal have = shelf.apply(use.getKey());
+            BigDecimal kitsFromThis = have == null || have.signum() <= 0
+                    ? BigDecimal.ZERO
+                    : have.divide(use.getValue(), 0, RoundingMode.DOWN);
             whole = whole == null ? kitsFromThis : whole.min(kitsFromThis);
         }
         return whole == null ? BigDecimal.ZERO : whole;
@@ -125,16 +143,10 @@ public class KitAvailabilityService {
 
         Map<UUID, BigDecimal> result = new HashMap<>();
         for (Kit kit : kitList) {
-            List<KitComponent> comps = purchasable(componentsByKit.get(kit.getId()));
-            BigDecimal whole = null;
-            for (KitComponent c : comps) {
-                BigDecimal have = onShelf.getOrDefault(c.getComponentVariant().getId(), BigDecimal.ZERO);
-                BigDecimal kitsFromThis = have.signum() <= 0
-                        ? BigDecimal.ZERO
-                        : have.divide(c.getQty(), 0, RoundingMode.DOWN);
-                whole = whole == null ? kitsFromThis : whole.min(kitsFromThis);
-            }
-            result.put(kit.getVariant().getId(), whole == null ? BigDecimal.ZERO : whole);
+            List<Part> parts = purchasable(componentsByKit.get(kit.getId())).stream()
+                    .map(c -> new Part(c.getComponentVariant(), c.getQty()))
+                    .toList();
+            result.put(kit.getVariant().getId(), wholeKits(parts, onShelf::get));
         }
         return result;
     }

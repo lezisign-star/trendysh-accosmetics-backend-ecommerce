@@ -93,6 +93,9 @@ class CheckoutServiceUnitTest {
         lenient().when(paymentRecordRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(reservationService.reserve(any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> new StockReservation());
+        // A line that is not a kit expands into nothing, as the real service answers; the kit tests below say otherwise.
+        lenient().when(kitService.selection(any(), any()))
+                .thenReturn(new com.nbh.backend.kits.service.KitService.Selection(List.of(), false));
     }
 
     private static final BankPaymentSettings.CollectionMode BANK = BankPaymentSettings.CollectionMode.BANK;
@@ -147,8 +150,9 @@ class CheckoutServiceUnitTest {
         ProductVariant demoComponent = cartItem(new BigDecimal("300.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false).getVariant();
         demoComponent.getProduct().setMockData(true);
         when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
-        when(kitService.selectionFor(eq(kitLine.getVariant().getId()), any()))
-                .thenReturn(List.of(part(demoComponent, BigDecimal.ONE)));
+        when(kitService.selection(eq(kitLine.getVariant().getId()), any()))
+                .thenReturn(new com.nbh.backend.kits.service.KitService.Selection(
+                        List.of(part(demoComponent, BigDecimal.ONE)), false));
 
         assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
                 .isInstanceOf(com.nbh.backend.common.exception.UnprocessableException.class)
@@ -216,8 +220,9 @@ class CheckoutServiceUnitTest {
         polish.setOptionColor("Ruby Red");
         polish.setSwatchHex("#9B111E");
         when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
-        when(kitService.selectionFor(eq(kitLine.getVariant().getId()), any())).thenReturn(List.of(
-                part(base, BigDecimal.ONE), part(polish, new BigDecimal("2"))));
+        when(kitService.selection(eq(kitLine.getVariant().getId()), any()))
+                .thenReturn(new com.nbh.backend.kits.service.KitService.Selection(
+                        List.of(part(base, BigDecimal.ONE), part(polish, new BigDecimal("2"))), false));
         when(variantCovers.urlsFor(any())).thenReturn(java.util.Map.of(
                 polish.getId(), "https://res.cloudinary.com/demo/image/upload/gel-rr.jpg"));
 

@@ -104,6 +104,17 @@ public class CartService {
     }
 
     /**
+     * Whether this session's basket has already been turned into an order. Read after {@link #refreshPricesForCheckout}
+     * (which takes the lock), it is how staff entering an order tell a second submit of the same basket — already placed by
+     * the first — from a basket that was never filled.
+     */
+    @Transactional(readOnly = true)
+    public boolean isCheckedOut(String sessionId) {
+        return sessionId != null && !sessionId.isBlank()
+                && cartRepository.findBySessionId(sessionId).filter(cart -> cart.getStatus() == Cart.CartStatus.CONVERTED).isPresent();
+    }
+
+    /**
      * The first thing checkout does with a basket: bring every line up to today's price and make sure
      * everything in it can still be bought, then — if the caller says what total the shopper was shown —
      * refuse (409 {@code PRICE_CHANGED}) when the real total is different, so nobody is ever charged an
@@ -134,9 +145,15 @@ public class CartService {
                 throw new UnprocessableException(item.getProductNameSnapshot()
                         + " is no longer available. Please remove it from your cart and try again.");
             }
-            // What the shopper picked inside a kit has to be buyable too, or the order could not be packed as shown.
+            // What the shopper picked inside a kit has to be buyable too, or the order could not be packed as shown, and
+            // has to still apply: when staff have since stopped a product being changed, or the colour is gone, the
+            // order is not quietly packed as another colour.
             if (item.getVariant().isKit() && !item.getChoices().isEmpty()) {
-                for (KitService.SelectedPart part : kitService.selectionFor(item.getVariant().getId(), item.getChoices())) {
+                KitService.Selection selection = kitService.selection(item.getVariant().getId(), item.getChoices());
+                if (selection.outOfDate()) {
+                    throw new UnprocessableException(outOfDateKitMessage(item.getProductNameSnapshot()));
+                }
+                for (KitService.SelectedPart part : selection.parts()) {
                     if (!part.available()) {
                         String option = KitService.optionLabel(part.variant());
                         throw new UnprocessableException(part.variant().getProduct().getName()
@@ -318,6 +335,12 @@ public class CartService {
         return productName + " is a demo product and can't be ordered.";
     }
 
+    /** What a shopper is told when a colour or size they picked inside a kit can no longer be given to them. */
+    public static String outOfDateKitMessage(String kitName) {
+        return "A colour or size you picked in " + kitName + " is not on offer any more. Please remove the kit from your"
+                + " cart and choose again.";
+    }
+
     /**
      * What a shopper is told when the basket line asks for more than is in stock. The exact stock
      * figure is only shown when it is low (Odoo's website_sale_stock does the same with its
@@ -370,11 +393,17 @@ public class CartService {
      */
     private CartDto toDto(Cart cart) {
         Refreshed refreshed = refreshPrices(cart);
-        // What is inside each kit line, with the shopper's picks applied (empty for every other line).
+        // What is inside each kit line, with the shopper's picks applied (empty for every other line), and the lines whose
+        // picks no longer apply (they are shown as unavailable, like a product that has been taken off sale).
         Map<UUID, List<KitService.SelectedPart>> selections = new HashMap<>();
+        java.util.Set<UUID> outOfDate = new java.util.HashSet<>();
         for (CartItem item : refreshed.items()) {
             if (item.getVariant().isKit()) {
-                selections.put(item.getId(), kitService.selectionFor(item.getVariant().getId(), item.getChoices()));
+                KitService.Selection selection = kitService.selection(item.getVariant().getId(), item.getChoices());
+                selections.put(item.getId(), selection.parts());
+                if (selection.outOfDate()) {
+                    outOfDate.add(item.getId());
+                }
             }
         }
         Map<UUID, BigDecimal> stockLeft = stockLeftFor(refreshed.items(), selections);
@@ -388,6 +417,7 @@ public class CartService {
                 .map(item -> {
                     List<KitService.SelectedPart> parts = selections.getOrDefault(item.getId(), List.of());
                     boolean available = isPurchasable(item.getVariant())
+                            && !outOfDate.contains(item.getId())
                             && parts.stream().allMatch(KitService.SelectedPart::available);
                     return CartItemDto.from(item, available,
                             stockLeft.getOrDefault(item.getId(), BigDecimal.ZERO),
@@ -456,13 +486,9 @@ public class CartService {
                 continue;
             }
             List<KitAvailabilityService.Part> parts = partsByLine.getOrDefault(line.getId(), List.of());
-            BigDecimal whole = null;
-            for (KitAvailabilityService.Part part : parts) {
-                BigDecimal have = remaining.getOrDefault(part.variant().getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
-                BigDecimal kitsFromThis = have.divide(part.qty(), 0, java.math.RoundingMode.DOWN);
-                whole = whole == null ? kitsFromThis : whole.min(kitsFromThis);
-            }
-            BigDecimal left = whole == null ? BigDecimal.ZERO : whole;
+            // Parts that draw on one variant share its shelf (see KitAvailabilityService.wholeKits).
+            BigDecimal left = KitAvailabilityService.wholeKits(parts,
+                    variantId -> remaining.getOrDefault(variantId, BigDecimal.ZERO));
             result.put(line.getId(), left);
             BigDecimal taken = line.getQty().min(left);
             for (KitAvailabilityService.Part part : parts) {

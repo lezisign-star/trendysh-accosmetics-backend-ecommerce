@@ -251,8 +251,14 @@ public class CheckoutService {
         for (CartItem cartItem : cartItems) {
             // A kit expands into its products as the shopper picked them (another colour or size of a product inside it):
             // the variants picked are what is reserved and what the order lines name.
-            List<KitService.SelectedPart> components = kitService.selectionFor(
-                    cartItem.getVariant().getId(), cartItem.getChoices());
+            KitService.Selection selection = kitService.selection(cartItem.getVariant().getId(), cartItem.getChoices());
+            if (selection.outOfDate()) {
+                // Staff stopped a product being changed, or the colour or size is gone, since this was picked: never
+                // pack another one in its place without the shopper knowing.
+                throw new UnprocessableException(
+                        com.nbh.backend.cart.service.CartService.outOfDateKitMessage(cartItem.getProductNameSnapshot()));
+            }
+            List<KitService.SelectedPart> components = selection.parts();
             if (components.isEmpty()) {
                 targets.add(new ReservationTarget(cartItem, cartItem.getVariant(), cartItem.getQty(), false, 0));
             } else {

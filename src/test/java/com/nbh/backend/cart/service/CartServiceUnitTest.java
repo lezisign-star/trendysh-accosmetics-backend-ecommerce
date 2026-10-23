@@ -73,6 +73,8 @@ class CartServiceUnitTest {
         cart.setStatus(Cart.CartStatus.ACTIVE);
         lenient().when(cartRepository.findBySessionId(SESSION)).thenReturn(Optional.of(cart));
         lenient().when(cartRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // A line that is not a kit holds nothing inside it, as the real service answers.
+        lenient().when(kitService.selection(any(), any())).thenReturn(new KitService.Selection(List.of(), false));
 
         Product product = new Product();
         product.setId(UUID.randomUUID());
