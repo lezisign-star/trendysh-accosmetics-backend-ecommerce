@@ -145,12 +145,29 @@ public class FinanceService {
         // % and _ typed by a person are letters to find, not wildcards.
         String escaped = query.toLowerCase(Locale.ROOT).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
         String like = query.isEmpty() ? "" : "%" + escaped + "%";
-        String digits = query.replaceAll("\\D", "");
-        // The number as stored is 254712…, and staff type 0712…: the leading 0 is dropped and the rest matched anywhere.
-        String phoneLike = digits.isEmpty() ? "no-phone-in-the-search"
-                : "%" + (digits.startsWith("0") ? digits.substring(1) : digits) + "%";
-        return finance.ledger(p.from(), p.to(), cleanMethod(method), cleanSource(source), query, like, phoneLike, pageable)
+        return finance.ledger(p.from(), p.to(), cleanMethod(method), cleanSource(source), query, like, phoneLike(query),
+                        pageable)
                 .map(this::entry);
+    }
+
+    /** What never matches a stored phone number: the search had none in it. */
+    static final String NO_PHONE = "no-phone-in-the-search";
+
+    /**
+     * The pattern a customer's phone is matched with, only when the search IS a phone number (digits, with the spaces,
+     * dashes, brackets or + people type): the digits of a payment reference or an order number ("QW1A2B3C4D") must not
+     * match every phone that happens to hold "1234". The number as stored is 254712…, and staff type 0712…: the leading 0
+     * is dropped and the rest matched anywhere. At least four digits, so "07" does not list every customer.
+     */
+    static String phoneLike(String query) {
+        if (!query.matches("[\\d\\s+()\\-]+")) {
+            return NO_PHONE;
+        }
+        String digits = query.replaceAll("\\D", "");
+        if (digits.length() < 4) {
+            return NO_PHONE;
+        }
+        return "%" + (digits.startsWith("0") ? digits.substring(1) : digits) + "%";
     }
 
     /** Changes of normal selling prices in the period, newest first, kept automatically with who and when. */
