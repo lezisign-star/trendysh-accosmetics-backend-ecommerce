@@ -7,12 +7,14 @@ import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.payment.service.DarajaPaymentGateway;
 import com.nbh.backend.payment.service.PaymentService;
+import com.nbh.backend.staff.entity.StaffUser;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -231,9 +233,12 @@ public class PaymentController {
 
     @PreAuthorize("hasAnyAuthority('PERM_PAYMENT_MANAGE','PERM_ORDER_MANAGE_ALL')")
     @PostMapping("/{paymentRecordId}/confirm-manual")
-    public void confirmManual(@PathVariable UUID paymentRecordId, @RequestBody ManualConfirmRequest request) {
+    public void confirmManual(@PathVariable UUID paymentRecordId, @RequestBody ManualConfirmRequest request,
+                              @AuthenticationPrincipal StaffUser staff) {
         Map<String, String> note = new LinkedHashMap<>();
         note.put("type", "manual_staff_confirmation");
+        // Who confirmed it, kept with the payment: the money trail says who made this payment count.
+        note.put("by", staff == null ? null : staff.getFullName());
         note.put("notes", request.notes());
         paymentService.confirmSuccess(paymentRecordId, request.reference(), toJson(note), request.method(),
                 Boolean.TRUE.equals(request.revive()));
@@ -241,9 +246,11 @@ public class PaymentController {
 
     @PreAuthorize("hasAnyAuthority('PERM_PAYMENT_MANAGE','PERM_ORDER_MANAGE_ALL')")
     @PostMapping("/{paymentRecordId}/fail-manual")
-    public void failManual(@PathVariable UUID paymentRecordId, @RequestBody ManualFailRequest request) {
+    public void failManual(@PathVariable UUID paymentRecordId, @RequestBody ManualFailRequest request,
+                           @AuthenticationPrincipal StaffUser staff) {
         Map<String, String> note = new LinkedHashMap<>();
         note.put("type", "manual_staff_failure");
+        note.put("by", staff == null ? null : staff.getFullName());
         note.put("reason", request.reason());
         paymentService.markFailed(paymentRecordId, request.reason(), toJson(note));
     }

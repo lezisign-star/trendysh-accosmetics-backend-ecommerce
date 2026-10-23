@@ -6,7 +6,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@EnableJpaAuditing(dateTimeProviderRef = "auditingDateTimeProvider")
+@EnableJpaAuditing(dateTimeProviderRef = "auditingDateTimeProvider", auditorAwareRef = "staffAuditor")
 @EnableScheduling
 public class NairobiBeautyHubBackendApplication {
 

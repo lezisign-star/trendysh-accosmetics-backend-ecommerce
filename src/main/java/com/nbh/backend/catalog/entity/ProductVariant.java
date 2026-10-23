@@ -80,6 +80,14 @@ public class ProductVariant extends BaseEntity {
     @Column(precision = 14, scale = 2)
     private BigDecimal sellingPrice;
 
+    /**
+     * Who last saved this variant (V73): the staff member, or "system" for a background job. A trigger copies it into the
+     * price history when a save changes the selling price.
+     */
+    @org.springframework.data.annotation.LastModifiedBy
+    @Column(name = "updated_by", length = 200)
+    private String updatedBy;
+
     @Column(precision = 14, scale = 2)
     private BigDecimal compareAtPrice;
 

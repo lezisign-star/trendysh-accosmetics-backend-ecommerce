@@ -18,6 +18,9 @@ public interface BankCreditRepository extends JpaRepository<BankCredit, UUID> {
     @EntityGraph(attributePaths = {"payment", "payment.order"})
     List<BankCredit> findByStatusOrderByReceivedAtDesc(BankCredit.CreditStatus status);
 
+    /** The bank credits matched to these payments, oldest first: the bank's side of an order's money trail. */
+    List<BankCredit> findByPaymentIdInOrderByReceivedAtAsc(java.util.Collection<UUID> paymentIds);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select c from BankCredit c where c.id = :id")
     Optional<BankCredit> lockById(UUID id);
