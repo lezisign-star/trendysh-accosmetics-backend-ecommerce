@@ -42,6 +42,14 @@ public class CatalogService {
     private final ProductOptionValueRepository optionRepository;
     private final Clock clock;
 
+    /** The deal pictures staff chose (owner, 2026-10-24); optional so hand-built instances in unit tests still work. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.dealphotos.DealPhotoService dealPhotos;
+
+    private Map<UUID, String> dealPhotoUrls(List<UUID> variantIds) {
+        return dealPhotos == null ? Map.of() : dealPhotos.approvedUrls(variantIds);
+    }
+
     public CatalogService(ProductRepository productRepository,
                            ProductVariantRepository variantRepository,
                            ProductImageRepository imageRepository,
@@ -91,10 +99,11 @@ public class CatalogService {
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(variantIds);
         Map<UUID, BigDecimal> availableByVariant = availability(pageVariants);
+        Map<UUID, String> dealPhotoByVariant = dealPhotoUrls(variantIds);
         PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         return page.map(v -> toCard(v, activeCampaign, sellableCountByProduct, imageByVariant, ratingByProduct,
-                soldByVariant, availableByVariant));
+                soldByVariant, availableByVariant, dealPhotoByVariant));
     }
 
     /** A single variant's own product-detail page — its price, its siblings, its own + the product's description. */
@@ -118,11 +127,12 @@ public class CatalogService {
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(siblingIds);
         Map<UUID, BigDecimal> availableByVariant = availability(siblings);
+        Map<UUID, String> dealPhotoByVariant = dealPhotoUrls(siblingIds);
         PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         List<CatalogVariantCardDto> siblingCards = siblings.stream()
                 .map(v -> toCard(v, activeCampaign, sellableCountByProduct, imageByVariant, ratingByProduct,
-                        soldByVariant, availableByVariant))
+                        soldByVariant, availableByVariant, dealPhotoByVariant))
                 .toList();
         CatalogVariantCardDto card = siblingCards.stream()
                 .filter(c -> c.variantId().equals(variantId))
@@ -198,7 +208,8 @@ public class CatalogService {
     private CatalogVariantCardDto toCard(ProductVariant v, PromoCampaign activeCampaign,
                                           Map<UUID, Long> sellableCountByProduct, Map<UUID, Cover> imageByVariant,
                                           Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct,
-                                          Map<UUID, BigDecimal> soldByVariant, Map<UUID, BigDecimal> availableByVariant) {
+                                          Map<UUID, BigDecimal> soldByVariant, Map<UUID, BigDecimal> availableByVariant,
+                                          Map<UUID, String> dealPhotoByVariant) {
         Product p = v.getProduct();
         long sellableCount = sellableCountByProduct.getOrDefault(p.getId(), 1L);
         boolean hideName = sellableCount <= 1 || CatalogVariantCardDto.isMeaninglessName(v.getVariantName());
@@ -231,7 +242,9 @@ public class CatalogService {
                 v.getOptionColor(), v.getOptionSize(),
                 v.effectiveColorFamily() == null ? null : v.effectiveColorFamily().name(),
                 v.getSizePosition(), p.getBrand() == null ? null : p.getBrand().getName(),
-                cover == null ? null : cover.focus(), v.isKit());
+                cover == null ? null : cover.focus(), v.isKit(),
+                // A deal picture staff chose, only while the product's own flash deal is live (not a site-wide campaign).
+                price.source() == EffectivePriceResolver.Source.PRODUCT_DEAL ? dealPhotoByVariant.get(v.getId()) : null);
     }
 
     /** An option's cover photo and where on it the part that changes sits ("x% y%", V66; null = the middle). */

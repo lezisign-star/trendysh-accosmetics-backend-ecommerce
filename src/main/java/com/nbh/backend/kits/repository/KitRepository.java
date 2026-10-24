@@ -38,7 +38,16 @@ public interface KitRepository extends JpaRepository<Kit, UUID> {
             JOIN v.product p
             WHERE (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
-              AND (:professionId IS NULL OR k.profession.id = :professionId)
+              AND (:professionId IS NULL OR k.profession.id = :professionId
+                   OR EXISTS (SELECT 1 FROM Kit k2 JOIN k2.extraProfessions ep WHERE k2 = k AND ep.id = :professionId))
             """)
     Page<Kit> searchAdmin(@Param("q") String q, @Param("professionId") UUID professionId, Pageable pageable);
+
+    /** [profession id, kits whose main trade it is] for every trade that has any. */
+    @Query("SELECT k.profession.id, COUNT(k) FROM Kit k GROUP BY k.profession.id")
+    List<Object[]> countByMainProfession();
+
+    /** [profession id, kits also listed under it] for every trade that has any. */
+    @Query("SELECT ep.id, COUNT(k) FROM Kit k JOIN k.extraProfessions ep GROUP BY ep.id")
+    List<Object[]> countByExtraProfession();
 }

@@ -13,15 +13,21 @@ import java.util.UUID;
  * <p>{@code sumOfComponents} and each item's prices are what the products cost bought on their own today (a deal or the
  * running campaign included), so {@code savings} is never claimed against a price nobody pays. {@code pickToOrder}: out
  * of stock as it comes, but every product that is off the shelf can be swapped on the kit's page for an option that is on
- * it, so the card says "pick another option" instead of "out of stock".
+ * it, so the card says "pick another option" instead of "out of stock". {@code professions}: a kit can be listed under
+ * several trades (owner, 2026-10-24); the shop shows it under each.
  */
 public record KitPublicDto(
         UUID variantId, UUID productId, String productSlug, String name,
         UUID professionId, String professionLabel, String professionSlug,
         String description, String imageUrl,
         BigDecimal packagePrice, BigDecimal sumOfComponents, BigDecimal savings, boolean inStock,
-        boolean pickToOrder, List<Item> items
+        boolean pickToOrder,
+        /** Every trade the kit is listed under, its main one first, with what the shop shows for the trade. */
+        List<Trade> professions,
+        List<Item> items
 ) {
+    public record Trade(UUID id, String label, String slug, String description, String imageUrl) {}
+
     public record Item(UUID variantId, String name, String imageUrl,
                         BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal) {}
 }

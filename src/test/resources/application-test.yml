@@ -68,6 +68,9 @@ app:
   variant-jobs:
     initial-delay-ms: 3600000
     quota-pause-minutes: 15
+  # The deal-picture job is held off the same way: tests call runOnce() themselves.
+  deal-photos:
+    initial-delay-ms: 3600000
 
 logging:
   level:

@@ -350,7 +350,7 @@ public class MockDataSeederService {
         var request = new SaveKitRequest(
                 profession.getLabel() + " Starter Kit", profession.getId(), category.getId(),
                 "A curated starter set for a " + profession.getLabel().toLowerCase(Locale.ROOT) + " — everything you need to get going.",
-                finalPrice.toPlainString(), componentInputs);
+                finalPrice.toPlainString(), componentInputs, null);
         var dto = kitService.create(request);
 
         Product kitProduct = productRepository.findById(dto.productId()).orElseThrow();

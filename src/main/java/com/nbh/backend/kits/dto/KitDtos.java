@@ -48,7 +48,9 @@ public final class KitDtos {
             @NotNull UUID categoryId,
             @NotBlank @Size(max = 500) String description,
             @NotBlank String finalPrice,
-            @NotEmpty @Valid List<ComponentInput> components) {}
+            @NotEmpty @Valid List<ComponentInput> components,
+            /** Other trades the kit is also listed under; null or empty = only its main one. */
+            @Size(max = 20) List<UUID> alsoForProfessionIds) {}
 
     /** A component variant counts as "available" when it's still purchasable on its own — not
      *  deleted, active, priced, and its product still published and not deleted. Mirrors
@@ -88,7 +90,9 @@ public final class KitDtos {
                                boolean hasUnavailableComponent,
                                Instant updatedAt, List<ComponentDto> components,
                                /** The kit's own thumbnail (the professional at work): its variant's cover photo; null until one is added. */
-                               String imageUrl) {
+                               String imageUrl,
+                               /** Other trades it is also listed under (its main one is {@code professionId}). */
+                               List<UUID> alsoForProfessionIds) {
 
         public static KitAdminDto from(Kit k) {
             return from(k, null);
@@ -114,7 +118,8 @@ public final class KitDtos {
                     profession.getId(), profession.getLabel(), profession.getSlug(), k.getDescription(),
                     category != null ? category.getId() : null, category != null ? category.getName() : null,
                     variant.isActive(), packagePrice, sum, discountPercent, hasUnavailableComponent,
-                    k.getUpdatedAt(), components, imageUrl);
+                    k.getUpdatedAt(), components, imageUrl,
+                    k.getExtraProfessions().stream().map(p -> p.getId()).toList());
         }
     }
 

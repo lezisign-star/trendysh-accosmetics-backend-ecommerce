@@ -7,7 +7,9 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * An admin-curated bundle of existing product variants + fixed quantities, sold at one fixed
@@ -35,6 +37,15 @@ public class Kit extends BaseEntity {
      *  customer tell several kits under the same profession apart. */
     @Column(columnDefinition = "TEXT", nullable = false)
     private String description;
+
+    /**
+     * Other trades the kit is also listed under (owner, 2026-10-24); its main one is {@link #profession}, which gives
+     * it its link, breadcrumb and admin filter.
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(name = "kit_extra_profession", joinColumns = @JoinColumn(name = "kit_id"),
+            inverseJoinColumns = @JoinColumn(name = "profession_id"))
+    private Set<Profession> extraProfessions = new LinkedHashSet<>();
 
     @OneToMany(mappedBy = "kit", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("lineNo ASC")

@@ -83,7 +83,9 @@ public record CatalogVariantCardDto(
         /** Where on {@code imageUrl} the part that changes sits, "x% y%", for the card to crop around (V66); null = the middle. */
         String imageFocus,
         /** A kit's own line: it has its own page ({@code /kits/{productSlug}}), not a product page. */
-        boolean isKit
+        boolean isKit,
+        /** The promotional picture staff chose for its flash deal, while the deal is live; null otherwise (owner, 2026-10-24). */
+        String dealImageUrl
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */
     public static boolean isMeaninglessName(String variantName) {

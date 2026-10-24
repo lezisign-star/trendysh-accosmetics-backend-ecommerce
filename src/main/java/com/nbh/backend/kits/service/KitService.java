@@ -22,6 +22,7 @@ import com.nbh.backend.kits.dto.KitDtos.SaveKitRequest;
 import com.nbh.backend.kits.dto.KitPublicDto;
 import com.nbh.backend.kits.dto.ProfessionDtos.ProfessionDto;
 import com.nbh.backend.kits.dto.ProfessionDtos.ProfessionRequest;
+import com.nbh.backend.kits.dto.ProfessionDtos.UpdateProfessionRequest;
 import com.nbh.backend.kits.entity.Kit;
 import com.nbh.backend.kits.entity.KitComponent;
 import com.nbh.backend.kits.entity.Profession;
@@ -216,6 +217,17 @@ public class KitService {
         kit.setVariant(variant);
         kit.setProfession(profession);
         kit.setDescription(request.description().trim());
+        // Other trades it is also listed under: its main one is not repeated, and every one must exist.
+        Set<Profession> extra = new LinkedHashSet<>();
+        for (UUID otherId : request.alsoForProfessionIds() == null ? List.<UUID>of() : request.alsoForProfessionIds()) {
+            if (otherId == null || otherId.equals(profession.getId())) {
+                continue;
+            }
+            extra.add(professions.findById(otherId)
+                    .orElseThrow(() -> new NotFoundException("No profession: " + otherId)));
+        }
+        kit.getExtraProfessions().clear();
+        kit.getExtraProfessions().addAll(extra);
 
         // A product that stays in the kit keeps its row and is updated in place; one taken out is removed and a new one
         // added. Clearing the list and adding every row again looked simpler, but Hibernate inserts the new rows BEFORE it
@@ -704,14 +716,33 @@ public class KitService {
         return new KitPublicDto(variant.getId(), product.getId(), product.getSlug(), product.getName(),
                 profession.getId(), profession.getLabel(), profession.getSlug(), k.getDescription(),
                 imageByVariant.get(variant.getId()),
-                packagePrice, sum, sum.subtract(packagePrice).max(BigDecimal.ZERO), inStock, pickToOrder, items);
+                packagePrice, sum, sum.subtract(packagePrice).max(BigDecimal.ZERO), inStock, pickToOrder,
+                tradesOf(k), items);
     }
 
-    // ---- professions (kit form's dropdown + inline "+ New" quick-add) ----
+    /** The kit's main trade, then the others it is also listed under. */
+    private static List<KitPublicDto.Trade> tradesOf(Kit k) {
+        List<KitPublicDto.Trade> trades = new ArrayList<>();
+        trades.add(trade(k.getProfession()));
+        k.getExtraProfessions().stream()
+                .filter(p -> !p.getId().equals(k.getProfession().getId()))
+                .sorted(Comparator.comparing(Profession::getLabel))
+                .forEach(p -> trades.add(trade(p)));
+        return trades;
+    }
+
+    private static KitPublicDto.Trade trade(Profession p) {
+        return new KitPublicDto.Trade(p.getId(), p.getLabel(), p.getSlug(), p.getDescription(), p.getImageUrl());
+    }
+
+    // ---- professions (the kit form's dropdown and "+ New", and the Professions screen) ----
 
     @Transactional(readOnly = true)
     public List<ProfessionDto> listProfessions() {
-        return professions.findAllByOrderByLabelAsc().stream().map(ProfessionDto::from).toList();
+        Map<UUID, Long> counts = kitCountsByProfession();
+        return professions.findAllByOrderByLabelAsc().stream()
+                .map(p -> ProfessionDto.from(p, counts.getOrDefault(p.getId(), 0L)))
+                .toList();
     }
 
     @Transactional
@@ -723,7 +754,51 @@ public class KitService {
         Profession profession = new Profession();
         profession.setLabel(request.label().trim());
         profession.setSlug(slug);
-        return ProfessionDto.from(professions.save(profession));
+        return ProfessionDto.from(professions.save(profession), 0L);
+    }
+
+    /** A new name, description or picture; the link stays as it was (see {@link UpdateProfessionRequest}). */
+    @Transactional
+    public ProfessionDto updateProfession(UUID id, UpdateProfessionRequest request) {
+        Profession profession = professions.findById(id).orElseThrow(() -> new NotFoundException("No profession: " + id));
+        String label = request.label().trim();
+        boolean taken = professions.findAllByOrderByLabelAsc().stream()
+                .anyMatch(p -> !p.getId().equals(id) && p.getLabel().equalsIgnoreCase(label));
+        if (taken) {
+            throw new UnprocessableException("There is already a profession called \"" + label + "\".");
+        }
+        profession.setLabel(label);
+        profession.setDescription(blankToNull(request.description()));
+        profession.setImageUrl(blankToNull(request.imageUrl()));
+        return ProfessionDto.from(professions.save(profession), kitCountsByProfession().getOrDefault(id, 0L));
+    }
+
+    /** Only a trade no kit is listed under can go; otherwise its kits would be left without one. */
+    @Transactional
+    public void deleteProfession(UUID id) {
+        Profession profession = professions.findById(id).orElseThrow(() -> new NotFoundException("No profession: " + id));
+        long used = kitCountsByProfession().getOrDefault(id, 0L);
+        if (used > 0) {
+            throw new UnprocessableException(profession.getLabel() + " has " + used + (used == 1 ? " kit" : " kits")
+                    + " under it. Move " + (used == 1 ? "it" : "them") + " to another profession first.");
+        }
+        professions.delete(profession);
+    }
+
+    /** How many kits each trade has, as their main trade or an extra one. */
+    private Map<UUID, Long> kitCountsByProfession() {
+        Map<UUID, Long> counts = new HashMap<>();
+        for (Object[] row : kits.countByMainProfession()) {
+            counts.merge((UUID) row[0], ((Number) row[1]).longValue(), Long::sum);
+        }
+        for (Object[] row : kits.countByExtraProfession()) {
+            counts.merge((UUID) row[0], ((Number) row[1]).longValue(), Long::sum);
+        }
+        return counts;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     /** Each variant's own cover photo (see PhotoOwnership) — the same rule the shop's cards use. */
