@@ -1,7 +1,10 @@
 package com.nbh.backend.kits.controller;
 
+import com.nbh.backend.catalog.dto.AdminImageDto;
+import com.nbh.backend.kits.dto.KitDtos.AiPhotoRequest;
 import com.nbh.backend.kits.dto.KitDtos.KitAdminDto;
 import com.nbh.backend.kits.dto.KitDtos.SaveKitRequest;
+import com.nbh.backend.kits.service.KitAiPhotoService;
 import com.nbh.backend.kits.service.KitService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -24,9 +27,20 @@ import java.util.UUID;
 public class KitController {
 
     private final KitService service;
+    private final KitAiPhotoService aiPhotos;
 
-    public KitController(KitService service) {
+    public KitController(KitService service, KitAiPhotoService aiPhotos) {
         this.service = service;
+        this.aiPhotos = aiPhotos;
+    }
+
+    /**
+     * Makes the kit's picture with Gemini from its products' photos and files it with the kit's photos (the thumbnail
+     * when the kit has none yet). Takes a while (Gemini answers in tens of seconds); see {@link KitAiPhotoService}.
+     */
+    @PostMapping("/{id}/ai-photo")
+    public AdminImageDto makeAiPhoto(@PathVariable UUID id, @Valid @RequestBody AiPhotoRequest request) {
+        return aiPhotos.make(id, request.style(), request.note());
     }
 
     @GetMapping

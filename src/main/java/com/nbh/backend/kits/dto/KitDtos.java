@@ -3,6 +3,7 @@ package com.nbh.backend.kits.dto;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import com.nbh.backend.kits.entity.Kit;
 import com.nbh.backend.kits.entity.KitComponent;
+import com.nbh.backend.kits.service.KitAiPhotoService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -116,4 +117,10 @@ public final class KitDtos {
                     k.getUpdatedAt(), components, imageUrl);
         }
     }
+
+    /**
+     * Make the kit's picture with AI: {@code style} is SET (the products together) or AT_WORK (a professional of the
+     * kit's trade using them); {@code note} is anything more staff want in it.
+     */
+    public record AiPhotoRequest(@NotNull KitAiPhotoService.Style style, @Size(max = 300) String note) {}
 }

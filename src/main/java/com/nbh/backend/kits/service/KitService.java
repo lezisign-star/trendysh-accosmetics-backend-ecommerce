@@ -738,6 +738,35 @@ public class KitService {
         return PhotoOwnership.coverUrlByVariant(variants, images, optionCounts);
     }
 
+    /**
+     * What making a kit's picture with AI starts from: the kit's own product and variant (where the picture is filed),
+     * its name and trade, and each product inside that has a photo, with that photo (its own option's main one).
+     */
+    public record AiPhotoInputs(UUID productId, UUID variantId, String kitName, String professionLabel,
+                                List<String> productNames, List<String> photoUrls) {}
+
+    @Transactional(readOnly = true)
+    public AiPhotoInputs aiPhotoInputs(UUID kitId) {
+        Kit k = findOrThrow(kitId);
+        List<ProductVariant> parts = componentRepository.findByKitIdOrderByLineNoAsc(k.getId()).stream()
+                .map(KitComponent::getComponentVariant)
+                .filter(KitDtos::isComponentAvailable)
+                .toList();
+        Map<UUID, String> covers = coverImageByVariant(parts);
+        List<String> names = new ArrayList<>();
+        List<String> photos = new ArrayList<>();
+        for (ProductVariant v : parts) {
+            String photo = covers.get(v.getId());
+            if (photo != null && !photo.isBlank()) {
+                names.add(v.getProduct().getName());
+                photos.add(photo);
+            }
+        }
+        ProductVariant own = k.getVariant();
+        return new AiPhotoInputs(own.getProduct().getId(), own.getId(), own.getProduct().getName(),
+                k.getProfession().getLabel(), names, photos);
+    }
+
     private Kit findOrThrow(UUID id) {
         return kits.findById(id).orElseThrow(() -> new NotFoundException("No kit: " + id));
     }
