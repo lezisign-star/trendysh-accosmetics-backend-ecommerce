@@ -22,7 +22,7 @@ import java.util.UUID;
  * "deal price below selling price, deadline in the future" rules live in one place; this only turns
  * "20% off until Friday" into a deal price per variant, rounded to whole shillings.
  *
- * <p>Kits are skipped on purpose: a kit already sells at its own package price, and a second
+ * <p>Packages are skipped on purpose: a package already sells at its own package price, and a second
  * discount stacked on it would quietly undercut the margin the package was priced to keep.
  */
 @Service
@@ -48,7 +48,7 @@ public class FlashDealBulkService {
         }
         int affectedProducts = 0;
         int affectedVariants = 0;
-        int skippedKits = 0;
+        int skippedPackages = 0;
         int skippedUnpriced = 0;
         int skippedTooCheap = 0;
 
@@ -56,8 +56,8 @@ public class FlashDealBulkService {
             if (product.isDeleted()) continue;
             int applied = 0;
             for (ProductVariant variant : variantRepository.findByProductIdAndDeletedFalseOrderBySortOrderAsc(product.getId())) {
-                if (variant.isKit()) {
-                    skippedKits++;
+                if (variant.isPackage()) {
+                    skippedPackages++;
                     continue;
                 }
                 if (!variant.isActive() || variant.getSellingPrice() == null) {
@@ -81,7 +81,7 @@ public class FlashDealBulkService {
         }
 
         List<String> warnings = new ArrayList<>();
-        if (skippedKits > 0) warnings.add(skippedKits + " kit(s) skipped — kits keep their own package price");
+        if (skippedPackages > 0) warnings.add(skippedPackages + " package(s) skipped — packages keep their own package price");
         if (skippedUnpriced > 0) warnings.add(skippedUnpriced + " variant(s) skipped — no price or not active");
         if (skippedTooCheap > 0) warnings.add(skippedTooCheap + " variant(s) skipped — too cheap for a whole-shilling discount");
         return new BulkProductActionResult(affectedProducts, affectedVariants, warnings);

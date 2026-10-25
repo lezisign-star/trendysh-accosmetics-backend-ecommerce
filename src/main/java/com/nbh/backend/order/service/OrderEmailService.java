@@ -175,7 +175,7 @@ public class OrderEmailService {
         return frontendUrl + "/trendysh-logo.png";
     }
 
-    /** What was ordered, one line each (a kit's own components are part of its line, so they are not listed again). */
+    /** What was ordered, one line each (a package's own components are part of its line, so they are not listed again). */
     private static List<Line> itemLines(CustomerOrder order) {
         List<Line> lines = new ArrayList<>();
         for (CustomerOrderItem item : order.getItems()) {

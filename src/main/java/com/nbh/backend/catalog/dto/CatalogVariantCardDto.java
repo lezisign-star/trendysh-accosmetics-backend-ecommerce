@@ -19,9 +19,9 @@ import java.util.UUID;
  *
  * {@code availableQty} is {@link com.nbh.backend.stock.service.StockAvailabilityService}'s own
  * "SHOP on-hand minus reserved" figure (2026-09-29) — the same number {@code inStock} is already
- * derived from, just not rounded down to a boolean. Present on every card (grid, siblings, kit
- * components) but only the product-detail page renders it today; a kit's own line carries
- * {@link BigDecimal#ZERO} here since availability isn't tracked per kit, only per real variant.
+ * derived from, just not rounded down to a boolean. Present on every card (grid, siblings, package
+ * components) but only the product-detail page renders it today; a package's own line carries
+ * {@link BigDecimal#ZERO} here since availability isn't tracked per package, only per real variant.
  *
  * {@code sku} (2026-09-29) is now customer-facing per the client's own call — a wholesale/trade
  * buyer reordering wants a code to reference, not just a name. Was admin-only before this.
@@ -82,8 +82,8 @@ public record CatalogVariantCardDto(
         String brandName,
         /** Where on {@code imageUrl} the part that changes sits, "x% y%", for the card to crop around (V66); null = the middle. */
         String imageFocus,
-        /** A kit's own line: it has its own page ({@code /kits/{productSlug}}), not a product page. */
-        boolean isKit,
+        /** A package's own line: it has its own page ({@code /packages/{productSlug}}), not a product page. */
+        boolean isPackage,
         /** The promotional picture staff chose for its flash deal, while the deal is live; null otherwise (owner, 2026-10-24). */
         String dealImageUrl
 ) {

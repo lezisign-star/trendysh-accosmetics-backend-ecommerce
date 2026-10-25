@@ -60,7 +60,7 @@ class CheckoutServiceUnitTest {
     @Mock private OrderNoGenerator orderNoGenerator;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private com.nbh.backend.tumaboda.TumaBodaQuoteService quoteService;
-    @Mock private com.nbh.backend.kits.service.KitService kitService;
+    @Mock private com.nbh.backend.packages.service.PackageService packageService;
     @Mock private VariantCovers variantCovers;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
@@ -74,7 +74,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(), bankSettings(BANK),
-                MAX_OPEN_ORDERS, quoteService, kitService, variantCovers);
+                MAX_OPEN_ORDERS, quoteService, packageService, variantCovers);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -93,9 +93,9 @@ class CheckoutServiceUnitTest {
         lenient().when(paymentRecordRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(reservationService.reserve(any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> new StockReservation());
-        // A line that is not a kit expands into nothing, as the real service answers; the kit tests below say otherwise.
-        lenient().when(kitService.selection(any(), any()))
-                .thenReturn(new com.nbh.backend.kits.service.KitService.Selection(List.of(), false));
+        // A line that is not a package expands into nothing, as the real service answers; the package tests below say otherwise.
+        lenient().when(packageService.selection(any(), any()))
+                .thenReturn(new com.nbh.backend.packages.service.PackageService.Selection(List.of(), false));
     }
 
     private static final BankPaymentSettings.CollectionMode BANK = BankPaymentSettings.CollectionMode.BANK;
@@ -142,21 +142,21 @@ class CheckoutServiceUnitTest {
     }
 
     @Test
-    void aRealKitMadeOfDemoComponentsIsRefusedBeforeAnythingIsReserved() {
-        // The kit line's own product is real, so the line-level guard passes; the demo rule must also hold for the
-        // components the kit expands into (a real kit can be assembled from demo variants while demo mode is on).
-        CartItem kitLine = cartItem(new BigDecimal("900.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
-        kitLine.getVariant().getProduct().setName("Nail Tech Starter Kit");
+    void aRealPackageMadeOfDemoComponentsIsRefusedBeforeAnythingIsReserved() {
+        // The package line's own product is real, so the line-level guard passes; the demo rule must also hold for the
+        // components the package expands into (a real package can be assembled from demo variants while demo mode is on).
+        CartItem packageLine = cartItem(new BigDecimal("900.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
+        packageLine.getVariant().getProduct().setName("Nail Tech Starter Package");
         ProductVariant demoComponent = cartItem(new BigDecimal("300.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false).getVariant();
         demoComponent.getProduct().setMockData(true);
-        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
-        when(kitService.selection(eq(kitLine.getVariant().getId()), any()))
-                .thenReturn(new com.nbh.backend.kits.service.KitService.Selection(
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(packageLine));
+        when(packageService.selection(eq(packageLine.getVariant().getId()), any()))
+                .thenReturn(new com.nbh.backend.packages.service.PackageService.Selection(
                         List.of(part(demoComponent, BigDecimal.ONE)), false));
 
         assertThatThrownBy(() -> checkoutService.checkout(SESSION_ID, request()))
                 .isInstanceOf(com.nbh.backend.common.exception.UnprocessableException.class)
-                .hasMessageContaining("Nail Tech Starter Kit is a demo product and can't be ordered");
+                .hasMessageContaining("Nail Tech Starter Package is a demo product and can't be ordered");
         verify(reservationService, never()).reserve(any(), any(), any(), any(), any(), any());
         verify(paymentRecordRepository, never()).save(any());
     }
@@ -205,10 +205,10 @@ class CheckoutServiceUnitTest {
     }
 
     @Test
-    void aKitLineAndEachOfItsComponentLinesFreezeTheirOwnVariantWithOneCoverLookup() {
-        CartItem kitLine = cartItem(new BigDecimal("900.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
-        kitLine.getVariant().getProduct().setName("Nail Tech Starter Kit");
-        kitLine.getVariant().setSku("KIT-0001");
+    void aPackageLineAndEachOfItsComponentLinesFreezeTheirOwnVariantWithOneCoverLookup() {
+        CartItem packageLine = cartItem(new BigDecimal("900.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false);
+        packageLine.getVariant().getProduct().setName("Nail Tech Starter Package");
+        packageLine.getVariant().setSku("PKG-0001");
         ProductVariant base = cartItem(new BigDecimal("300.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false).getVariant();
         base.getProduct().setName("Base Coat");
         base.setSku("BASE-15");
@@ -219,19 +219,19 @@ class CheckoutServiceUnitTest {
         polish.setVariantName("Gel Polish – Ruby Red");
         polish.setOptionColor("Ruby Red");
         polish.setSwatchHex("#9B111E");
-        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine));
-        when(kitService.selection(eq(kitLine.getVariant().getId()), any()))
-                .thenReturn(new com.nbh.backend.kits.service.KitService.Selection(
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(packageLine));
+        when(packageService.selection(eq(packageLine.getVariant().getId()), any()))
+                .thenReturn(new com.nbh.backend.packages.service.PackageService.Selection(
                         List.of(part(base, BigDecimal.ONE), part(polish, new BigDecimal("2"))), false));
         when(variantCovers.urlsFor(any())).thenReturn(java.util.Map.of(
                 polish.getId(), "https://res.cloudinary.com/demo/image/upload/gel-rr.jpg"));
 
         List<CustomerOrderItem> items = checkoutService.checkout(SESSION_ID, request()).order().getItems();
 
-        assertThat(items).as("the kit's own line plus one line per component").hasSize(3);
+        assertThat(items).as("the package's own line plus one line per component").hasSize(3);
         CustomerOrderItem summary = items.get(0);
-        assertThat(summary.getSkuSnapshot()).isEqualTo("KIT-0001");
-        assertThat(summary.getProductNameSnapshot()).isEqualTo("Nail Tech Starter Kit");
+        assertThat(summary.getSkuSnapshot()).isEqualTo("PKG-0001");
+        assertThat(summary.getProductNameSnapshot()).isEqualTo("Nail Tech Starter Package");
         CustomerOrderItem baseLine = items.stream().filter(i -> i.getVariant() == base).findFirst().orElseThrow();
         assertThat(baseLine.getParentItem()).isSameAs(summary);
         assertThat(baseLine.getSkuSnapshot()).isEqualTo("BASE-15");
@@ -275,7 +275,7 @@ class CheckoutServiceUnitTest {
         checkoutService = new CheckoutService(cartRepository, cartItemRepository,
                 orderRepository, paymentRecordRepository, reservationService,
                 orderNoGenerator, clock, eventPublisher, new PaymentReferenceGenerator(),
-                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS, quoteService, kitService,
+                bankSettings(BankPaymentSettings.CollectionMode.MPESA), MAX_OPEN_ORDERS, quoteService, packageService,
                 variantCovers);
         when(cartItemRepository.findByCartId(cart.getId()))
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
@@ -288,9 +288,9 @@ class CheckoutServiceUnitTest {
                 org.mockito.ArgumentMatchers.eq(Instant.parse("2026-01-01T00:15:00Z")));
     }
 
-    /** A product of a kit as it comes (nothing picked instead): the kit's own variant for it and the variant packed are one. */
-    private static com.nbh.backend.kits.service.KitService.SelectedPart part(ProductVariant variant, BigDecimal qtyPerKit) {
-        return new com.nbh.backend.kits.service.KitService.SelectedPart(UUID.randomUUID(), variant, variant, qtyPerKit, true);
+    /** A product of a package as it comes (nothing picked instead): the package's own variant for it and the variant packed are one. */
+    private static com.nbh.backend.packages.service.PackageService.SelectedPart part(ProductVariant variant, BigDecimal qtyPerPackage) {
+        return new com.nbh.backend.packages.service.PackageService.SelectedPart(UUID.randomUUID(), variant, variant, qtyPerPackage, true);
     }
 
     private CartItem cartItem(BigDecimal unitPrice, BigDecimal qty, BigDecimal vatRate, boolean vatExempt) {

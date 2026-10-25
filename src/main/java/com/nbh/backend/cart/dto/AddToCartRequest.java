@@ -9,10 +9,10 @@ public record AddToCartRequest(
         @NotNull UUID variantId,
         @NotNull BigDecimal qty,
         /**
-         * Only for a kit: what the shopper picked instead of what it comes with, as default variant id -> the variant they
-         * chose (another colour or size of the same product). Left out or empty = the kit as it comes.
+         * Only for a package: what the shopper picked instead of what it comes with, as default variant id -> the variant they
+         * chose (another colour or size of the same product). Left out or empty = the package as it comes.
          */
-        java.util.Map<UUID, UUID> kitChoices
+        java.util.Map<UUID, UUID> packageChoices
 ) {
     public AddToCartRequest(UUID variantId, BigDecimal qty) {
         this(variantId, qty, null);

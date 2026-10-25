@@ -32,10 +32,10 @@ public record OrderItemDto(
         String imageUrl,
         UUID id,
         /**
-         * Set on a line that is one of the products inside a kit: the id of the kit's own line. The kit's line carries the
+         * Set on a line that is one of the products inside a package: the id of the package's own line. The package's line carries the
          * price (and is the one the order's total adds up); its products are listed under it, as the shopper picked them.
          */
-        UUID kitLineId
+        UUID packageLineId
 ) {
     public static OrderItemDto from(CustomerOrderItem item) {
         return new OrderItemDto(

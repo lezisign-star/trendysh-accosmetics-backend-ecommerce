@@ -163,8 +163,8 @@ class DemoProductsNotForSaleIntegrationTest {
 
     @Test
     void realProductsStayBuyableWhileDemoModeIsOn() throws Exception {
-        Item real = newPublishedProduct("Real Brow Kit");
-        Item demo = newPublishedProduct("Demo Brow Kit");
+        Item real = newPublishedProduct("Real Brow Package");
+        Item demo = newPublishedProduct("Demo Brow Package");
         makeItDemo(demo); // a published demo product exists, which is what "demo mode is on" means
         String session = UUID.randomUUID().toString();
 

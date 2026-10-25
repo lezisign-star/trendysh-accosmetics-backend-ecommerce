@@ -22,13 +22,13 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     Optional<ProductVariant> findWithProductById(@Param("id") UUID id);
 
     /**
-     * Every variant that could actually run out on the shelf: sellable, not a kit (kits hold no stock of
+     * Every variant that could actually run out on the shelf: sellable, not a package (packages hold no stock of
      * their own — their components do), on a product that is live in the shop. Product is fetched in the
      * same query because the stock forecast reads its name for every row.
      */
     @Query("""
             SELECT v FROM ProductVariant v JOIN FETCH v.product p
-            WHERE v.deleted = false AND v.isActive = true AND v.isKit = false
+            WHERE v.deleted = false AND v.isActive = true AND v.isPackage = false
               AND v.sellingPrice IS NOT NULL
               AND p.deleted = false AND p.isPublished = true
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
@@ -60,12 +60,12 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
      *
      * {@code q} matches as much of "what this product actually is" as reasonably makes it
      * findable (2026-09-29 — client's own request, "as much as possible: category, description,
-     * name, sku, inclusion in a kit"): product/variant name, product description, SKU, this
-     * variant's own category and its parent, and — for a kit's own line only — the profession it's
-     * curated for (so "brow artist" finds a kit named something else entirely, as long as it's
-     * filed under that profession). {@code includeKits}: kits have their own pages (owner, 2026-10-19), so the browse
-     * grid leaves them out and only a search (which finds them as kit cards) asks for them. {@code Kit} isn't reachable from {@code ProductVariant} via a
-     * mapped association (the FK lives on {@code kit.variant_id}, not the other way around), hence
+     * name, sku, inclusion in a package"): product/variant name, product description, SKU, this
+     * variant's own category and its parent, and — for a package's own line only — the profession it's
+     * curated for (so "brow artist" finds a package named something else entirely, as long as it's
+     * filed under that profession). {@code includePackages}: packages have their own pages (owner, 2026-10-19), so the browse
+     * grid leaves them out and only a search (which finds them as package cards) asks for them. {@code ProductPackage} isn't reachable from {@code ProductVariant} via a
+     * mapped association (the FK lives on {@code package.variant_id}, not the other way around), hence
      * the explicit ad-hoc {@code ON} join rather than a normal path join.
      */
     @Query("""
@@ -75,11 +75,11 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             LEFT JOIN c.parent parent
             LEFT JOIN v.category vc
             LEFT JOIN vc.parent vparent
-            LEFT JOIN Kit kit ON kit.variant = v
-            LEFT JOIN kit.profession prof
+            LEFT JOIN ProductPackage pkg ON pkg.variant = v
+            LEFT JOIN pkg.profession prof
             WHERE v.deleted = false AND v.isActive = true AND v.sellingPrice IS NOT NULL
               AND p.isPublished = true AND p.deleted = false
-              AND (v.isKit = false OR :includeKits = true)
+              AND (v.isPackage = false OR :includePackages = true)
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:q IS NULL
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
@@ -102,7 +102,7 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     Page<ProductVariant> searchSellable(@Param("q") String q, @Param("categorySlug") String categorySlug,
                                          @Param("deal") Boolean deal, @Param("popular") Boolean popular,
                                          @Param("newArrival") Boolean newArrival,
-                                         @Param("includeKits") boolean includeKits, Pageable pageable);
+                                         @Param("includePackages") boolean includePackages, Pageable pageable);
 
     /** Every sellable variant of the same product, in display order — the storefront's sibling strip. */
     List<ProductVariant> findByProductIdAndDeletedFalseAndIsActiveTrueAndSellingPriceIsNotNullOrderBySortOrderAsc(UUID productId);
@@ -137,14 +137,14 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
 
     List<ProductVariant> findByGenerationBatchId(UUID generationBatchId);
 
-    /** Whether this product stands for a kit (its one variant is the kit's own). */
-    @Query("SELECT COUNT(v) > 0 FROM ProductVariant v WHERE v.product.id = :productId AND v.isKit = true")
-    boolean existsKitVariant(@Param("productId") UUID productId);
+    /** Whether this product stands for a package (its one variant is the package's own). */
+    @Query("SELECT COUNT(v) > 0 FROM ProductVariant v WHERE v.product.id = :productId AND v.isPackage = true")
+    boolean existsPackageVariant(@Param("productId") UUID productId);
 
-    /** Live variants (not kits) of real products not yet looked at in "Tidy colours & sizes", with their product. */
+    /** Live variants (not packages) of real products not yet looked at in "Tidy colours & sizes", with their product. */
     @Query("""
             SELECT v FROM ProductVariant v JOIN FETCH v.product p
-            WHERE v.deleted = false AND v.isKit = false AND p.deleted = false AND p.isMockData = false
+            WHERE v.deleted = false AND v.isPackage = false AND p.deleted = false AND p.isMockData = false
               AND p.optionsReviewedAt IS NULL
             """)
     List<ProductVariant> findForOptionsReview();

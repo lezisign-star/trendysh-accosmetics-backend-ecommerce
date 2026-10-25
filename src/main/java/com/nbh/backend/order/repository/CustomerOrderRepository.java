@@ -159,7 +159,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, UU
     /**
      * Staff order-browse list — one query, no N+1 (F12 pattern): the item
      * count is a correlated-count subquery, not a fetch of the items
-     * collection itself, and it counts what was bought (a kit once: the
+     * collection itself, and it counts what was bought (a package once: the
      * products inside it are not counted again). {@code status}/{@code q} are optional; the
      * {@code CAST(:q AS string)} is required for the same reason
      * {@code ProductRepository.searchPublished} needed it — a null bind

@@ -1,6 +1,16 @@
 # Nairobi Beauty Hub / Trendysh Accosmetic Backend — Handoff
 
-## 2026-10-23 (START HERE) — orders from a call, sales and money, and the kits audit follow-ups: where it stands
+## 2026-10-26 (START HERE) — kits are now packages (Flyway V76); the owner's queue
+
+**The full handoff is `J:\frontend\nairobi-beauty-hub-main\docs\handoff-2026-10-26.md`** (read it first). Everything through 24 Oct (V75)
+is pushed and live. Backend side of the rename, local only: Java package `com.nbh.backend.packages` (entity `ProductPackage`, relation
+field `productPackage`), API `/api/v1/catalog/packages` and `/api/v1/admin/packages` (the old paths are gone), JSON `packageItems`,
+`packageChoices`, `packageLineId`, `isPackage`, `wholePackages`; **V76** renames `kit` to `product_package`, `kit_component` to
+`package_component`, `kit_extra_profession` to `package_extra_profession`, `kit_id` to `package_id`, `product_variant.is_kit` to
+`is_package`, the indexes and constraints, and SKUs `KIT-` to `PKG-` for packages. `PackageRenameMigrationTest` proves it on legacy
+data; full suite 1209 green. Entries below say "kit" because that was the name then.
+
+## 2026-10-23 — orders from a call, sales and money, and the kits audit follow-ups: where it stands (history)
 
 **The full handoff for a new session is `J:\frontend\nairobi-beauty-hub-main\docs\handoff-2026-10-23.md`** (read it first). Backend
 side, all committed locally and **not pushed** (this repo is 8 commits ahead of `origin/main`; push it FIRST, only after the audit

@@ -412,7 +412,7 @@ public class RangeService {
 
     private List<ProductVariant> live(Product p) {
         return variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(p.getId()).stream()
-                .filter(v -> !v.isKit()).toList();
+                .filter(v -> !v.isPackage()).toList();
     }
 
     private static List<UUID> categoryIds(Product p) {

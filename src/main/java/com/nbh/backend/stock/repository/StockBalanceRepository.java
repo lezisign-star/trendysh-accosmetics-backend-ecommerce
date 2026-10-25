@@ -89,8 +89,8 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
      * test used to stay in "Variants tracked" for good (398 of 541 rows on a copy of the dev data), while the
      * Products screen and the Forecast already hid it. Draft (unpublished) products stay: they are real and
      * staff stock them before they go live. {@code outOfStockOnly} keeps rows with nothing on hand (the same
-     * test as the list's "Out of stock" pill) but never a kit: a kit holds no stock of its own, so its zero is
-     * not "out of stock" (its real shortage shows on the products it is made from), and counting every kit would
+     * test as the list's "Out of stock" pill) but never a package: a package holds no stock of its own, so its zero is
+     * not "out of stock" (its real shortage shows on the products it is made from), and counting every package would
      * keep the out-of-stock badge above zero for ever. {@code productId} narrows to one product's variants (the
      * product card's quick edit) and a null one means every product.
      */
@@ -102,7 +102,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
                 v.reorderLevel,
                 CASE WHEN v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
                      THEN true ELSE false END,
-                v.isKit)
+                v.isPackage)
             FROM ProductVariant v
             JOIN v.product p
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
@@ -110,7 +110,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:belowReorderOnly = false
                    OR (v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel))
-              AND (:outOfStockOnly = false OR (COALESCE(b.onHandQty, 0) <= 0 AND v.isKit = false))
+              AND (:outOfStockOnly = false OR (COALESCE(b.onHandQty, 0) <= 0 AND v.isPackage = false))
               AND (:productId IS NULL OR p.id = :productId)
               AND (:q IS NULL
                    OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))

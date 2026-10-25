@@ -239,9 +239,9 @@ public class OrderFulfilmentService {
         int lineNo = 1;
         java.util.List<CustomerOrderItem> itemsInLineOrder = new java.util.ArrayList<>();
         for (CustomerOrderItem item : order.getItems()) {
-            // A kit's own summary line has no reservation — nothing is physically held under its
+            // A package's own summary line has no reservation — nothing is physically held under its
             // stockless SKU, so it posts no stock movement; its real components (each a separate
-            // item with its own reservation) are what actually move stock. See KitService's javadoc.
+            // item with its own reservation) are what actually move stock. See PackageService's javadoc.
             if (item.getReservation() == null) {
                 continue;
             }
@@ -307,7 +307,7 @@ public class OrderFulfilmentService {
     /**
      * The pick-and-pack ticks. Marks products of the order's pick list packed (or, with {@code packed} false, not packed
      * again) and records who and when. Only a line that is physically picked can be ticked: a plain product, or a product
-     * inside a kit; a kit's own summary line is not picked, its products are. Ticking is idempotent (an already packed
+     * inside a package; a package's own summary line is not picked, its products are. Ticking is idempotent (an already packed
      * line keeps its first packer and time) and open from paid until the order leaves the shop. Nothing is checked about
      * ticks when the order is marked ready or dispatched: they are a help to the person packing, not a gate.
      */
@@ -335,9 +335,9 @@ public class OrderFulfilmentService {
             if (item == null) {
                 throw new UnprocessableException("One of those products is not on order " + order.getOrderNo() + ".");
             }
-            if (item.getParentItem() == null && item.getVariant().isKit()) {
+            if (item.getParentItem() == null && item.getVariant().isPackage()) {
                 throw new UnprocessableException(item.soldProductName()
-                        + " is a kit: tick the products inside it, not the kit itself.");
+                        + " is a package: tick the products inside it, not the package itself.");
             }
             if (packed && item.getPackedAt() == null) {
                 item.setPackedAt(now);

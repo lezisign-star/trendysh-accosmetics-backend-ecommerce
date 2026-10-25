@@ -115,7 +115,7 @@ class MockDataToggleIntegrationTest {
         assertThat(enabled.get("enabled").asBoolean()).isTrue();
         int productCount = enabled.get("productCount").asInt();
         assertThat(productCount).as("~100 mock products across the 6 real categories").isBetween(90, 120);
-        assertThat(enabled.get("kitCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(enabled.get("packageCount").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(enabled.get("professionCount").asInt()).isGreaterThanOrEqualTo(1);
         String generatedAt = enabled.get("generatedAt").asText();
 

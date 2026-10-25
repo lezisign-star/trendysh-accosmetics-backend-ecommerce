@@ -143,14 +143,14 @@ public class ProductVariant extends BaseEntity {
     private boolean deleted = false;
 
     /**
-     * True for the one variant that represents an admin-curated {@code Kit} — see that package's
-     * javadoc. A kit variant holds no {@code StockBalance} of its own (the real stock lives on its
+     * True for the one variant that represents an admin-curated {@code ProductPackage} — see that package's
+     * javadoc. A package variant holds no {@code StockBalance} of its own (the real stock lives on its
      * components), so {@code CatalogService.toCard} and {@code CartService}'s courtesy availability
-     * check ask {@code KitAvailabilityService} instead — how many whole kits the components can make
+     * check ask {@code PackageAvailabilityService} instead — how many whole packages the components can make
      * up — and checkout enforces the real availability by reserving each component.
      */
-    @Column(name = "is_kit", nullable = false)
-    private boolean isKit = false;
+    @Column(name = "is_package", nullable = false)
+    private boolean isPackage = false;
 
     /** The variant's own part of its name (V68): its full name is the range's common name, a dash, and this. */
     @Column(name = "name_part", length = 200)

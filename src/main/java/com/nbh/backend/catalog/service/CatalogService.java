@@ -3,7 +3,7 @@ package com.nbh.backend.catalog.service;
 import com.nbh.backend.catalog.dto.*;
 import com.nbh.backend.catalog.entity.*;
 import com.nbh.backend.catalog.repository.*;
-import com.nbh.backend.kits.service.KitAvailabilityService;
+import com.nbh.backend.packages.service.PackageAvailabilityService;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.data.domain.Page;
@@ -36,7 +36,7 @@ public class CatalogService {
     private final ProductViewEventRepository viewEventRepository;
     private final CategoryRepository categoryRepository;
     private final StockAvailabilityService availabilityService;
-    private final KitAvailabilityService kitAvailability;
+    private final PackageAvailabilityService packageAvailability;
     private final EffectivePriceResolver priceResolver;
     private final PromoCampaignService promoCampaignService;
     private final ProductOptionValueRepository optionRepository;
@@ -58,7 +58,7 @@ public class CatalogService {
                            ProductViewEventRepository viewEventRepository,
                            CategoryRepository categoryRepository,
                            StockAvailabilityService availabilityService,
-                           KitAvailabilityService kitAvailability,
+                           PackageAvailabilityService packageAvailability,
                            EffectivePriceResolver priceResolver,
                            PromoCampaignService promoCampaignService,
                            ProductOptionValueRepository optionRepository,
@@ -71,7 +71,7 @@ public class CatalogService {
         this.viewEventRepository = viewEventRepository;
         this.categoryRepository = categoryRepository;
         this.availabilityService = availabilityService;
-        this.kitAvailability = kitAvailability;
+        this.packageAvailability = packageAvailability;
         this.priceResolver = priceResolver;
         this.promoCampaignService = promoCampaignService;
         this.optionRepository = optionRepository;
@@ -82,10 +82,10 @@ public class CatalogService {
     @Transactional(readOnly = true)
     public Page<CatalogVariantCardDto> browseCards(String q, String categorySlug, Boolean deal, Boolean popular,
                                                      Boolean newArrival, Pageable pageable) {
-        // Kits have their own pages and are not listed among products; a search still finds them, as kit cards.
-        boolean includeKits = blankToNull(q) != null;
+        // Packages have their own pages and are not listed among products; a search still finds them, as package cards.
+        boolean includePackages = blankToNull(q) != null;
         Page<ProductVariant> page = variantRepository.searchSellable(blankToNull(q), blankToNull(categorySlug),
-                deal, popular, newArrival, includeKits, pageable);
+                deal, popular, newArrival, includePackages, pageable);
         List<ProductVariant> pageVariants = page.getContent();
         if (pageVariants.isEmpty()) {
             return Page.empty(pageable);
@@ -242,7 +242,7 @@ public class CatalogService {
                 v.getOptionColor(), v.getOptionSize(),
                 v.effectiveColorFamily() == null ? null : v.effectiveColorFamily().name(),
                 v.getSizePosition(), p.getBrand() == null ? null : p.getBrand().getName(),
-                cover == null ? null : cover.focus(), v.isKit(),
+                cover == null ? null : cover.focus(), v.isPackage(),
                 // A deal picture staff chose, only while the product's own flash deal is live (not a site-wide campaign).
                 price.source() == EffectivePriceResolver.Source.PRODUCT_DEAL ? dealPhotoByVariant.get(v.getId()) : null);
     }
@@ -251,16 +251,16 @@ public class CatalogService {
     private record Cover(String url, String focus) {}
 
     /**
-     * What each variant on a page can sell right now. A plain variant sells what its own stock holds; a kit
-     * holds none, so it sells however many whole kits its components can still make up. Without that, every
-     * kit read "in stock" and a sold-out one was only refused at the last step of checkout.
+     * What each variant on a page can sell right now. A plain variant sells what its own stock holds; a package
+     * holds none, so it sells however many whole packages its components can still make up. Without that, every
+     * package read "in stock" and a sold-out one was only refused at the last step of checkout.
      */
     private Map<UUID, BigDecimal> availability(List<ProductVariant> variants) {
         List<UUID> ids = variants.stream().map(ProductVariant::getId).toList();
         Map<UUID, BigDecimal> result = new HashMap<>(availabilityService.available(ids));
-        List<UUID> kitVariantIds = variants.stream().filter(ProductVariant::isKit).map(ProductVariant::getId).toList();
-        if (!kitVariantIds.isEmpty()) {
-            result.putAll(kitAvailability.wholeKitsAvailable(kitVariantIds));
+        List<UUID> packageVariantIds = variants.stream().filter(ProductVariant::isPackage).map(ProductVariant::getId).toList();
+        if (!packageVariantIds.isEmpty()) {
+            result.putAll(packageAvailability.wholePackagesAvailable(packageVariantIds));
         }
         return result;
     }

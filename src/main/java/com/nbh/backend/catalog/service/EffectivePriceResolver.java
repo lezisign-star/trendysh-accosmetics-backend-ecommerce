@@ -57,12 +57,12 @@ public class EffectivePriceResolver {
         if (original == null) {
             throw new IllegalStateException("Variant " + variant.getId() + " has no price — filter to isSellable() first");
         }
-        // A kit's price is already a fixed, admin-chosen discount off its components' combined price
-        // (see KitService) — stacking a site-wide campaign or a per-variant deal on top of it would
+        // A package's price is already a fixed, admin-chosen discount off its components' combined price
+        // (see PackageService) — stacking a site-wide campaign or a per-variant deal on top of it would
         // silently discount it further than intended, and the public "Shop by profession" modal
         // always shows this same plain sellingPrice, so applying either here would make the price a
         // customer sees there disagree with what the shop grid and cart would charge.
-        if (variant.isKit()) {
+        if (variant.isPackage()) {
             return new EffectivePrice(original, original, null, Source.NONE);
         }
         Instant now = Instant.now(clock);

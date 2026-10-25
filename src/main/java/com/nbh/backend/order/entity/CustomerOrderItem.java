@@ -35,7 +35,7 @@ public class CustomerOrderItem {
     @JoinColumn(name = "variant_id", nullable = false)
     private ProductVariant variant;
 
-    /** Where this line sits in its order (V70): the order it was entered in, a kit's products following the kit. */
+    /** Where this line sits in its order (V70): the order it was entered in, a package's products following the package. */
     @Column(name = "line_no", nullable = false)
     private int lineNo;
 
@@ -44,7 +44,7 @@ public class CustomerOrderItem {
 
     /**
      * The pick-and-pack tick (V70): when staff packed this line and who did. Only a line that is physically picked has one
-     * (a plain product, or a product inside a kit), never a kit's own summary line. Set and cleared by
+     * (a plain product, or a product inside a package), never a package's own summary line. Set and cleared by
      * {@code OrderFulfilmentService.setPacked}; nothing else about a placed order's lines ever changes except returns.
      */
     @Column(name = "packed_at")
@@ -82,12 +82,12 @@ public class CustomerOrderItem {
     private StockReservation reservation;
 
     /**
-     * Null for a normal line, and null for a kit's own summary line (variant = the kit's stockless
-     * variant, priced at the package price, {@code reservation = null}). Set only on a kit's real
+     * Null for a normal line, and null for a package's own summary line (variant = the package's stockless
+     * variant, priced at the package price, {@code reservation = null}). Set only on a package's real
      * constituent lines, each pointing back at that summary line — those are what carry the genuine
      * {@link #reservation} and post real stock movements; the order subtotal is only ever summed
      * from parentless lines, so a component's price is never double-counted. See
-     * {@code CheckoutService}'s reservation/assembly loop and {@code KitService}'s javadoc.
+     * {@code CheckoutService}'s reservation/assembly loop and {@code PackageService}'s javadoc.
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_item_id")

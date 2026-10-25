@@ -12,7 +12,7 @@ import java.util.UUID;
  * There is only one shop now, so no location/branch columns.
  *
  * <p>{@code productId} is what the "set stock" call needs next to the variant id, so the list can edit a row
- * in place; {@code kit} marks a variant that holds no stock of its own (its parts do), which the list shows
+ * in place; {@code isPackage} marks a variant that holds no stock of its own (its parts do), which the list shows
  * but cannot edit.
  */
 public record InventoryLineDto(
@@ -26,5 +26,5 @@ public record InventoryLineDto(
         BigDecimal availableQty,
         BigDecimal reorderLevel,
         boolean belowReorderLevel,
-        boolean kit
+        boolean isPackage
 ) {}

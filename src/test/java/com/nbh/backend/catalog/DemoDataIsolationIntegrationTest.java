@@ -68,7 +68,7 @@ class DemoDataIsolationIntegrationTest {
     }
 
     private record Snapshot(boolean demoOn, long orders, long adminProducts, long storefrontVariants, long stockLines,
-                            long customers, long kits, long categories) {}
+                            long customers, long packages, long categories) {}
 
     private java.util.Set<String> categoryNames() throws Exception {
         java.util.Set<String> names = new java.util.TreeSet<>();
@@ -87,7 +87,7 @@ class DemoDataIsolationIntegrationTest {
                 call(get("/api/v1/catalog/variants").param("size", "1")).get("totalElements").asLong(),
                 call(get("/api/v1/stock/inventory").param("size", "1")).get("totalElements").asLong(),
                 call(get("/api/v1/admin/customers").param("size", "1")).get("totalElements").asLong(),
-                call(get("/api/v1/admin/kits").param("size", "1")).get("totalElements").asLong(),
+                call(get("/api/v1/admin/packages").param("size", "1")).get("totalElements").asLong(),
                 call(get("/api/v1/categories")).size());
     }
 
@@ -101,11 +101,11 @@ class DemoDataIsolationIntegrationTest {
         call(post("/api/v1/admin/mock-data/enable"));
         Snapshot demo = snapshot();
         assertThat(demo.demoOn()).isTrue();
-        // Demo mode is its own data set: the 28 placeholder orders, ~100 products and 5 demo kits — not real + demo.
+        // Demo mode is its own data set: the 28 placeholder orders, ~100 products and 5 demo packages — not real + demo.
         assertThat(demo.orders()).isEqualTo(28);
         assertThat(demo.adminProducts()).isGreaterThan(50);
         assertThat(demo.storefrontVariants()).isGreaterThan(50);
-        assertThat(demo.kits()).isEqualTo(5);
+        assertThat(demo.packages()).isEqualTo(5);
         assertThat(demo.customers()).isEqualTo(28);
         assertThat(categoryNames()).as("demo subcategories replace the real ones").isNotEqualTo(realCategoryNames);
         assertThat(demo.adminProducts()).isNotEqualTo(real.adminProducts());

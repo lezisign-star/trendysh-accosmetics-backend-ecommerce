@@ -40,8 +40,8 @@ public class ReorderLevelService {
         }
         ProductVariant variant = variantRepository.findById(variantId)
                 .orElseThrow(() -> new EntityNotFoundException("No variant: " + variantId));
-        if (variant.isKit()) {
-            throw new IllegalArgumentException("Kits hold no stock of their own — set reorder levels on their components");
+        if (variant.isPackage()) {
+            throw new IllegalArgumentException("Packages hold no stock of their own — set reorder levels on their components");
         }
         variant.setReorderLevel(reorderLevel == null ? null : reorderLevel.setScale(3, RoundingMode.HALF_UP));
         variantRepository.save(variant);

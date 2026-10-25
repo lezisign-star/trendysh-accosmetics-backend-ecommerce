@@ -14,7 +14,7 @@ import java.util.UUID;
  * F12 pattern ({@code ProductService.listProducts}): a summary for the list,
  * full detail only on a single-order fetch. {@code status} is typed as the
  * real enum (not a pre-stringified value) so it can be used directly in a
- * JPQL constructor-expression query without a type mismatch — Jackson still
+ * JPQL function Object() { [native code] }-expression query without a type mismatch — Jackson still
  * serialises it as a plain string in the JSON response either way.
  */
 public record OrderSummaryDto(
@@ -51,7 +51,7 @@ public record OrderSummaryDto(
          */
         String paymentCode
 ) {
-    /** The shape the JPQL constructor expression selects; urgency and the code status are worked out afterwards. */
+    /** The shape the JPQL function Object() { [native code] } expression selects; urgency and the code status are worked out afterwards. */
     public OrderSummaryDto(UUID id, String orderNo, OrderStatus status, String customerName, String guestEmail,
                            String guestPhone, long itemCount, BigDecimal grandTotal, Instant createdAt,
                            boolean needsAttention, String tumabodaBookingFailure,

@@ -34,11 +34,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Orders that staff enter for a customer (owner, 2026-10-19: "staff can place a kit order for a customer"), for the
+ * Orders that staff enter for a customer (owner, 2026-10-19: "staff can place a package order for a customer"), for the
  * customer who phones, messages on WhatsApp or stands at the counter rather than using the site.
  *
  * <p>There is deliberately no second way of making an order. The staff member builds a basket with the shop's ordinary
- * basket endpoints under a session of their own, so every line is priced (deals, wholesale, a kit and its picks), kit-picked
+ * basket endpoints under a session of their own, so every line is priced (deals, wholesale, a package and its picks), package-picked
  * and stock-checked exactly as it is for a shopper, and this service then runs the same {@link CheckoutService} over that
  * basket: the same stock holds, the same order, the same payment record and the same emails. What differs is only who is
  * placing it ({@link CheckoutService.Placement}): no limit on orders waiting for payment, the order remembers who entered

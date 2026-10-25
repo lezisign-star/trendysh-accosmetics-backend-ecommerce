@@ -14,12 +14,12 @@ import com.nbh.backend.catalog.repository.ProductRepository;
 import com.nbh.backend.catalog.repository.ProductReviewRepository;
 import com.nbh.backend.catalog.repository.ProductSaleEventRepository;
 import com.nbh.backend.catalog.repository.ProductVariantRepository;
-import com.nbh.backend.kits.dto.KitDtos.ComponentInput;
-import com.nbh.backend.kits.dto.KitDtos.SaveKitRequest;
-import com.nbh.backend.kits.dto.ProfessionDtos.ProfessionRequest;
-import com.nbh.backend.kits.entity.Profession;
-import com.nbh.backend.kits.repository.ProfessionRepository;
-import com.nbh.backend.kits.service.KitService;
+import com.nbh.backend.packages.dto.PackageDtos.ComponentInput;
+import com.nbh.backend.packages.dto.PackageDtos.SavePackageRequest;
+import com.nbh.backend.packages.dto.ProfessionDtos.ProfessionRequest;
+import com.nbh.backend.packages.entity.Profession;
+import com.nbh.backend.packages.repository.ProfessionRepository;
+import com.nbh.backend.packages.service.PackageService;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.CustomerOrderItem;
 import com.nbh.backend.order.entity.FulfilmentType;
@@ -45,20 +45,20 @@ import java.util.UUID;
 /**
  * Developer-toggleable demo content (2026-09-29) — lets the developer show the client a
  * realistically-populated catalogue without touching the client's own real data. See the plan this
- * was built from: {@code one-click-add-kit-to-glistening-pinwheel.md} in the developer's local
+ * was built from: {@code one-click-add-package-to-glistening-pinwheel.md} in the developer's local
  * Claude plans folder, written 2026-09-29, for the full design reasoning.
  *
  * <p>Every row this creates is tagged {@code isMockData = true} on {@link Product}/{@link Category}/
  * {@link Profession}/{@link CustomerOrder}. Toggling is then just a bulk flip of
  * {@code isPublished} on the tagged product/category rows — reuses the exact same "published"
  * mechanism every storefront query already filters on, so no other query in the codebase needed to
- * change. Kits and professions piggyback on their backing product's/kits' visibility for free (see
- * {@link KitService#listPublicKits()}); a profession with zero currently-visible kits already drops
+ * change. Packages and professions piggyback on their backing product's/packages' visibility for free (see
+ * {@link PackageService#listPublicPackages()}); a profession with zero currently-visible packages already drops
  * out of the public grouping on its own.
  *
  * <p>Reuses the same already-validated service methods the real admin UI uses to create things
  * ({@link ProductService#saveProduct}, {@link VariantStockService#setOnHand},
- * {@link KitService#create}) rather than hand-rolling inserts, so SKU generation, stock-ledger
+ * {@link PackageService#create}) rather than hand-rolling inserts, so SKU generation, stock-ledger
  * correctness, and validation all come for free. The one thing those don't cover — fake
  * reviews/units-sold, which both require a backing {@link CustomerOrder} row via a NOT NULL FK —
  * is built directly via repository saves, deliberately NOT through the real checkout flow (which
@@ -76,7 +76,7 @@ public class MockDataSeederService {
     private final ProductVariantRepository variantRepository;
     private final ProductImageRepository imageRepository;
     private final VariantStockService stockService;
-    private final KitService kitService;
+    private final PackageService packageService;
     private final ProfessionRepository professionRepository;
     private final CustomerOrderRepository orderRepository;
     private final ProductReviewRepository reviewRepository;
@@ -85,7 +85,7 @@ public class MockDataSeederService {
     public MockDataSeederService(ProductService productService, ProductRepository productRepository,
                                   CategoryRepository categoryRepository, ProductVariantRepository variantRepository,
                                   ProductImageRepository imageRepository, VariantStockService stockService,
-                                  KitService kitService, ProfessionRepository professionRepository,
+                                  PackageService packageService, ProfessionRepository professionRepository,
                                   CustomerOrderRepository orderRepository, ProductReviewRepository reviewRepository,
                                   ProductSaleEventRepository saleEventRepository) {
         this.productService = productService;
@@ -94,7 +94,7 @@ public class MockDataSeederService {
         this.variantRepository = variantRepository;
         this.imageRepository = imageRepository;
         this.stockService = stockService;
-        this.kitService = kitService;
+        this.packageService = packageService;
         this.professionRepository = professionRepository;
         this.orderRepository = orderRepository;
         this.reviewRepository = reviewRepository;
@@ -107,12 +107,12 @@ public class MockDataSeederService {
         boolean enabled = mockProducts.stream().anyMatch(Product::isPublished);
         Instant generatedAt = mockProducts.stream().map(Product::getCreatedAt)
                 .min(Instant::compareTo).orElse(null);
-        long kitCount = mockProducts.stream()
+        long packageCount = mockProducts.stream()
                 .flatMap(p -> variantRepository.findByProductId(p.getId()).stream())
-                .filter(ProductVariant::isKit).count();
+                .filter(ProductVariant::isPackage).count();
         long professionCount = professionRepository.findAll().stream().filter(Profession::isMockData).count();
         long orderCount = orderRepository.countByIsMockDataTrue();
-        return new MockDataStatusDto(enabled, generatedAt, mockProducts.size(), (int) kitCount,
+        return new MockDataStatusDto(enabled, generatedAt, mockProducts.size(), (int) packageCount,
                 (int) professionCount, (int) orderCount);
     }
 
@@ -142,7 +142,7 @@ public class MockDataSeederService {
         List<ProductVariant> variants = productRepository.findAll().stream()
                 .filter(Product::isMockData)
                 .flatMap(p -> variantRepository.findByProductId(p.getId()).stream())
-                .filter(v -> !v.isDeleted() && !v.isKit() && v.getSellingPrice() != null)
+                .filter(v -> !v.isDeleted() && !v.isPackage() && v.getSellingPrice() != null)
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         variants.forEach(v -> {
             v.setDealPrice(null);
@@ -205,7 +205,7 @@ public class MockDataSeederService {
             allVariants.addAll(categoryVariants);
 
             if (profession != null && categoryVariants.size() >= 3) {
-                createMockKit(profession, top, categoryVariants, developer);
+                createMockPackage(profession, top, categoryVariants, developer);
             }
         }
 
@@ -263,7 +263,7 @@ public class MockDataSeederService {
 
     private Profession createMockProfession(String label, String slugBase) {
         String slug = slugBase + "-" + shortId();
-        var dto = kitService.createProfession(new ProfessionRequest(label, slug));
+        var dto = packageService.createProfession(new ProfessionRequest(label, slug));
         Profession profession = professionRepository.findById(dto.id()).orElseThrow();
         profession.setMockData(true);
         return professionRepository.save(profession);
@@ -326,8 +326,8 @@ public class MockDataSeederService {
         return "https://picsum.photos/seed/" + seed + "/800/600";
     }
 
-    private void createMockKit(Profession profession, Category category, List<ProductVariant> candidates, StaffUser developer) {
-        // A starter kit should be affordable and varied: take up to 4 evenly-spaced items from the
+    private void createMockPackage(Profession profession, Category category, List<ProductVariant> candidates, StaffUser developer) {
+        // A starter package should be affordable and varied: take up to 4 evenly-spaced items from the
         // cheaper ~60% of the category, not the first few templates (which can be a KSh 21k facial bed).
         List<ProductVariant> byPrice = candidates.stream()
                 .filter(v -> v.getSellingPrice() != null)
@@ -347,19 +347,19 @@ public class MockDataSeederService {
         var componentInputs = components.stream()
                 .map(v -> new ComponentInput(v.getId(), "1"))
                 .toList();
-        var request = new SaveKitRequest(
-                profession.getLabel() + " Starter Kit", profession.getId(), category.getId(),
+        var request = new SavePackageRequest(
+                profession.getLabel() + " Starter Package", profession.getId(), category.getId(),
                 "A curated starter set for a " + profession.getLabel().toLowerCase(Locale.ROOT) + " — everything you need to get going.",
                 finalPrice.toPlainString(), componentInputs, null);
-        var dto = kitService.create(request);
+        var dto = packageService.create(request);
 
-        Product kitProduct = productRepository.findById(dto.productId()).orElseThrow();
-        kitProduct.setMockData(true);
-        productRepository.save(kitProduct);
+        Product packageProduct = productRepository.findById(dto.productId()).orElseThrow();
+        packageProduct.setMockData(true);
+        productRepository.save(packageProduct);
 
-        // A kit is a product+variant like any other; without an image it shows a blank tile.
-        ProductVariant kitVariant = variantRepository.findByProductId(kitProduct.getId()).get(0);
-        attachImages(kitProduct, kitVariant, profession.getLabel() + " kit");
+        // A package is a product+variant like any other; without an image it shows a blank tile.
+        ProductVariant packageVariant = variantRepository.findByProductId(packageProduct.getId()).get(0);
+        attachImages(packageProduct, packageVariant, profession.getLabel() + " package");
     }
 
     private void seedReviewsAndSales(List<ProductVariant> variants, StaffUser developer) {

@@ -40,7 +40,7 @@ public class CartController {
                             @Valid @RequestBody AddToCartRequest request,
                             HttpServletResponse response) {
         String resolved = resolveSession(sessionId, response);
-        return cartService.addItem(resolved, request.variantId(), request.qty(), request.kitChoices());
+        return cartService.addItem(resolved, request.variantId(), request.qty(), request.packageChoices());
     }
 
     @PutMapping("/items/{itemId}")

@@ -22,7 +22,7 @@ public final class StaffOrderDtos {
 
     /**
      * The lines are the staff member's own basket, built with the shop's ordinary basket endpoints under a session of their
-     * own ({@code cartSession}), so every line is priced, kit-picked and stock-checked exactly as it is for a shopper.
+     * own ({@code cartSession}), so every line is priced, package-picked and stock-checked exactly as it is for a shopper.
      * {@code expectedSubtotal} is the total the screen showed: if the real total has moved since, nothing is placed.
      * {@code email} is optional (a customer on the phone or WhatsApp may have none). {@code deliveryAddress} is the shop
      * for a pickup and the place for a delivery, as at the checkout. {@code payNow} is null when the customer will pay

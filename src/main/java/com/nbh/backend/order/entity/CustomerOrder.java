@@ -247,7 +247,7 @@ public class CustomerOrder extends BaseEntity {
         return tumabodaDeliveryId != null && !isDeadTumabodaStatus(tumabodaStatus);
     }
 
-    /** In the order they were entered (V70): a kit's own products follow the kit's line, in the kit's order. */
+    /** In the order they were entered (V70): a package's own products follow the package's line, in the package's order. */
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("lineNo ASC, id ASC")
     private List<CustomerOrderItem> items = new ArrayList<>();

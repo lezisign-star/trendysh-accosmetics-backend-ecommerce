@@ -85,11 +85,11 @@ public class VariantJobWriter {
         }
     }
 
-    /** The base variant: the one asked for, else the product's first live variant that is not a kit. */
+    /** The base variant: the one asked for, else the product's first live variant that is not a package. */
     @Transactional(readOnly = true)
     public Optional<ProductVariant> base(UUID productId, UUID baseVariantId) {
         List<ProductVariant> live = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId);
-        return baseVariantId == null ? live.stream().filter(v -> !v.isKit()).findFirst()
+        return baseVariantId == null ? live.stream().filter(v -> !v.isPackage()).findFirst()
                 : live.stream().filter(v -> v.getId().equals(baseVariantId)).findFirst();
     }
 

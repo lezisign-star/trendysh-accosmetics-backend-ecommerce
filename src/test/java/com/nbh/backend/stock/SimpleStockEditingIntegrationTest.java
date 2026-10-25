@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  * Stock for a small shop (2026-10-05): staff type a number on the stock list or in a product card's quick
  * edit instead of going through receipts and counts. This covers what that needs from the API: a typed
  * number must work for a product whose cost nobody ever entered (an explicit opt-in, so the product
- * editor's refusal stays), a kit must refuse stock of its own, and the stock list must show each row's
+ * editor's refusal stays), a package must refuse stock of its own, and the stock list must show each row's
  * product, leave out deleted products, and narrow to what is out of stock or to one product.
  */
 @SpringBootTest
@@ -163,11 +163,11 @@ class SimpleStockEditingIntegrationTest {
     }
 
     @Test
-    void aKitHoldsNoStockOfItsOwn() throws Exception {
-        JsonNode product = newProduct(unique("Kit stock"));
+    void aPackageHoldsNoStockOfItsOwn() throws Exception {
+        JsonNode product = newProduct(unique("Package stock"));
         UUID variantId = UUID.fromString(product.get("variants").get(0).get("id").asText());
         ProductVariant variant = variantRepository.findById(variantId).orElseThrow();
-        variant.setKit(true);
+        variant.setPackage(true);
         variantRepository.save(variant);
 
         assertThat(status(put(stockUrl(product)), "{\"quantity\":5,\"allowUnknownCost\":true}")).isEqualTo(422);
@@ -176,12 +176,12 @@ class SimpleStockEditingIntegrationTest {
 
         JsonNode row = ok(get("/api/v1/stock/inventory").param("productId", product.get("id").asText()), null)
                 .get("content").get(0);
-        assertThat(row.get("kit").asBoolean()).as("the list marks it so the screen can leave it uneditable").isTrue();
+        assertThat(row.get("isPackage").asBoolean()).as("the list marks it so the screen can leave it uneditable").isTrue();
 
         // Its zero is not a shortage the shop can fix by typing a number, so the "out of stock" view leaves it out.
         JsonNode out = ok(get("/api/v1/stock/inventory").param("productId", product.get("id").asText())
                 .param("outOfStockOnly", "true"), null).get("content");
-        assertThat(out).as("a kit is never listed as out of stock").isEmpty();
+        assertThat(out).as("a package is never listed as out of stock").isEmpty();
     }
 
     @Test
@@ -199,7 +199,7 @@ class SimpleStockEditingIntegrationTest {
         assertThat(list.findValuesAsText("productName")).containsExactlyInAnyOrder(tag + " live", tag + " empty");
         for (JsonNode row : list) {
             assertThat(row.get("productId").asText()).isNotBlank();
-            assertThat(row.get("kit").asBoolean()).isFalse();
+            assertThat(row.get("isPackage").asBoolean()).isFalse();
         }
 
         // Only what has nothing on hand.

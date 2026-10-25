@@ -42,9 +42,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 /**
  * Orders that staff enter for a customer, and the pick-and-pack list on every order (owner, 2026-10-19). A staff order is
  * built from the shop's own basket under the staff member's session and placed through the same checkout, so it is priced,
- * kit-picked, stock-held and paid like a shopper's; what differs is who placed it. The pick list is the order's lines in
- * the order they were entered, a kit's products following it, each with a tick that is remembered. Same Spring context as
- * {@link com.nbh.backend.kits.KitIntegrationTest} (identical annotations), so no extra connection pool.
+ * package-picked, stock-held and paid like a shopper's; what differs is who placed it. The pick list is the order's lines in
+ * the order they were entered, a package's products following it, each with a tick that is remembered. Same Spring context as
+ * {@link com.nbh.backend.packages.PackageIntegrationTest} (identical annotations), so no extra connection pool.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -72,7 +72,7 @@ class StaffOrderIntegrationTest {
         token = jwtService.generateAccessToken(admin);
     }
 
-    // ---- helpers (the same ones the kit tests have, kept private there) ----
+    // ---- helpers (the same ones the package tests have, kept private there) ----
 
     private static String unique(String base) {
         return base + " " + UUID.randomUUID().toString().substring(0, 8);
@@ -160,12 +160,12 @@ class StaffOrderIntegrationTest {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("variantId", variantId);
         body.put("qty", qty);
-        if (picks != null) body.put("kitChoices", picks);
+        if (picks != null) body.put("packageChoices", picks);
         return json.writeValueAsString(body);
     }
 
-    /** Lashes in two colours (2 in the kit), a cleanser (1 in the kit) and a plain oil; the kit costs 1000 against 1300 apart. */
-    private record Fixture(String kitVariantId, String redId, String pinkId, String cleanserId, String oilId) {}
+    /** Lashes in two colours (2 in the package), a cleanser (1 in the package) and a plain oil; the package costs 1000 against 1300 apart. */
+    private record Fixture(String packageVariantId, String redId, String pinkId, String cleanserId, String oilId) {}
 
     private Fixture fixture() throws Exception {
         Map<String, String> lashes = newProduct(unique("Staff Lashes"), new String[]{"Ruby Red", "500"}, new String[]{"Rose Pink", "650"});
@@ -175,14 +175,14 @@ class StaffOrderIntegrationTest {
         String cleanserId = cleanser.get("Default"), oilId = oil.get("Default");
         receiveStock(Map.of(red, new BigDecimal("10"), pink, new BigDecimal("10"), cleanserId, new BigDecimal("10"),
                 oilId, new BigDecimal("20")));
-        Map<String, Object> kit = new LinkedHashMap<>();
-        kit.put("name", unique("Staff Kit"));
-        kit.put("professionId", newProfession());
-        kit.put("categoryId", newCategory());
-        kit.put("description", "For a technician");
-        kit.put("finalPrice", "1000");
-        kit.put("components", List.of(Map.of("variantId", red, "qty", "2", "customerCanChange", true), Map.of("variantId", cleanserId, "qty", "1")));
-        JsonNode created = ok(post("/api/v1/admin/kits"), json.writeValueAsString(kit));
+        Map<String, Object> pkg = new LinkedHashMap<>();
+        pkg.put("name", unique("Staff Package"));
+        pkg.put("professionId", newProfession());
+        pkg.put("categoryId", newCategory());
+        pkg.put("description", "For a technician");
+        pkg.put("finalPrice", "1000");
+        pkg.put("components", List.of(Map.of("variantId", red, "qty", "2", "customerCanChange", true), Map.of("variantId", cleanserId, "qty", "1")));
+        JsonNode created = ok(post("/api/v1/admin/packages"), json.writeValueAsString(pkg));
         return new Fixture(created.get("variantId").asText(), red, pink, cleanserId, oilId);
     }
 
@@ -279,25 +279,25 @@ class StaffOrderIntegrationTest {
     @Test
     void aStaffOrderIsPricedAndHeldLikeAShoppersAndRemembersWhoEnteredIt() throws Exception {
         Fixture f = fixture();
-        String session = basket(addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())), addBody(f.oilId(), 2, null));
+        String session = basket(addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), addBody(f.oilId(), 2, null));
 
         JsonNode placed = placeOk(orderBody(session, "2131", phone()));
         JsonNode order = placed.get("order");
 
         assertThat(order.get("status").asText()).isEqualTo("PENDING_PAYMENT");
-        assertThat(order.get("subtotal").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300 for the kit, and 2 x 450").isEqualByComparingTo("2131");
+        assertThat(order.get("subtotal").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300 for the package, and 2 x 450").isEqualByComparingTo("2131");
         assertThat(order.get("placedBy").asText()).isEqualTo(admin.getFullName());
         assertThat(placed.get("payRef").isNull()).as("the customer can pay later with the link").isFalse();
         assertThat(placed.get("paymentRecordId").asText()).isNotBlank();
 
-        // the lines in the order they were entered: the kit, then the oil; the kit's own products in the kit's order
+        // the lines in the order they were entered: the package, then the oil; the package's own products in the package's order
         JsonNode lines = order.get("items");
         assertThat(lines).hasSize(2);
         assertThat(lines.get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("1231");
         assertThat(lines.get(1).get("unitPrice").decimalValue()).isEqualByComparingTo("450");
         JsonNode inside = lines.get(0).get("components");
         assertThat(inside).hasSize(2);
-        assertThat(inside.get(0).get("variantId").asText()).as("the colour that was picked, first in the kit").isEqualTo(f.pinkId());
+        assertThat(inside.get(0).get("variantId").asText()).as("the colour that was picked, first in the package").isEqualTo(f.pinkId());
         assertThat(inside.get(0).get("qty").decimalValue()).isEqualByComparingTo("2");
         assertThat(inside.get(1).get("variantId").asText()).isEqualTo(f.cleanserId());
         assertThat(jdbc.queryForList("SELECT line_no FROM customer_order_item WHERE order_id = ?::uuid ORDER BY line_no",
@@ -376,7 +376,7 @@ class StaffOrderIntegrationTest {
     @Test
     void staffCanTakeTheMoneyNowAndTheOrderIsPaidTheMomentItExists() throws Exception {
         Fixture f = fixture();
-        String session = basket(addBody(f.kitVariantId(), 1, null));
+        String session = basket(addBody(f.packageVariantId(), 1, null));
         Map<String, Object> body = orderBody(session, "1000", phone());
         body.put("payNow", Map.of("method", "CASH", "notes", "Paid at the counter"));
 
@@ -546,7 +546,7 @@ class StaffOrderIntegrationTest {
 
     /**
      * The staff version of the double-click bug found in the 2026-10-06 live QA (see {@link ConcurrentCheckoutRaceTest}),
-     * and found again in the kits audit: the order screen read the basket before the checkout lock was taken, so a second
+     * and found again in the packages audit: the order screen read the basket before the checkout lock was taken, so a second
      * submit that waited for the lock carried on with a copy that still said "open". A cash sale with no receipt number
      * is the worst case, because nothing else (a reused M-PESA code) would have stopped the copy being paid as well.
      */
@@ -926,23 +926,23 @@ class StaffOrderIntegrationTest {
     }
 
     @Test
-    void theWholePriceOfAKitLineCanBeChangedAndItsProductsAreLeftAlone() throws Exception {
+    void theWholePriceOfAPackageLineCanBeChangedAndItsProductsAreLeftAlone() throws Exception {
         Fixture f = fixture();
         StaffUser manager = newStaff("MANAGER");
-        String session = basket(addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())));
+        String session = basket(addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())));
         Map<String, Object> body = orderBody(session, "1200", phone());
-        body.put("priceChanges", List.of(change(lineId(session, 0), "1200", "Kit for a new salon, 31 off", null, null)));
+        body.put("priceChanges", List.of(change(lineId(session, 0), "1200", "Package for a new salon, 31 off", null, null)));
 
         JsonNode order = placeOk(body, tokenOf(manager)).get("order");
 
         assertThat(order.get("subtotal").decimalValue()).isEqualByComparingTo("1200");
-        JsonNode kitLine = order.get("items").get(0);
-        assertThat(kitLine.get("unitPrice").decimalValue()).isEqualByComparingTo("1200");
-        assertThat(kitLine.get("components")).as("the kit's products are listed as they were picked").hasSize(2);
+        JsonNode packageLine = order.get("items").get(0);
+        assertThat(packageLine.get("unitPrice").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(packageLine.get("components")).as("the package's products are listed as they were picked").hasSize(2);
         JsonNode record = order.get("priceChanges").get(0);
         assertThat(record.get("listUnitPrice").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300").isEqualByComparingTo("1231");
         assertThat(record.get("amountOff").decimalValue()).isEqualByComparingTo("31");
-        assertThat(record.get("itemId").asText()).as("on the kit's own line").isEqualTo(kitLine.get("itemId").asText());
+        assertThat(record.get("itemId").asText()).as("on the package's own line").isEqualTo(packageLine.get("itemId").asText());
     }
 
     @Test
@@ -1018,9 +1018,9 @@ class StaffOrderIntegrationTest {
                 Map.of("itemIds", itemIds, "packed", packed)));
     }
 
-    private JsonNode paidKitOrder(Fixture f) throws Exception {
-        String session = basket(addBody(f.kitVariantId(), 1, Map.of(f.redId(), f.pinkId())), addBody(f.oilId(), 1, null));
-        // 1231 for the kit with pink (1000 + 2 x 150 x 1000/1300), 450 for the oil
+    private JsonNode paidPackageOrder(Fixture f) throws Exception {
+        String session = basket(addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), addBody(f.oilId(), 1, null));
+        // 1231 for the package with pink (1000 + 2 x 150 x 1000/1300), 450 for the oil
         Map<String, Object> body = orderBody(session, "1681", phone());
         body.put("payNow", Map.of("method", "CASH"));
         return placeOk(body).get("order");
@@ -1029,10 +1029,10 @@ class StaffOrderIntegrationTest {
     @Test
     void staffTickTheProductsOfThePickListAndTheTickIsRemembered() throws Exception {
         Fixture f = fixture();
-        JsonNode order = paidKitOrder(f);
+        JsonNode order = paidPackageOrder(f);
         String id = order.get("id").asText();
         List<String> pickable = componentIds(order);
-        assertThat(pickable).as("the kit's two products and the oil").hasSize(3);
+        assertThat(pickable).as("the package's two products and the oil").hasSize(3);
 
         JsonNode after = packed(id, List.of(pickable.get(0)), true);
         JsonNode firstTick = after.get("items").get(0).get("components").get(0);
@@ -1057,13 +1057,13 @@ class StaffOrderIntegrationTest {
     }
 
     @Test
-    void aKitsOwnLineIsNotPickedSoItCannotBeTicked() throws Exception {
+    void aPackagesOwnLineIsNotPickedSoItCannotBeTicked() throws Exception {
         Fixture f = fixture();
-        JsonNode order = paidKitOrder(f);
-        String kitLine = order.get("items").get(0).get("itemId").asText();
+        JsonNode order = paidPackageOrder(f);
+        String packageLine = order.get("items").get(0).get("itemId").asText();
 
         MvcResult refused = call(post("/api/v1/orders/" + order.get("id").asText() + "/packed"),
-                json.writeValueAsString(Map.of("itemIds", List.of(kitLine), "packed", true)), token);
+                json.writeValueAsString(Map.of("itemIds", List.of(packageLine), "packed", true)), token);
 
         assertThat(refused.getResponse().getStatus()).isEqualTo(422);
         assertThat(refused.getResponse().getContentAsString()).contains("tick the products inside it");
@@ -1072,8 +1072,8 @@ class StaffOrderIntegrationTest {
     @Test
     void aLineOfAnotherOrderOrAnEmptyListIsRefused() throws Exception {
         Fixture f = fixture();
-        JsonNode order = paidKitOrder(f);
-        JsonNode other = paidKitOrder(f);
+        JsonNode order = paidPackageOrder(f);
+        JsonNode other = paidPackageOrder(f);
         String id = order.get("id").asText();
 
         MvcResult foreign = call(post("/api/v1/orders/" + id + "/packed"),
@@ -1090,14 +1090,14 @@ class StaffOrderIntegrationTest {
         Fixture f = fixture();
 
         // not paid yet
-        String session = basket(addBody(f.kitVariantId(), 1, null));
+        String session = basket(addBody(f.packageVariantId(), 1, null));
         JsonNode unpaid = placeOk(orderBody(session, "1000", phone())).get("order");
         MvcResult early = call(post("/api/v1/orders/" + unpaid.get("id").asText() + "/packed"),
                 json.writeValueAsString(Map.of("itemIds", List.of(componentIds(unpaid).get(0)), "packed", true)), token);
         assertThat(early.getResponse().getStatus()).isEqualTo(422);
 
         // paid, then picking, then ready: still open
-        JsonNode order = paidKitOrder(f);
+        JsonNode order = paidPackageOrder(f);
         String id = order.get("id").asText();
         ok(post("/api/v1/orders/" + id + "/start-picking"), null);
         packed(id, List.of(componentIds(order).get(0)), true);
@@ -1112,21 +1112,21 @@ class StaffOrderIntegrationTest {
     }
 
     @Test
-    void theOrdersListCountsWhatWasBoughtNotTheProductsInsideAKit() throws Exception {
+    void theOrdersListCountsWhatWasBoughtNotTheProductsInsideAPackage() throws Exception {
         Fixture f = fixture();
-        JsonNode order = paidKitOrder(f);
+        JsonNode order = paidPackageOrder(f);
 
         JsonNode list = ok(get("/api/v1/orders?q=" + order.get("orderNo").asText()), null);
 
         assertThat(list.get("content")).hasSize(1);
         assertThat(list.get("content").get(0).get("itemCount").asInt())
-                .as("the kit and the oil: the kit's own two products are not counted again").isEqualTo(2);
+                .as("the package and the oil: the package's own two products are not counted again").isEqualTo(2);
     }
 
     @Test
     void onlyAManagerCanTick() throws Exception {
         Fixture f = fixture();
-        JsonNode order = paidKitOrder(f);
+        JsonNode order = paidPackageOrder(f);
 
         MvcResult viewer = call(post("/api/v1/orders/" + order.get("id").asText() + "/packed"),
                 json.writeValueAsString(Map.of("itemIds", List.of(componentIds(order).get(0)), "packed", true)), viewerToken());
@@ -1139,7 +1139,7 @@ class StaffOrderIntegrationTest {
         Fixture f = fixture();
         String session = "shopper-" + UUID.randomUUID();
         cartOk(post("/api/v1/cart/items"), addBody(f.oilId(), 1, null), session);
-        cartOk(post("/api/v1/cart/items"), addBody(f.kitVariantId(), 1, null), session);
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, null), session);
         cartOk(post("/api/v1/cart/items"), addBody(f.cleanserId(), 1, null), session);
         // a later change to the first line must not move it
         cartOk(post("/api/v1/cart/items"), addBody(f.oilId(), 1, null), session);
@@ -1150,7 +1150,7 @@ class StaffOrderIntegrationTest {
 
         JsonNode detail = ok(get("/api/v1/orders/" + id), null);
         assertThat(detail.get("items").get(0).get("qty").decimalValue()).as("the oil, twice, still first").isEqualByComparingTo("2");
-        assertThat(detail.get("items").get(1).get("components")).as("then the kit with what is inside").hasSize(2);
+        assertThat(detail.get("items").get(1).get("components")).as("then the package with what is inside").hasSize(2);
         assertThat(detail.get("items").get(2).get("variantId").asText()).as("then the cleanser").isEqualTo(f.cleanserId());
     }
 }

@@ -1,0 +1,718 @@
+package com.nbh.backend.packages;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nbh.backend.catalog.entity.Category;
+import com.nbh.backend.catalog.repository.CategoryRepository;
+import com.nbh.backend.common.security.JwtService;
+import com.nbh.backend.packages.service.PackageService;
+import com.nbh.backend.order.entity.OrderStatus;
+import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.staff.repository.StaffUserRepository;
+import com.nbh.backend.stock.entity.StockReservation;
+import com.nbh.backend.stock.repository.StockReservationRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+
+import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+
+/**
+ * A shopper swapping the colour or size of a product inside a package (owner, 2026-10-19): the package's page offers the options,
+ * the cart prices the picks (package price + quantity x (picked price - default price)), counts them against the shelf of
+ * the variant picked, keeps the same package with different picks as different lines, and checkout reserves and names exactly
+ * what was picked. Same Spring context as {@link PackageIntegrationTest} (identical annotations), so no extra connection pool.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class PackageChoicesIntegrationTest {
+
+    @Autowired private MockMvc mvc;
+    @Autowired private ObjectMapper json;
+    @Autowired private JwtService jwtService;
+    @Autowired private StaffUserRepository staffUsers;
+    @Autowired private CategoryRepository categoryRepository;
+    @Autowired private CustomerOrderRepository orderRepository;
+    @Autowired private StockReservationRepository reservationRepository;
+    @Autowired private JdbcTemplate jdbc;
+
+    private String token;
+
+    @BeforeEach
+    void setUp() {
+        var admin = staffUsers.findAll().stream()
+                .filter(u -> u.getStaffRole() != null && "SUPER_ADMIN".equals(u.getStaffRole().getName()))
+                .findFirst().orElseThrow();
+        token = jwtService.generateAccessToken(admin);
+    }
+
+    // ---- helpers (the same ones PackageIntegrationTest has, kept private there) ----
+
+    private static String unique(String base) {
+        return base + " " + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private JsonNode ok(MockHttpServletRequestBuilder request, String body) throws Exception {
+        request.header("Authorization", "Bearer " + token);
+        if (body != null) request.contentType(MediaType.APPLICATION_JSON).content(body);
+        MvcResult result = mvc.perform(request).andReturn();
+        assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200);
+        String content = result.getResponse().getContentAsString();
+        return content.isBlank() ? null : json.readTree(content);
+    }
+
+    private MvcResult cartRaw(MockHttpServletRequestBuilder request, String body, String sessionId) throws Exception {
+        request.header("X-Cart-Session", sessionId);
+        if (body != null) request.contentType(MediaType.APPLICATION_JSON).content(body);
+        return mvc.perform(request).andReturn();
+    }
+
+    private JsonNode cartOk(MockHttpServletRequestBuilder request, String body, String sessionId) throws Exception {
+        MvcResult result = cartRaw(request, body, sessionId);
+        assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200);
+        return json.readTree(result.getResponse().getContentAsString());
+    }
+
+    private String newCategory() {
+        Category c = new Category();
+        c.setSlug("package-choice-category-" + UUID.randomUUID().toString().substring(0, 8));
+        c.setName(unique("Package Choice Category"));
+        return categoryRepository.save(c).getId().toString();
+    }
+
+    private String newProfession() throws Exception {
+        return ok(post("/api/v1/admin/professions"),
+                "{\"label\":\"" + unique("Lash Tech") + "\",\"slug\":\"lash-tech-" + UUID.randomUUID().toString().substring(0, 8) + "\"}")
+                .get("id").asText();
+    }
+
+    /** A published product with these variants (name, price, colour); returns variant ids by name. */
+    private Map<String, String> newProduct(String name, String[]... variants) throws Exception {
+        StringBuilder list = new StringBuilder();
+        for (String[] v : variants) {
+            if (!list.isEmpty()) list.append(",");
+            list.append("{\"variantName\":\"").append(v[0]).append("\",\"sellingPrice\":\"").append(v[1])
+                    .append("\",\"isActive\":true,\"options\":{\"color\":\"").append(v[0])
+                    .append("\",\"size\":null,\"swatchHex\":null,\"colorFamily\":null}}");
+        }
+        JsonNode product = ok(post("/api/v1/products/draft"),
+                "{\"name\":\"" + name + "\",\"categoryIds\":[],\"published\":false,\"variants\":[" + list + "]}");
+        ok(post("/api/v1/products/" + product.get("id").asText() + "/publish"), null);
+        Map<String, String> ids = new HashMap<>();
+        for (JsonNode variant : product.get("variants")) {
+            ids.put(variant.get("variantName").asText(), variant.get("id").asText());
+        }
+        return ids;
+    }
+
+    private String newSupplier() throws Exception {
+        return ok(post("/api/v1/admin/suppliers"),
+                "{\"name\":\"" + unique("Package Choice Supplier") + "\",\"phone\":\"0700000000\"}").get("id").asText();
+    }
+
+    private void receiveStock(Map<String, BigDecimal> qtyByVariantId) throws Exception {
+        StringBuilder lines = new StringBuilder();
+        for (var e : qtyByVariantId.entrySet()) {
+            if (!lines.isEmpty()) lines.append(",");
+            lines.append("{\"variantId\":\"").append(e.getKey()).append("\",\"qty\":\"").append(e.getValue())
+                    .append("\",\"unitCost\":\"100\"}");
+        }
+        JsonNode po = ok(post("/api/v1/admin/purchase-orders"),
+                "{\"supplierId\":\"" + newSupplier() + "\",\"lines\":[" + lines + "]}");
+        String poId = po.get("id").asText();
+        ok(post("/api/v1/admin/purchase-orders/" + poId + "/send"), null);
+        StringBuilder receiveLines = new StringBuilder();
+        for (JsonNode line : po.get("lines")) {
+            if (!receiveLines.isEmpty()) receiveLines.append(",");
+            receiveLines.append("{\"poLineId\":\"").append(line.get("id").asText()).append("\",\"qty\":\"")
+                    .append(qtyByVariantId.get(line.get("variantId").asText())).append("\"}");
+        }
+        ok(post("/api/v1/admin/purchase-orders/" + poId + "/receive"), "{\"lines\":[" + receiveLines + "]}");
+    }
+
+    private BigDecimal shopOnHand(String variantId) throws Exception {
+        for (JsonNode b : ok(get("/api/v1/stock/balance?variantId=" + variantId), null)) {
+            if ("SHOP".equals(b.get("account").asText())) return b.get("onHandQty").decimalValue();
+        }
+        return BigDecimal.ZERO;
+    }
+
+    private String checkoutBody() {
+        String phone = "2547" + String.format("%08d", Math.abs(UUID.randomUUID().hashCode()) % 100_000_000);
+        return "{\"customerName\":\"Test Customer\",\"guestEmail\":\"picks-" + UUID.randomUUID().toString().substring(0, 8)
+                + "@example.com\",\"guestPhone\":\"" + phone + "\",\"fulfilmentType\":\"PICKUP\"}";
+    }
+
+    private static String packageBody(String name, String professionId, String categoryId, String price, String... components) {
+        return "{\"name\":\"" + name + "\",\"professionId\":\"" + professionId + "\",\"categoryId\":\"" + categoryId
+                + "\",\"description\":\"For a technician\",\"finalPrice\":\"" + price + "\",\"components\":["
+                + String.join(",", components) + "]}";
+    }
+
+    private static String component(String variantId, String qty, boolean canChange) {
+        return "{\"variantId\":\"" + variantId + "\",\"qty\":\"" + qty + "\",\"customerCanChange\":" + canChange + "}";
+    }
+
+    private String addBody(String packageVariantId, int qty, Map<String, String> picks) {
+        StringBuilder sb = new StringBuilder("{\"variantId\":\"" + packageVariantId + "\",\"qty\":" + qty);
+        if (picks != null) {
+            sb.append(",\"packageChoices\":{");
+            boolean first = true;
+            for (var e : picks.entrySet()) {
+                if (!first) sb.append(",");
+                sb.append("\"").append(e.getKey()).append("\":\"").append(e.getValue()).append("\"");
+                first = false;
+            }
+            sb.append("}");
+        }
+        return sb.append("}").toString();
+    }
+
+    /** Lashes in two colours (2 of them in the package) and a plain cleanser; the package costs 1000 against 1300 separately. */
+    private record Fixture(String packageId, String packageVariantId, String packageSlug, String redId, String pinkId, String budgetId, String cleanserId,
+                           String lashProductId) {}
+
+    private Fixture fixture(boolean lashesCanChange, int pinkStock) throws Exception {
+        Map<String, String> lashes = newProduct(unique("Choice Lashes"), new String[]{"Ruby Red", "500"},
+                new String[]{"Rose Pink", "650"}, new String[]{"Budget Black", "400"});
+        Map<String, String> cleanser = newProduct(unique("Choice Cleanser"), new String[]{"Default", "300"});
+        String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink"), budget = lashes.get("Budget Black");
+        String cleanserId = cleanser.get("Default");
+        receiveStock(Map.of(red, new BigDecimal("10"), pink, new BigDecimal(pinkStock), budget, new BigDecimal("10"),
+                cleanserId, new BigDecimal("10")));
+        JsonNode pkg = ok(post("/api/v1/admin/packages"), packageBody(unique("Choice Package"), newProfession(), newCategory(), "1000",
+                component(red, "2", lashesCanChange), component(cleanserId, "1", true)));
+        String slug = jdbc.queryForObject("SELECT slug FROM product WHERE id = ?::uuid", String.class, pkg.get("productId").asText());
+        return new Fixture(pkg.get("id").asText(), pkg.get("variantId").asText(), slug, red, pink, budget, cleanserId, null);
+    }
+
+    private JsonNode line(JsonNode cart, int index) {
+        return cart.get("items").get(index);
+    }
+
+    // ---- the package's page offers the options ----
+
+    @Test
+    void thePackagePageOffersTheColoursOfAChangeableProductWithWhatEachOneAddsToThePrice() throws Exception {
+        Fixture f = fixture(true, 10);
+
+        MvcResult result = mvc.perform(get("/api/v1/catalog/packages/" + f.packageSlug())).andReturn();
+        assertThat(result.getResponse().getStatus()).isEqualTo(200);
+        JsonNode page = json.readTree(result.getResponse().getContentAsString());
+
+        JsonNode lashes = null, cleanser = null;
+        for (JsonNode item : page.get("items")) {
+            if (item.get("variantId").asText().equals(f.redId())) lashes = item;
+            if (item.get("variantId").asText().equals(f.cleanserId())) cleanser = item;
+        }
+        assertThat(lashes).isNotNull();
+        assertThat(lashes.get("canChange").asBoolean()).isTrue();
+        assertThat(lashes.get("choices")).hasSize(3);
+        Map<String, JsonNode> byId = new HashMap<>();
+        lashes.get("choices").forEach(c -> byId.put(c.get("variantId").asText(), c));
+        assertThat(byId.get(f.redId()).get("isDefault").asBoolean()).isTrue();
+        assertThat(byId.get(f.redId()).get("priceDelta").decimalValue()).isEqualByComparingTo("0");
+        // two lashes per package: 2 x (650 - 500) more and 2 x (400 - 500) less, each at the package's share (1000 of 1300),
+        // in whole shillings: the discount is a percentage, so a pick keeps it
+        assertThat(byId.get(f.pinkId()).get("priceDelta").decimalValue()).isEqualByComparingTo("231");
+        assertThat(byId.get(f.budgetId()).get("priceDelta").decimalValue()).isEqualByComparingTo("-154");
+        assertThat(byId.get(f.pinkId()).get("inStock").asBoolean()).isTrue();
+        // a one-option product has nothing to choose
+        assertThat(cleanser).isNotNull();
+        assertThat(cleanser.get("canChange").asBoolean()).isFalse();
+        assertThat(cleanser.get("choices")).isEmpty();
+    }
+
+    @Test
+    void aProductStaffSwitchedOffIsNotOfferedAndAnOptionOutOfStockIsMarked() throws Exception {
+        Fixture off = fixture(false, 10);
+        JsonNode pageOff = json.readTree(mvc.perform(get("/api/v1/catalog/packages/" + off.packageSlug())).andReturn()
+                .getResponse().getContentAsString());
+        for (JsonNode item : pageOff.get("items")) {
+            assertThat(item.get("canChange").asBoolean()).as(item.get("name").asText()).isFalse();
+        }
+
+        // 1 pink on the shelf, 2 lashes in the package: that option cannot make up a package
+        Fixture low = fixture(true, 1);
+        JsonNode pageLow = json.readTree(mvc.perform(get("/api/v1/catalog/packages/" + low.packageSlug())).andReturn()
+                .getResponse().getContentAsString());
+        boolean checked = false;
+        for (JsonNode item : pageLow.get("items")) {
+            for (JsonNode choice : item.get("choices")) {
+                if (choice.get("variantId").asText().equals(low.pinkId())) {
+                    assertThat(choice.get("inStock").asBoolean()).isFalse();
+                    checked = true;
+                }
+            }
+        }
+        assertThat(checked).isTrue();
+    }
+
+    private JsonNode listedPackage(String packageVariantId) throws Exception {
+        JsonNode list = json.readTree(mvc.perform(get("/api/v1/catalog/packages")).andReturn().getResponse().getContentAsString());
+        for (JsonNode pkg : list) {
+            if (pkg.get("variantId").asText().equals(packageVariantId)) return pkg;
+        }
+        throw new AssertionError("package not listed: " + packageVariantId);
+    }
+
+    @Test
+    void oneByOneAndTheSavingFollowADealOnAProductInsideWhileThePicksStillMoveThePackageBySellingPrice() throws Exception {
+        Fixture f = fixture(true, 10);
+        // Ruby Red (500) is on a deal at 450 for a day: bought loose the package's products cost 2 x 450 + 300 = 1200
+        jdbc.update("UPDATE product_variant SET deal_price = 450, deal_ends_at = now() + interval '1 day' WHERE id = ?::uuid",
+                f.redId());
+
+        JsonNode page = json.readTree(mvc.perform(get("/api/v1/catalog/packages/" + f.packageSlug())).andReturn()
+                .getResponse().getContentAsString());
+        assertThat(page.get("sumOfComponents").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(page.get("savings").decimalValue()).isEqualByComparingTo("200");
+        JsonNode lashes = null;
+        for (JsonNode item : page.get("items")) {
+            if (item.get("variantId").asText().equals(f.redId())) lashes = item;
+        }
+        assertThat(lashes).isNotNull();
+        assertThat(lashes.get("unitPrice").decimalValue()).isEqualByComparingTo("450");
+        Map<String, JsonNode> byId = new HashMap<>();
+        lashes.get("choices").forEach(c -> byId.put(c.get("variantId").asText(), c));
+        assertThat(byId.get(f.redId()).get("unitPrice").decimalValue()).isEqualByComparingTo("450");
+        // what a pick does to the package's price is still worked on selling prices (2 x (650 - 500) at 1000/1300): the package
+        // never takes the deal
+        assertThat(byId.get(f.pinkId()).get("priceDelta").decimalValue()).isEqualByComparingTo("231");
+
+        JsonNode card = listedPackage(f.packageVariantId());
+        assertThat(card.get("sumOfComponents").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(card.get("savings").decimalValue()).isEqualByComparingTo("200");
+
+        // and the cart still charges the package's own price
+        String session = UUID.randomUUID().toString();
+        JsonNode cart = cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, null), session);
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+    }
+
+    @Test
+    void aPackageWhoseUsualColourIsSoldOutIsListedAsOneToPickAnotherColourFor() throws Exception {
+        Map<String, String> lashes = newProduct(unique("Card Lashes"), new String[]{"Ruby Red", "500"},
+                new String[]{"Rose Pink", "650"});
+        Map<String, String> cleanser = newProduct(unique("Card Cleanser"), new String[]{"Default", "300"});
+        String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink"), cleanserId = cleanser.get("Default");
+        // nothing of Ruby Red on the shelf
+        receiveStock(Map.of(pink, new BigDecimal("10"), cleanserId, new BigDecimal("10")));
+        JsonNode swappable = ok(post("/api/v1/admin/packages"), packageBody(unique("Card Package"), newProfession(), newCategory(),
+                "1000", component(red, "2", true), component(cleanserId, "1", true)));
+        JsonNode fixed = ok(post("/api/v1/admin/packages"), packageBody(unique("Card Package Fixed"), newProfession(), newCategory(),
+                "1000", component(red, "2", false), component(cleanserId, "1", true)));
+
+        JsonNode card = listedPackage(swappable.get("variantId").asText());
+        assertThat(card.get("inStock").asBoolean()).isFalse();
+        assertThat(card.get("pickToOrder").asBoolean()).isTrue();
+
+        // the colour can't be changed there: plainly out of stock
+        JsonNode fixedCard = listedPackage(fixed.get("variantId").asText());
+        assertThat(fixedCard.get("inStock").asBoolean()).isFalse();
+        assertThat(fixedCard.get("pickToOrder").asBoolean()).isFalse();
+
+        // and the cart takes the package with the colour that is on the shelf
+        String session = UUID.randomUUID().toString();
+        MvcResult added = cartRaw(post("/api/v1/cart/items"), addBody(swappable.get("variantId").asText(), 1,
+                Map.of(red, pink)), session);
+        assertThat(added.getResponse().getStatus()).as(added.getResponse().getContentAsString()).isEqualTo(200);
+    }
+
+    @Test
+    void aPackageThatIsInStockIsNeverMarkedAsOneToPickFor() throws Exception {
+        Fixture f = fixture(true, 10);
+        JsonNode card = listedPackage(f.packageVariantId());
+        assertThat(card.get("inStock").asBoolean()).isTrue();
+        assertThat(card.get("pickToOrder").asBoolean()).isFalse();
+    }
+
+    // ---- the cart prices and separates the picks ----
+
+    @Test
+    void aPickChangesThePackagesPriceByQuantityTimesTheDifferenceAndMakesItsOwnLine() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "picks-" + UUID.randomUUID();
+
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, null), session);
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+        JsonNode cart = cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        assertThat(cart.get("items")).as("the package as it comes and the package with pink are two lines").hasSize(2);
+        JsonNode plain = null, pink = null;
+        for (JsonNode item : cart.get("items")) {
+            if (item.get("packageChoices").isEmpty()) plain = item; else pink = item;
+        }
+        assertThat(plain.get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(plain.get("qty").decimalValue()).isEqualByComparingTo("1");
+        assertThat(pink.get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300").isEqualByComparingTo("1231");
+        assertThat(pink.get("qty").decimalValue()).as("the same picks add to the same line").isEqualByComparingTo("2");
+        assertThat(cart.get("subtotal").decimalValue()).isEqualByComparingTo("3462");
+
+        // what is inside the picked line, with the pick applied
+        boolean sawPink = false;
+        for (JsonNode part : pink.get("packageItems")) {
+            if (part.get("defaultVariantId").asText().equals(f.redId())) {
+                assertThat(part.get("variantId").asText()).isEqualTo(f.pinkId());
+                assertThat(part.get("changed").asBoolean()).isTrue();
+                assertThat(part.get("qtyPerPackage").decimalValue()).isEqualByComparingTo("2");
+                sawPink = true;
+            } else {
+                assertThat(part.get("changed").asBoolean()).isFalse();
+            }
+        }
+        assertThat(sawPink).isTrue();
+        assertThat(pink.get("packageChoices").get(f.redId()).asText()).isEqualTo(f.pinkId());
+    }
+
+    @Test
+    void aCheaperPickLowersThePriceAndPickingTheDefaultChangesNothing() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "cheaper-" + UUID.randomUUID();
+
+        JsonNode cheaper = cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.budgetId())), session);
+        // the package keeps its share: cheaper lashes take 154 off, not the whole 200 they save
+        assertThat(line(cheaper, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (400 - 500) x 1000/1300").isEqualByComparingTo("846");
+
+        // "picking" what the package already has is the package as it comes: it joins the plain line, not a new one
+        String second = "default-pick-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, null), second);
+        JsonNode cart = cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.redId())), second);
+        assertThat(cart.get("items")).hasSize(1);
+        assertThat(line(cart, 0).get("qty").decimalValue()).isEqualByComparingTo("2");
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(line(cart, 0).get("packageChoices")).isEmpty();
+    }
+
+    @Test
+    void picksThatDoNotBelongAreRefusedWithAMessageTheShopperCanActOn() throws Exception {
+        Fixture f = fixture(true, 10);
+        Fixture other = fixture(true, 10); // another package's lashes are not this package's product
+        String session = "refused-" + UUID.randomUUID();
+
+        // a colour of a different product
+        MvcResult wrongProduct = cartRaw(post("/api/v1/cart/items"),
+                addBody(f.packageVariantId(), 1, Map.of(f.redId(), other.pinkId())), session);
+        assertThat(wrongProduct.getResponse().getStatus()).isEqualTo(422);
+        assertThat(wrongProduct.getResponse().getContentAsString()).contains("Please pick a colour or size of");
+
+        // a product that is not in the package
+        MvcResult notInPackage = cartRaw(post("/api/v1/cart/items"),
+                addBody(f.packageVariantId(), 1, Map.of(other.redId(), f.pinkId())), session);
+        assertThat(notInPackage.getResponse().getStatus()).isEqualTo(422);
+
+        // picks on something that is not a package
+        MvcResult notAPackage = cartRaw(post("/api/v1/cart/items"),
+                addBody(f.redId(), 1, Map.of(f.redId(), f.pinkId())), session);
+        assertThat(notAPackage.getResponse().getStatus()).isEqualTo(422);
+        assertThat(notAPackage.getResponse().getContentAsString()).contains("Only a package has products inside to change");
+
+        // a product staff did not allow to be changed
+        Fixture locked = fixture(false, 10);
+        MvcResult notAllowed = cartRaw(post("/api/v1/cart/items"),
+                addBody(locked.packageVariantId(), 1, Map.of(locked.redId(), locked.pinkId())), session);
+        assertThat(notAllowed.getResponse().getStatus()).isEqualTo(422);
+        assertThat(notAllowed.getResponse().getContentAsString()).contains("can't be changed in this package");
+
+        // an option that can no longer be bought
+        jdbc.update("UPDATE product_variant SET is_active = false WHERE id = ?::uuid", f.budgetId());
+        MvcResult gone = cartRaw(post("/api/v1/cart/items"),
+                addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.budgetId())), session);
+        assertThat(gone.getResponse().getStatus()).isEqualTo(422);
+        assertThat(gone.getResponse().getContentAsString()).contains("can't be ordered right now");
+
+        // more picks than the package has products: refused before anything is looked up
+        MvcResult tooMany = cartRaw(post("/api/v1/cart/items"),
+                addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId(), f.cleanserId(), f.cleanserId(),
+                        UUID.randomUUID().toString(), UUID.randomUUID().toString())), session);
+        assertThat(tooMany.getResponse().getStatus()).isEqualTo(422);
+
+        // nothing was added by any of them
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(cart.get("items")).isEmpty();
+    }
+
+    @Test
+    void thePickedVariantsShelfDecidesHowManyPackagesCanBeAdded() throws Exception {
+        Fixture f = fixture(true, 3); // 3 pink on the shelf, 2 per package: one package
+        String session = "shelf-" + UUID.randomUUID();
+
+        MvcResult two = cartRaw(post("/api/v1/cart/items"),
+                addBody(f.packageVariantId(), 2, Map.of(f.redId(), f.pinkId())), session);
+        assertThat(two.getResponse().getStatus()).as("two packages would need 4 pink").isEqualTo(400);
+        assertThat(two.getResponse().getContentAsString()).contains("Only 1");
+
+        JsonNode one = cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+        assertThat(line(one, 0).get("stockLeft").decimalValue()).isEqualByComparingTo("1");
+        // the package as it comes still has red in plenty
+        JsonNode plain = cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 2, null), session);
+        assertThat(plain.get("items")).hasSize(2);
+    }
+
+    /**
+     * Found by the packages audit (2026-10-23): when staff switched swapping off, an old line quietly went back to the colour
+     * the package comes with, and with colours of the same price nothing at all told the shopper. A pick that no longer applies
+     * now stops the line instead, with a message that says to choose again.
+     */
+    @Test
+    void switchingSwappingOffLaterStopsAnOldLineInsteadOfQuietlyPackingAnotherColour() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "switched-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        JsonNode pkg = ok(get("/api/v1/admin/packages/" + f.packageId()), null);
+        ok(put("/api/v1/admin/packages/" + f.packageId()), packageBody(pkg.get("name").asText(), pkg.get("professionId").asText(),
+                pkg.get("categoryId").asText(), "1000", component(f.redId(), "2", false), component(f.cleanserId(), "1", true)));
+
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(line(cart, 0).get("available").asBoolean()).as("the line says it cannot be ordered as it is").isFalse();
+        MvcResult refused = cartRaw(post("/api/v1/checkout"), checkoutBody(), session);
+        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+        assertThat(refused.getResponse().getContentAsString()).contains("not on offer any more").contains("choose again");
+
+        // taking the package out and adding it again as it comes works, at the package price
+        String lineId = line(cart, 0).get("id").asText();
+        cartOk(delete("/api/v1/cart/items/" + lineId), null, session);
+        JsonNode again = cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, null), session);
+        assertThat(line(again, 0).get("available").asBoolean()).isTrue();
+        assertThat(line(again, 0).get("unitPrice").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(cartRaw(post("/api/v1/checkout"), checkoutBody(), session).getResponse().getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void aDefaultTakenOffSaleDoesNotTakeAShoppersPickedColourOutOfThePackage() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "default-gone-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        jdbc.update("UPDATE product_variant SET is_active = false WHERE id = ?::uuid", f.redId());
+
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(line(cart, 0).get("available").asBoolean()).as("pink is still on sale").isTrue();
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (650 - 500) x 1000/1300, as they were shown")
+                .isEqualByComparingTo("1231");
+        assertThat(line(cart, 0).get("packageItems")).as("the lashes are still in the package, in pink").hasSize(2);
+        JsonNode order = cartOk(post("/api/v1/checkout"), checkoutBody(), session).get("order");
+        JsonNode detail = ok(get("/api/v1/orders/" + order.get("id").asText()), null);
+        List<String> packed = new java.util.ArrayList<>();
+        detail.get("items").get(0).get("components").forEach(c -> packed.add(c.get("variantId").asText()));
+        assertThat(packed).contains(f.pinkId(), f.cleanserId()).doesNotContain(f.redId());
+    }
+
+    @Test
+    void aPackagesDefaultChangedByStaffStillGivesTheShopperTheColourTheyPicked() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "default-changed-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        // staff make black the colour the package comes with, instead of red
+        JsonNode pkg = ok(get("/api/v1/admin/packages/" + f.packageId()), null);
+        ok(put("/api/v1/admin/packages/" + f.packageId()), packageBody(pkg.get("name").asText(), pkg.get("professionId").asText(),
+                pkg.get("categoryId").asText(), "1000", component(f.budgetId(), "2", true), component(f.cleanserId(), "1", true)));
+
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(line(cart, 0).get("available").asBoolean()).isTrue();
+        // the package now comes with 2 x 400 + 300 = 1100 of products for 1000: pink adds 2 x (650 - 400) x 1000/1100
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 455: pink is still what they get")
+                .isEqualByComparingTo("1455");
+        JsonNode order = cartOk(post("/api/v1/checkout"), checkoutBody(), session).get("order");
+        JsonNode detail = ok(get("/api/v1/orders/" + order.get("id").asText()), null);
+        assertThat(detail.get("subtotal").decimalValue()).isEqualByComparingTo("1455");
+        List<String> packed = new java.util.ArrayList<>();
+        detail.get("items").get(0).get("components").forEach(c -> packed.add(c.get("variantId").asText()));
+        assertThat(packed).contains(f.pinkId()).doesNotContain(f.redId(), f.budgetId());
+    }
+
+    @Test
+    void twoProductsPickedToTheSameColourShareItsShelf() throws Exception {
+        // A package can hold two shades of one product (red and pink lashes, one of each); picking pink for the red one makes
+        // both pink, so one package needs two pink. With 3 on the shelf that is one package, not three.
+        Map<String, String> lashes = newProduct(unique("Shared Shelf Lashes"), new String[]{"Ruby Red", "500"},
+                new String[]{"Rose Pink", "650"});
+        String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink");
+        receiveStock(Map.of(red, new BigDecimal("10"), pink, new BigDecimal("3")));
+        JsonNode pkg = ok(post("/api/v1/admin/packages"), packageBody(unique("Shared Shelf Package"), newProfession(), newCategory(), "1000",
+                component(red, "1", true), component(pink, "1", true)));
+        String packageVariantId = pkg.get("variantId").asText();
+        String session = "shared-shelf-" + UUID.randomUUID();
+
+        MvcResult two = cartRaw(post("/api/v1/cart/items"), addBody(packageVariantId, 2, Map.of(red, pink)), session);
+        assertThat(two.getResponse().getStatus()).as("two packages would need 4 pink").isEqualTo(400);
+        assertThat(two.getResponse().getContentAsString()).contains("Only 1");
+
+        JsonNode one = cartOk(post("/api/v1/cart/items"), addBody(packageVariantId, 1, Map.of(red, pink)), session);
+        assertThat(line(one, 0).get("stockLeft").decimalValue()).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void aPackageCannotHoldPartOfAPiece() throws Exception {
+        Map<String, String> oil = newProduct(unique("Whole Piece Oil"), new String[]{"Default", "450"});
+        JsonNode body = json.readTree(packageBody(unique("Half Package"), newProfession(), newCategory(), "100",
+                component(oil.get("Default"), "1.5", true)));
+        MvcResult refused = mvc.perform(post("/api/v1/admin/packages").header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content(body.toString())).andReturn();
+        assertThat(refused.getResponse().getStatus()).isEqualTo(400);
+        assertThat(refused.getResponse().getContentAsString()).contains("whole number");
+    }
+
+    @Test
+    void aPackageCanBeSavedAgainWithTheSameProductsAndTheSwitchIsKept() throws Exception {
+        // Found while building the swap switch: re-saving a package whose products had not changed (a new price or
+        // description) failed with a 409, because the products were re-inserted before the old rows were deleted.
+        Fixture f = fixture(true, 10);
+        JsonNode pkg = ok(get("/api/v1/admin/packages/" + f.packageId()), null);
+
+        JsonNode saved = ok(put("/api/v1/admin/packages/" + f.packageId()), packageBody("Renamed " + pkg.get("name").asText(),
+                pkg.get("professionId").asText(), pkg.get("categoryId").asText(), "900",
+                component(f.cleanserId(), "1", true), component(f.redId(), "2", false)));
+
+        assertThat(saved.get("packagePrice").decimalValue()).isEqualByComparingTo("900");
+        assertThat(saved.get("components")).hasSize(2);
+        // the order staff gave them is the order they come back in, and the switch is what was sent
+        assertThat(saved.get("components").get(0).get("variantId").asText()).isEqualTo(f.cleanserId());
+        assertThat(saved.get("components").get(1).get("variantId").asText()).isEqualTo(f.redId());
+        assertThat(saved.get("components").get(1).get("customerCanChange").asBoolean()).isFalse();
+        assertThat(saved.get("components").get(0).get("customerCanChange").asBoolean()).isTrue();
+
+        // and a product can still be taken out and put back
+        JsonNode fewer = ok(put("/api/v1/admin/packages/" + f.packageId()), packageBody("Renamed again", pkg.get("professionId").asText(),
+                pkg.get("categoryId").asText(), "300", component(f.cleanserId(), "1", true)));
+        assertThat(fewer.get("components")).hasSize(1);
+        JsonNode back = ok(put("/api/v1/admin/packages/" + f.packageId()), packageBody("Renamed again", pkg.get("professionId").asText(),
+                pkg.get("categoryId").asText(), "900", component(f.redId(), "2", true), component(f.cleanserId(), "1", true)));
+        assertThat(back.get("components")).hasSize(2);
+    }
+
+    // ---- checkout reserves and names what was picked ----
+
+    @Test
+    void checkoutReservesAndNamesThePickedVariantAndFulfilmentTakesItsStock() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "checkout-picks-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 2, Map.of(f.redId(), f.pinkId())), session);
+
+        JsonNode result = cartOk(post("/api/v1/checkout"), checkoutBody(), session);
+        String orderId = result.get("order").get("id").asText();
+
+        JsonNode detail = ok(get("/api/v1/orders/" + orderId), null);
+        assertThat(detail.get("items")).hasSize(1);
+        JsonNode packageLine = detail.get("items").get(0);
+        assertThat(packageLine.get("unitPrice").decimalValue()).isEqualByComparingTo("1231");
+        assertThat(packageLine.get("lineTotal").decimalValue()).isEqualByComparingTo("2462");
+        assertThat(detail.get("subtotal").decimalValue()).isEqualByComparingTo("2462");
+        assertThat(packageLine.get("components")).hasSize(2);
+        boolean pinkListed = false;
+        for (JsonNode component : packageLine.get("components")) {
+            String variant = component.get("variantId").asText();
+            assertThat(variant).as("the default colour is not on the order").isNotEqualTo(f.redId());
+            if (variant.equals(f.pinkId())) {
+                assertThat(component.get("qty").decimalValue()).as("2 per package x 2 packages").isEqualByComparingTo("4");
+                assertThat(component.get("unitPrice").decimalValue()).isEqualByComparingTo("650");
+                pinkListed = true;
+            }
+        }
+        assertThat(pinkListed).isTrue();
+
+        List<StockReservation> reservations = reservationRepository.findByReferenceTypeAndReferenceId("CUSTOMER_ORDER", UUID.fromString(orderId));
+        assertThat(reservations).hasSize(2);
+
+        var order = orderRepository.findById(UUID.fromString(orderId)).orElseThrow();
+        order.setStatus(OrderStatus.PAID);
+        orderRepository.save(order);
+        ok(post("/api/v1/orders/" + orderId + "/fulfil"), null);
+
+        assertThat(shopOnHand(f.pinkId())).as("the picked colour was packed").isEqualByComparingTo("6");
+        assertThat(shopOnHand(f.redId())).as("the default colour was never touched").isEqualByComparingTo("10");
+        assertThat(shopOnHand(f.cleanserId())).isEqualByComparingTo("8");
+    }
+
+    @Test
+    void aPickTakenOffSaleAfterItWasAddedBlocksTheLineAndCheckout() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "gone-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        jdbc.update("UPDATE product_variant SET is_active = false WHERE id = ?::uuid", f.pinkId());
+
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(line(cart, 0).get("available").asBoolean()).as("the line says it cannot be bought").isFalse();
+        MvcResult refused = cartRaw(post("/api/v1/checkout"), checkoutBody(), session);
+        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+        assertThat(refused.getResponse().getContentAsString()).contains("is no longer available");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM customer_order WHERE order_no IS NOT NULL AND id IN"
+                + " (SELECT order_id FROM customer_order_item WHERE variant_id = ?::uuid)", Integer.class, f.pinkId())).isZero();
+    }
+
+    @Test
+    void aPricesMovePickedVariantIsRepricedLikeEverythingInTheCart() throws Exception {
+        Fixture f = fixture(true, 10);
+        String session = "reprice-" + UUID.randomUUID();
+        cartOk(post("/api/v1/cart/items"), addBody(f.packageVariantId(), 1, Map.of(f.redId(), f.pinkId())), session);
+
+        jdbc.update("UPDATE product_variant SET selling_price = 700 WHERE id = ?::uuid", f.pinkId());
+
+        JsonNode cart = cartOk(get("/api/v1/cart"), null, session);
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1000 + 2 x (700 - 500) x 1000/1300").isEqualByComparingTo("1308");
+        assertThat(line(cart, 0).get("previousUnitPrice").decimalValue()).isEqualByComparingTo("1231");
+    }
+
+    @Test
+    void swappingIsOffUnlessStaffSwitchItOn() throws Exception {
+        Map<String, String> lashes = newProduct(unique("Off Lashes"), new String[]{"Ruby Red", "500"},
+                new String[]{"Rose Pink", "650"});
+        String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink");
+        receiveStock(Map.of(red, new BigDecimal("10"), pink, new BigDecimal("10")));
+        JsonNode pkg = ok(post("/api/v1/admin/packages"), packageBody(unique("Off Package"), newProfession(), newCategory(), "450",
+                "{\"variantId\":\"" + red + "\",\"qty\":\"1\"}"));
+        assertThat(pkg.get("components").get(0).get("customerCanChange").asBoolean()).isFalse();
+
+        String slug = jdbc.queryForObject("SELECT slug FROM product WHERE id = ?::uuid", String.class, pkg.get("productId").asText());
+        JsonNode page = json.readTree(mvc.perform(get("/api/v1/catalog/packages/" + slug)).andReturn().getResponse().getContentAsString());
+        assertThat(page.get("items").get(0).get("canChange").asBoolean()).isFalse();
+        MvcResult refused = cartRaw(post("/api/v1/cart/items"),
+                addBody(pkg.get("variantId").asText(), 1, Map.of(red, pink)), "off-" + UUID.randomUUID());
+        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+    }
+
+    @Test
+    void swappingInTheCheapestOptionsNeverMakesAPackageFree() throws Exception {
+        // the package's discount is 75% of its products' price (two 1 L at 3000 for 1500): two 50 ml at 100 keep that share
+        Map<String, String> oil = newProduct(unique("Share Oil"), new String[]{"1 L", "3000"}, new String[]{"50 ml", "100"});
+        receiveStock(Map.of(oil.get("1 L"), new BigDecimal("10"), oil.get("50 ml"), new BigDecimal("10")));
+        JsonNode pkg = ok(post("/api/v1/admin/packages"), packageBody(unique("Share Package"), newProfession(), newCategory(), "1500",
+                component(oil.get("1 L"), "2", true)));
+        String session = "share-" + UUID.randomUUID();
+        JsonNode cart = cartOk(post("/api/v1/cart/items"),
+                addBody(pkg.get("variantId").asText(), 1, Map.of(oil.get("1 L"), oil.get("50 ml"))), session);
+        assertThat(line(cart, 0).get("unitPrice").decimalValue()).as("1500 + 2 x (100 - 3000) x 1500/6000")
+                .isEqualByComparingTo("50");
+    }
+
+    @Test
+    void theShareIsWorkedOutFromThePackagesPriceAndItsProductsAndRoundedToWholeShillings() {
+        BigDecimal share = PackageService.packageShare(new BigDecimal("1000"), new BigDecimal("1300"));
+        assertThat(PackageService.pickDelta(new BigDecimal("300"), share)).isEqualByComparingTo("231");
+        assertThat(PackageService.pickDelta(new BigDecimal("-200"), share)).isEqualByComparingTo("-154");
+        // nothing to compare with: the difference as it is
+        assertThat(PackageService.packageShare(new BigDecimal("1000"), BigDecimal.ZERO)).isEqualByComparingTo("1");
+    }
+}

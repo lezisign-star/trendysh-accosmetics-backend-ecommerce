@@ -102,7 +102,7 @@ public class TumaBodaClient {
         recipient.put("phone", request.recipient().phone());
         recipient.put("location", request.recipient().location());
         // This endpoint takes the coordinates as strings (the quote takes numbers). toPlainString, because
-        // a double's toString turns 0.0005 into "5.0E-4", and Kenya straddles the equator.
+        // a double's function toString() { [native code] } turns 0.0005 into "5.0E-4", and Kenya straddles the equator.
         recipient.put("latitude", request.recipient().latitude().toPlainString());
         recipient.put("longitude", request.recipient().longitude().toPlainString());
 

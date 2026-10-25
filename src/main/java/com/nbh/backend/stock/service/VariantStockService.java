@@ -67,7 +67,7 @@ public class VariantStockService {
      * "N more came in" (2026-10-08): adds {@code received} to what is on the shelf at the moment of the save, instead
      * of to a total the screen worked out earlier. A shop that sells while a delivery is being counted in must not lose
      * a sale, or the delivery, to a sum made minutes before — so the balance is locked here and the new total is built
-     * from the locked figure. Everything else (kits refused, whole-number rules, cost fallback) is
+     * from the locked figure. Everything else (packages refused, whole-number rules, cost fallback) is
      * {@link #setOnHand}'s, which this finishes with.
      */
     @Transactional
@@ -111,10 +111,10 @@ public class VariantStockService {
             throw new EntityNotFoundException("No variant " + variantId + " on product " + productId);
         }
         QuantityRules.requireSensible(variant.getSku(), variant, targetOnHand);
-        if (variant.isKit()) {
-            // A kit sells however many whole kits its parts can still make up; stock posted against the kit
+        if (variant.isPackage()) {
+            // A package sells however many whole packages its parts can still make up; stock posted against the package
             // itself would be a phantom the checkout never reads.
-            throw new UnprocessableException(variant.getSku() + " is a kit: it holds no stock of its own, "
+            throw new UnprocessableException(variant.getSku() + " is a package: it holds no stock of its own, "
                     + "so change the stock of the products it is made from instead");
         }
 

@@ -55,10 +55,10 @@ public class CartItem extends BaseEntity {
                             java.util.Comparator.nullsLast(java.util.Comparator.<UUID>naturalOrder()));
 
     /**
-     * What the shopper picked inside a kit, keyed by the DEFAULT variant of the product they changed (a kit's component
-     * row goes away when staff take the product out and is made again if they add it back, but a product is in a kit once,
+     * What the shopper picked inside a package, keyed by the DEFAULT variant of the product they changed (a package's component
+     * row goes away when staff take the product out and is made again if they add it back, but a product is in a package once,
      * so its default variant is a stable key) and holding the variant they chose instead. Only picks that differ from the
-     * default are stored; empty for a plain line and for a kit taken as it comes.
+     * default are stored; empty for a plain line and for a package taken as it comes.
      */
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "cart_item_choice", joinColumns = @JoinColumn(name = "cart_item_id"))
@@ -67,8 +67,8 @@ public class CartItem extends BaseEntity {
     private Map<UUID, UUID> choices = new HashMap<>();
 
     /**
-     * Identifies the picks so that the same kit with different picks is a different line: "" for none, else a digest of
-     * the sorted picks (see KitChoices.keyOf). Part of the line's uniqueness together with the cart and the variant.
+     * Identifies the picks so that the same package with different picks is a different line: "" for none, else a digest of
+     * the sorted picks (see PackageChoices.keyOf). Part of the line's uniqueness together with the cart and the variant.
      */
     @Column(name = "choice_key", nullable = false, length = 64)
     private String choiceKey = "";

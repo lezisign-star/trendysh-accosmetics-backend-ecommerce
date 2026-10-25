@@ -31,7 +31,7 @@ public final class SearchWords {
             Set.of("lamp", "light", "dryer"),
             Set.of("remover", "acetone"),
             Set.of("sponge", "blender"),
-            Set.of("kit", "set"));
+            Set.of("kit", "package", "set"));
 
     /** "lashes" → "lash", "brushes" → "brush", "nails" → "nail"; short words and "-ss" words are left as they are. */
     static String singular(String w) {

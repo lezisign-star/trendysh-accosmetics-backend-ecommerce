@@ -77,7 +77,7 @@ public class RangeDescriptionService {
             throw new UnprocessableException("The AI isn't set up yet — add the GEMINI_API_KEY before writing descriptions.");
         }
         List<ProductVariant> live = variants.findByProductIdAndDeletedFalseOrderBySortOrderAsc(productId).stream()
-                .filter(v -> !v.isKit()).toList();
+                .filter(v -> !v.isPackage()).toList();
         Set<UUID> asked = r == null || r.variantIds() == null || r.variantIds().isEmpty() ? null : new HashSet<>(r.variantIds());
         List<ProductVariant> chosen = live.stream()
                 .filter(v -> asked != null ? asked.contains(v.getId()) : v.getDescription() == null || v.getDescription().isBlank())

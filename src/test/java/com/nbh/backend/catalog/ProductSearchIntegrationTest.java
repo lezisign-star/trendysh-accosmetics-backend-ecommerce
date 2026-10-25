@@ -139,7 +139,7 @@ class ProductSearchIntegrationTest {
     void theDescriptionRelatedWordsPluralsAndTyposFindAProduct() throws Exception {
         String w = word();
         String lashes = product("Zephyrine " + w + " Lashes", null, "Only", null);
-        String id = ok(post("/api/v1/products/draft"), "{\"name\":\"Quorvelle " + w + " Kit\",\"categoryIds\":[],"
+        String id = ok(post("/api/v1/products/draft"), "{\"name\":\"Quorvelle " + w + " Package\",\"categoryIds\":[],"
                 + "\"published\":false,\"description\":\"Everything for a waterproof manicure at home.\","
                 + "\"variants\":[{\"variantName\":\"Only\",\"sellingPrice\":\"100\",\"isActive\":true}]}")
                 .get("id").asText();

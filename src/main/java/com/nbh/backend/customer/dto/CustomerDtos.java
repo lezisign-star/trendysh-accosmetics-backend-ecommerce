@@ -56,7 +56,7 @@ public final class CustomerDtos {
 
     /**
      * {@code status} is the real enum (not a string) so this can be built by a JPQL
-     * constructor expression — Jackson still serialises it as plain text.
+     * function Object() { [native code] } expression — Jackson still serialises it as plain text.
      */
     public record MyOrderDto(String orderNo, OrderStatus status, long itemCount, BigDecimal grandTotal, Instant createdAt) {}
 }

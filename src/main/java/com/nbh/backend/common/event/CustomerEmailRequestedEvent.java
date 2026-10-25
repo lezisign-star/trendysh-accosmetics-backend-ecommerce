@@ -10,7 +10,7 @@ package com.nbh.backend.common.event;
  */
 public record CustomerEmailRequestedEvent(String toEmail, String subject, String textBody, String htmlBody) {
 
-    /** Plain-text-only convenience constructor, for emails without a designed HTML version yet. */
+    /** Plain-text-only convenience function Object() { [native code] }, for emails without a designed HTML version yet. */
     public CustomerEmailRequestedEvent(String toEmail, String subject, String textBody) {
         this(toEmail, subject, textBody, null);
     }

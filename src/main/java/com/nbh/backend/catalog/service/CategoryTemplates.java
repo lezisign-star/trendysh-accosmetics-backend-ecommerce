@@ -62,7 +62,7 @@ final class CategoryTemplates {
             "make-up", new ProfessionSeed("Makeup Artist", "makeup-artist"),
             "spa", new ProfessionSeed("Spa Therapist", "spa-therapist")
             // salon-equipment intentionally has no natural profession — MockDataSeederService
-            // already skips kit creation for a category with a null ProfessionSeed.
+            // already skips package creation for a category with a null ProfessionSeed.
     );
 
     private static final Map<String, List<ProductTemplate>> TEMPLATES = Map.of(

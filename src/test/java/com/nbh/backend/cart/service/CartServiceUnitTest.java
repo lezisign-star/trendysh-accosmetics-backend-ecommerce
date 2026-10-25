@@ -11,8 +11,8 @@ import com.nbh.backend.catalog.repository.ProductVariantRepository;
 import com.nbh.backend.catalog.service.EffectivePriceResolver;
 import com.nbh.backend.catalog.service.PromoCampaignService;
 import com.nbh.backend.catalog.service.VariantCovers;
-import com.nbh.backend.kits.service.KitAvailabilityService;
-import com.nbh.backend.kits.service.KitService;
+import com.nbh.backend.packages.service.PackageAvailabilityService;
+import com.nbh.backend.packages.service.PackageService;
 import com.nbh.backend.stock.service.StockAvailabilityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,9 +46,9 @@ class CartServiceUnitTest {
     @Mock private CartItemRepository cartItemRepository;
     @Mock private ProductVariantRepository variantRepository;
     @Mock private StockAvailabilityService availabilityService;
-    @Mock private KitAvailabilityService kitAvailability;
+    @Mock private PackageAvailabilityService packageAvailability;
     @Mock private PromoCampaignService promoCampaignService;
-    @Mock private KitService kitService;
+    @Mock private PackageService packageService;
     @Mock private VariantCovers variantCovers;
 
     private CartService cartService;
@@ -64,8 +64,8 @@ class CartServiceUnitTest {
         // price is what should end up in unitPriceSnapshot, same as before this dependency existed.
         lenient().when(promoCampaignService.getActiveOrNull()).thenReturn(null);
         cartService = new CartService(cartRepository, cartItemRepository, variantRepository,
-                availabilityService, kitAvailability, new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService,
-                kitService, variantCovers);
+                availabilityService, packageAvailability, new EffectivePriceResolver(Clock.systemUTC()), promoCampaignService,
+                packageService, variantCovers);
 
         cart = new Cart();
         cart.setId(UUID.randomUUID());
@@ -73,8 +73,8 @@ class CartServiceUnitTest {
         cart.setStatus(Cart.CartStatus.ACTIVE);
         lenient().when(cartRepository.findBySessionId(SESSION)).thenReturn(Optional.of(cart));
         lenient().when(cartRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        // A line that is not a kit holds nothing inside it, as the real service answers.
-        lenient().when(kitService.selection(any(), any())).thenReturn(new KitService.Selection(List.of(), false));
+        // A line that is not a package holds nothing inside it, as the real service answers.
+        lenient().when(packageService.selection(any(), any())).thenReturn(new PackageService.Selection(List.of(), false));
 
         Product product = new Product();
         product.setId(UUID.randomUUID());
@@ -189,17 +189,17 @@ class CartServiceUnitTest {
         verify(cartItemRepository, never()).save(any());
     }
 
-    private void variantIsAKitMaking(String wholeKits) {
-        variant.setKit(true);
-        when(kitAvailability.wholeKitsAvailable(List.of(variant.getId())))
-                .thenReturn(java.util.Map.of(variant.getId(), new BigDecimal(wholeKits)));
+    private void variantIsAPackageMaking(String wholePackages) {
+        variant.setPackage(true);
+        when(packageAvailability.wholePackagesAvailable(List.of(variant.getId())))
+                .thenReturn(java.util.Map.of(variant.getId(), new BigDecimal(wholePackages)));
     }
 
     @Test
-    void aKitWhoseComponentsAreSoldOutCannotBeAddedToTheCart() {
-        variantIsAKitMaking("0");
+    void aPackageWhoseComponentsAreSoldOutCannotBeAddedToTheCart() {
+        variantIsAPackageMaking("0");
 
-        // Kits used to skip this check entirely, so a sold-out kit went into the cart and was only
+        // Packages used to skip this check entirely, so a sold-out package went into the cart and was only
         // refused at the last step of checkout.
         assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), BigDecimal.ONE))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -209,8 +209,8 @@ class CartServiceUnitTest {
     }
 
     @Test
-    void aKitIsLimitedByHowManyWholeKitsItsComponentsCanStillMakeUp() {
-        variantIsAKitMaking("2");
+    void aPackageIsLimitedByHowManyWholePackagesItsComponentsCanStillMakeUp() {
+        variantIsAPackageMaking("2");
 
         assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), new BigDecimal("3")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -233,52 +233,52 @@ class CartServiceUnitTest {
         return item;
     }
 
-    private ProductVariant aKit(String sku) {
-        ProductVariant kit = new ProductVariant();
-        kit.setId(UUID.randomUUID());
-        kit.setProduct(variant.getProduct());
-        kit.setSku(sku);
-        kit.setVariantName("Kit");
-        kit.setSellingPrice(new BigDecimal("700.00"));
-        kit.setKit(true);
-        return kit;
+    private ProductVariant aPackage(String sku) {
+        ProductVariant pkg = new ProductVariant();
+        pkg.setId(UUID.randomUUID());
+        pkg.setProduct(variant.getProduct());
+        pkg.setSku(sku);
+        pkg.setVariantName("Package");
+        pkg.setSellingPrice(new BigDecimal("700.00"));
+        pkg.setPackage(true);
+        return pkg;
     }
 
     @Test
-    void aKitAndALooseUnitOfItsPartShareOneShelfSoOnlyTheLaterLineIsFlagged() {
-        // Two on the shelf. The kit (one of them per kit) was added first, then two loose ones: together they
+    void aPackageAndALooseUnitOfItsPartShareOneShelfSoOnlyTheLaterLineIsFlagged() {
+        // Two on the shelf. The package (one of them per package) was added first, then two loose ones: together they
         // need three, and checkout would refuse that, so the cart has to show it.
-        ProductVariant kit = aKit("KIT-A");
-        CartItem kitLine = line(kit, "1", "700.00");
+        ProductVariant pkg = aPackage("PKG-A");
+        CartItem packageLine = line(pkg, "1", "700.00");
         CartItem looseLine = line(variant, "2", "800.00");
-        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(kitLine, looseLine));
+        when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(packageLine, looseLine));
         when(availabilityService.available(anyCollection())).thenReturn(Map.of(variant.getId(), new BigDecimal("2")));
-        when(kitAvailability.partsOf(List.of(kit.getId())))
-                .thenReturn(Map.of(kit.getId(), List.of(new KitAvailabilityService.Part(variant, BigDecimal.ONE))));
+        when(packageAvailability.partsOf(List.of(pkg.getId())))
+                .thenReturn(Map.of(pkg.getId(), List.of(new PackageAvailabilityService.Part(variant, BigDecimal.ONE))));
 
         CartDto dto = cartService.getOrCreateCart(SESSION);
 
         assertThat(dto.items()).hasSize(2);
-        assertThat(dto.items().get(0).stockLeft()).isEqualByComparingTo("2"); // the kit fits: it came first
-        assertThat(dto.items().get(1).stockLeft()).isEqualByComparingTo("1"); // 2 asked, 1 left once the kit took its part
+        assertThat(dto.items().get(0).stockLeft()).isEqualByComparingTo("2"); // the package fits: it came first
+        assertThat(dto.items().get(1).stockLeft()).isEqualByComparingTo("1"); // 2 asked, 1 left once the package took its part
     }
 
     @Test
-    void twoKitsSharingAPartAreServedInTheOrderTheyWereAdded() {
-        ProductVariant firstKit = aKit("KIT-1");
-        ProductVariant secondKit = aKit("KIT-2");
-        CartItem first = line(firstKit, "2", "700.00");
-        CartItem second = line(secondKit, "1", "700.00");
+    void twoPackagesSharingAPartAreServedInTheOrderTheyWereAdded() {
+        ProductVariant firstPackage = aPackage("PKG-1");
+        ProductVariant secondPackage = aPackage("PKG-2");
+        CartItem first = line(firstPackage, "2", "700.00");
+        CartItem second = line(secondPackage, "1", "700.00");
         when(cartItemRepository.findByCartId(cart.getId())).thenReturn(List.of(first, second));
         when(availabilityService.available(anyCollection())).thenReturn(Map.of(variant.getId(), new BigDecimal("2")));
-        when(kitAvailability.partsOf(anyCollection())).thenReturn(Map.of(
-                firstKit.getId(), List.of(new KitAvailabilityService.Part(variant, BigDecimal.ONE)),
-                secondKit.getId(), List.of(new KitAvailabilityService.Part(variant, BigDecimal.ONE))));
+        when(packageAvailability.partsOf(anyCollection())).thenReturn(Map.of(
+                firstPackage.getId(), List.of(new PackageAvailabilityService.Part(variant, BigDecimal.ONE)),
+                secondPackage.getId(), List.of(new PackageAvailabilityService.Part(variant, BigDecimal.ONE))));
 
         CartDto dto = cartService.getOrCreateCart(SESSION);
 
         assertThat(dto.items().get(0).stockLeft()).isEqualByComparingTo("2");
-        assertThat(dto.items().get(1).stockLeft()).isEqualByComparingTo("0"); // the first kit took both
+        assertThat(dto.items().get(1).stockLeft()).isEqualByComparingTo("0"); // the first package took both
     }
 
     @Test

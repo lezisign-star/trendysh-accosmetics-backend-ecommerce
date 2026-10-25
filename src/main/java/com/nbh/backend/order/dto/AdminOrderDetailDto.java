@@ -105,12 +105,12 @@ public record AdminOrderDetailDto(
     }
 
     /**
-     * {@code components} is non-empty only for a kit's own summary line (one level deep — a kit
-     * can't contain another kit, see {@code KitService}). Each entry is a real constituent with its
+     * {@code components} is non-empty only for a package's own summary line (one level deep — a package
+     * can't contain another package, see {@code PackageService}). Each entry is a real constituent with its
      * own reservation, shown here purely for staff visibility; it's never counted again anywhere —
      * the parent line's own {@code lineTotal} (the package price) is what the order subtotal used.
      * {@code packedAt}/{@code packedBy} are the pick-and-pack tick: null until staff pack the line, and always null on
-     * a kit's own summary line (it is not picked, its products are).
+     * a package's own summary line (it is not picked, its products are).
      */
     public record Line(UUID itemId, UUID variantId, String sku, String productName, String variantName,
                        BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal, boolean wholesaleApplied,

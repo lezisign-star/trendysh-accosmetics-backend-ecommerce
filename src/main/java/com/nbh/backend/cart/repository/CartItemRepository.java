@@ -12,6 +12,6 @@ public interface CartItemRepository extends JpaRepository<CartItem, UUID> {
     @EntityGraph(attributePaths = {"variant", "variant.product", "choices"})
     List<CartItem> findByCartId(UUID cartId);
 
-    /** The line for this variant with exactly these kit picks ("" for none): the same kit with different picks is another line. */
+    /** The line for this variant with exactly these package picks ("" for none): the same package with different picks is another line. */
     Optional<CartItem> findByCartIdAndVariantIdAndChoiceKey(UUID cartId, UUID variantId, String choiceKey);
 }

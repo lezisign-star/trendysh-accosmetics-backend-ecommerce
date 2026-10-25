@@ -76,7 +76,7 @@ public class OrderReturnService {
                     .orElseThrow(() -> new UnprocessableException(
                             "Order " + order.getOrderNo() + " has no item " + reqLine.itemId()));
             if (item.getReservation() == null) {
-                // A kit's own summary line (or any line with no backing reservation) never posted
+                // A package's own summary line (or any line with no backing reservation) never posted
                 // a stock movement of its own — see OrderFulfilmentService.fulfil's skip for the
                 // same reason. Nothing to reverse here; its real components are separate lines.
                 throw new UnprocessableException(

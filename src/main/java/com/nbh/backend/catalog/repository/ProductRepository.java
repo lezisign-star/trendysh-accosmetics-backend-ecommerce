@@ -82,7 +82,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                                    @Param("newArrival") Boolean newArrival, Pageable pageable);
 
     /**
-     * Staff product list (never a kit: kits are managed under Kits, owner 2026-10-19): every optional filter
+     * Staff product list (never a package: packages are managed under Packages, owner 2026-10-19): every optional filter
      * short-circuits when null. {@code q} also matches a
      * variant SKU or name. With {@code among}, only the products in {@code ids} (the search box's
      * matches from {@link com.nbh.backend.catalog.service.ProductSearch}; {@code q} is then null). {@code options}:
@@ -105,7 +105,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             LEFT JOIN p.categories c
             LEFT JOIN c.parent parent
             WHERE p.deleted = :deleted
-              AND NOT EXISTS (SELECT 1 FROM ProductVariant kv WHERE kv.product = p AND kv.isKit = true)
+              AND NOT EXISTS (SELECT 1 FROM ProductVariant kv WHERE kv.product = p AND kv.isPackage = true)
               AND (:q IS NULL
                    OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                    OR EXISTS (SELECT 1 FROM ProductVariant v
@@ -183,7 +183,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     long countWithoutDescription();
 
     /**
-     * How many real products "Tidy colours & sizes" still lists: not looked at yet, with two or more live (non-kit)
+     * How many real products "Tidy colours & sizes" still lists: not looked at yet, with two or more live (non-package)
      * variants of which at least one has neither a colour nor a size. The same rule as
      * {@code TidyOptionsService.waiting}, as one COUNT so the dashboard does not load every variant of the catalogue
      * on each refresh.
@@ -192,9 +192,9 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             SELECT COUNT(p) FROM Product p
             WHERE p.deleted = false AND p.isMockData = false AND p.optionsReviewedAt IS NULL
               AND (SELECT COUNT(v) FROM ProductVariant v
-                   WHERE v.product = p AND v.deleted = false AND v.isKit = false) >= 2
+                   WHERE v.product = p AND v.deleted = false AND v.isPackage = false) >= 2
               AND EXISTS (SELECT 1 FROM ProductVariant w
-                          WHERE w.product = p AND w.deleted = false AND w.isKit = false
+                          WHERE w.product = p AND w.deleted = false AND w.isPackage = false
                             AND w.optionColor IS NULL AND w.optionSize IS NULL)
             """)
     long countWaitingForOptionsReview();

@@ -133,7 +133,7 @@ public class TidyOptionsService {
         events.publishEvent(new DataChangedEvent(DataChangedEvent.Topic.PRODUCTS));
     }
 
-    /** Products with two or more variants (not kits) where some variant has neither a colour nor a size. */
+    /** Products with two or more variants (not packages) where some variant has neither a colour nor a size. */
     private Map<Product, List<ProductVariant>> waiting() {
         Map<Product, List<ProductVariant>> byProduct = new LinkedHashMap<>();
         for (ProductVariant v : variants.findForOptionsReview()) {

@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
  *
  * <p>Each owner has its own main photo ({@code isPrimary}); choosing one never touches another owner's.
  *
- * <p>Everything that picks a photo for display (the shop's pages and cards, kit tiles, the admin list) goes through
+ * <p>Everything that picks a photo for display (the shop's pages and cards, package tiles, the admin list) goes through
  * here, so the rule lives in exactly one place.
  */
 public final class PhotoOwnership {

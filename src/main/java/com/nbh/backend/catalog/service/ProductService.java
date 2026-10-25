@@ -149,7 +149,7 @@ public class ProductService {
         } else {
             product = productRepository.findById(productId)
                     .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-            requireNotAKit(productId);
+            requireNotAPackage(productId);
             requireUnchangedSince(product, request.expectedUpdatedAt());
         }
 
@@ -198,12 +198,12 @@ public class ProductService {
     }
 
     /**
-     * A kit is a product with one special variant, but it is made and changed under Kits (its contents, price and
+     * A package is a product with one special variant, but it is made and changed under Packages (its contents, price and
      * thumbnail live there); saving it from the product editor would only be able to damage it.
      */
-    private void requireNotAKit(UUID productId) {
-        if (variantRepository.existsKitVariant(productId)) {
-            throw new UnprocessableException("This is a kit, so it is changed under Kits, not here.");
+    private void requireNotAPackage(UUID productId) {
+        if (variantRepository.existsPackageVariant(productId)) {
+            throw new UnprocessableException("This is a package, so it is changed under Packages, not here.");
         }
     }
 
@@ -309,8 +309,8 @@ public class ProductService {
         ProductVariant variant = variantRepository.findById(variantId)
                 .filter(v -> !v.isDeleted() && v.getProduct().getId().equals(productId))
                 .orElseThrow(() -> new EntityNotFoundException("No such variant on this product."));
-        if (variant.isKit()) {
-            throw new UnprocessableException("This is a kit, so it is changed under Kits, not here.");
+        if (variant.isPackage()) {
+            throw new UnprocessableException("This is a package, so it is changed under Packages, not here.");
         }
         if (in == null) throw new IllegalArgumentException("Nothing to save.");
         variant.setVariantName(in.variantName() == null ? "" : in.variantName());
@@ -437,7 +437,7 @@ public class ProductService {
     public ProductDto duplicate(UUID productId, StaffUser staff) {
         Product source = productRepository.findById(productId)
                 .orElseThrow(() -> new EntityNotFoundException("No product: " + productId));
-        requireNotAKit(productId);
+        requireNotAPackage(productId);
 
         Product copy = new Product();
         copy.setName(source.getName() + " (copy)");

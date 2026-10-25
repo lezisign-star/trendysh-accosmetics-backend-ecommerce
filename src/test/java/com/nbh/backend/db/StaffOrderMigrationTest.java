@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * V70 gives an order's lines a position, a pick-and-pack tick, and records who entered an order; it also lets an order have
- * no email. This brings a scratch schema to V69, seeds two orders shaped like the live ones (one with a kit and its own
+ * no email. This brings a scratch schema to V69, seeds two orders shaped like the live ones (one with a package and its own
  * products, one with plain lines), and only then applies V70 and the rest: every existing line must be numbered in its own
  * order in the order it was stored, nothing is ticked as packed, no order claims to have been entered by staff, and an
  * order without an email can now be stored.
@@ -41,13 +41,13 @@ class StaffOrderMigrationTest {
     private final UUID polish = UUID.randomUUID();
     private final UUID lamp = UUID.randomUUID();
     private final UUID oil = UUID.randomUUID();
-    private final UUID kitVariant = UUID.randomUUID();
-    private final UUID kitOrder = UUID.randomUUID();
+    private final UUID packageVariant = UUID.randomUUID();
+    private final UUID packageOrder = UUID.randomUUID();
     private final UUID plainOrder = UUID.randomUUID();
-    private final UUID kitLine = UUID.randomUUID();
-    private final UUID kitPolishLine = UUID.randomUUID();
-    private final UUID kitLampLine = UUID.randomUUID();
-    private final UUID kitOilLine = UUID.randomUUID();
+    private final UUID packageLine = UUID.randomUUID();
+    private final UUID packagePolishLine = UUID.randomUUID();
+    private final UUID packageLampLine = UUID.randomUUID();
+    private final UUID packageOilLine = UUID.randomUUID();
     private final UUID plainLine1 = UUID.randomUUID();
     private final UUID plainLine2 = UUID.randomUUID();
 
@@ -85,14 +85,14 @@ class StaffOrderMigrationTest {
             variant(s, polish, "ST-1", false);
             variant(s, lamp, "ST-2", false);
             variant(s, oil, "ST-3", false);
-            variant(s, kitVariant, "KIT-1", true);
+            variant(s, packageVariant, "PKG-1", true);
 
-            order(s, kitOrder, "SO-STAFF-1", 7500);
-            // A kit's own line first, then its products (what checkout wrote), in this stored order.
-            line(s, kitLine, kitOrder, kitVariant, null, 1, 7500);
-            line(s, kitPolishLine, kitOrder, polish, kitLine, 2, 850);
-            line(s, kitLampLine, kitOrder, lamp, kitLine, 1, 4500);
-            line(s, kitOilLine, kitOrder, oil, kitLine, 1, 450);
+            order(s, packageOrder, "SO-STAFF-1", 7500);
+            // A package's own line first, then its products (what checkout wrote), in this stored order.
+            line(s, packageLine, packageOrder, packageVariant, null, 1, 7500);
+            line(s, packagePolishLine, packageOrder, polish, packageLine, 2, 850);
+            line(s, packageLampLine, packageOrder, lamp, packageLine, 1, 4500);
+            line(s, packageOilLine, packageOrder, oil, packageLine, 1, 450);
 
             order(s, plainOrder, "SO-STAFF-2", 1300);
             line(s, plainLine1, plainOrder, oil, null, 1, 450);
@@ -106,9 +106,9 @@ class StaffOrderMigrationTest {
         dropSchema();
     }
 
-    private void variant(Statement s, UUID id, String sku, boolean isKit) throws SQLException {
+    private void variant(Statement s, UUID id, String sku, boolean isPackage) throws SQLException {
         s.execute("INSERT INTO product_variant (id, product_id, sku, variant_name, selling_price, is_active, deleted, is_kit)"
-                + " VALUES ('" + id + "', '" + product + "', '" + sku + "', 'Default', 500, true, false, " + isKit + ")");
+                + " VALUES ('" + id + "', '" + product + "', '" + sku + "', 'Default', 500, true, false, " + isPackage + ")");
     }
 
     private void order(Statement s, UUID id, String orderNo, int total) throws SQLException {
@@ -145,9 +145,9 @@ class StaffOrderMigrationTest {
 
     @Test
     void everyExistingLineIsNumberedWithinItsOrderInTheOrderItWasStored() throws Exception {
-        assertThat(linesInOrder(kitOrder)).containsExactly(kitLine, kitPolishLine, kitLampLine, kitOilLine);
+        assertThat(linesInOrder(packageOrder)).containsExactly(packageLine, packagePolishLine, packageLampLine, packageOilLine);
         assertThat(one("SELECT string_agg(line_no::text, ',' ORDER BY line_no) FROM customer_order_item WHERE order_id = '"
-                + kitOrder + "'")).isEqualTo("1,2,3,4");
+                + packageOrder + "'")).isEqualTo("1,2,3,4");
         assertThat(linesInOrder(plainOrder)).containsExactly(plainLine1, plainLine2);
         assertThat(one("SELECT string_agg(line_no::text, ',' ORDER BY line_no) FROM customer_order_item WHERE order_id = '"
                 + plainOrder + "'")).isEqualTo("1,2");
@@ -162,9 +162,9 @@ class StaffOrderMigrationTest {
 
     @Test
     void theExistingOrdersAreOtherwiseUntouched() throws Exception {
-        assertThat(one("SELECT guest_email FROM customer_order WHERE id = '" + kitOrder + "'")).isEqualTo("legacy@example.com");
-        assertThat(one("SELECT grand_total::int FROM customer_order WHERE id = '" + kitOrder + "'")).isEqualTo("7500");
-        assertThat(one("SELECT count(*) FROM customer_order_item WHERE parent_item_id = '" + kitLine + "'")).isEqualTo("3");
+        assertThat(one("SELECT guest_email FROM customer_order WHERE id = '" + packageOrder + "'")).isEqualTo("legacy@example.com");
+        assertThat(one("SELECT grand_total::int FROM customer_order WHERE id = '" + packageOrder + "'")).isEqualTo("7500");
+        assertThat(one("SELECT count(*) FROM customer_order_item WHERE parent_item_id = '" + packageLine + "'")).isEqualTo("3");
     }
 
     @Test
