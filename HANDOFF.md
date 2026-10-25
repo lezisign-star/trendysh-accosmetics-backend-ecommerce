@@ -8,7 +8,9 @@ field `productPackage`), API `/api/v1/catalog/packages` and `/api/v1/admin/packa
 `packageChoices`, `packageLineId`, `isPackage`, `wholePackages`; **V76** renames `kit` to `product_package`, `kit_component` to
 `package_component`, `kit_extra_profession` to `package_extra_profession`, `kit_id` to `package_id`, `product_variant.is_kit` to
 `is_package`, the indexes and constraints, and SKUs `KIT-` to `PKG-` for packages. `PackageRenameMigrationTest` proves it on legacy
-data; full suite 1209 green. Entries below say "kit" because that was the name then.
+data; full suite 1209 green. Entries below say "kit" because that was the name then. Also local, same day: category moves
+(`CategoryService`: `POST /categories/{id}/move-products`, `POST /categories/{id}/move`, bulk action `MOVE_CATEGORY`, `directProductCount`
+on the category list; `CategoryMoveIntegrationTest`). No migration for it.
 
 ## 2026-10-23 — orders from a call, sales and money, and the kits audit follow-ups: where it stands (history)
 

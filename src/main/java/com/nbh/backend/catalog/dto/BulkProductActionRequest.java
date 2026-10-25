@@ -13,7 +13,11 @@ public record BulkProductActionRequest(
         /** ADJUST_PRICE only — e.g. 10 for +10%, -15 for -15%. Rounded half-up to whole shillings. */
         BigDecimal percent,
         /** ADJUST_PRICE only — variant ids to leave untouched even though their product was selected. */
-        List<UUID> excludedVariantIds
+        List<UUID> excludedVariantIds,
+        /** MOVE_CATEGORY only — each product leaves this category and is filed under {@code toCategoryId} instead. */
+        UUID fromCategoryId,
+        /** MOVE_CATEGORY only. */
+        UUID toCategoryId
 ) {
-    public enum Action { PUBLISH, UNPUBLISH, DELETE, RESTORE, ADD_CATEGORIES, REPLACE_CATEGORIES, ADJUST_PRICE }
+    public enum Action { PUBLISH, UNPUBLISH, DELETE, RESTORE, ADD_CATEGORIES, REPLACE_CATEGORIES, MOVE_CATEGORY, ADJUST_PRICE }
 }

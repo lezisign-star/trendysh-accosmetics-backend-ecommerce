@@ -7,6 +7,8 @@ import java.util.UUID;
 /**
  * A category or subcategory as staff see it. {@code productCount} counts live (not deleted) products
  * filed under it; a top-level category also counts products filed in its subcategories.
+ * {@code directProductCount} counts only the live products filed under this category itself: what "move its
+ * products" will move (the deleted ones are moved along with them).
  */
 public record CategoryDto(
         UUID id,
@@ -16,15 +18,16 @@ public record CategoryDto(
         String imageUrl,
         int sortOrder,
         boolean isPublished,
-        long productCount
+        long productCount,
+        long directProductCount
 ) {
     public static CategoryDto from(Category c) {
-        return from(c, 0);
+        return from(c, 0, 0);
     }
 
-    public static CategoryDto from(Category c, long productCount) {
+    public static CategoryDto from(Category c, long productCount, long directProductCount) {
         return new CategoryDto(c.getId(), c.getSlug(), c.getName(),
                 c.getParent() != null ? c.getParent().getId() : null,
-                c.getImageUrl(), c.getSortOrder(), c.isPublished(), productCount);
+                c.getImageUrl(), c.getSortOrder(), c.isPublished(), productCount, directProductCount);
     }
 }

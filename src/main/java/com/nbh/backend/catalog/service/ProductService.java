@@ -75,6 +75,10 @@ public class ProductService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ProductSearch productSearch;
 
+    /** The bulk bar's "Move to another category" (2026-10-25); same optional injection, null = that action is refused. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CategoryService categoryService;
+
     /** Stands in for "no ids" where the list query needs a non-empty list it then ignores. */
     private static final UUID NO_ID = new UUID(0L, 0L);
 
@@ -518,8 +522,23 @@ public class ProductService {
         List<Product> products = productRepository.findAllById(request.productIds());
         List<String> warnings = new ArrayList<>();
         int affectedVariants = 0;
+        int affectedProducts = products.size();
 
         switch (request.action()) {
+            case MOVE_CATEGORY -> {
+                if (categoryService == null) throw new IllegalStateException("Moving products between categories is not available");
+                CategoryService.Moved moved = categoryService.moveProducts(products, request.fromCategoryId(), request.toCategoryId());
+                affectedProducts = moved.moved();
+                if (moved.notIn() > 0) {
+                    warnings.add(moved.notIn() + (moved.notIn() == 1 ? " product was" : " products were")
+                            + " not in the category you moved from, so "
+                            + (moved.notIn() == 1 ? "it was" : "they were") + " left as they are");
+                }
+                if (moved.alreadyThere() > 0) {
+                    warnings.add(moved.alreadyThere() + (moved.alreadyThere() == 1 ? " product was" : " products were")
+                            + " already in the category you moved to, so only the old one was taken off");
+                }
+            }
             case PUBLISH -> {
                 for (Product p : products) {
                     List<ProductVariantDto> variants = variantDtos(p.getId());
@@ -601,7 +620,7 @@ public class ProductService {
             }
         }
 
-        return new BulkProductActionResult(products.size(), affectedVariants, warnings);
+        return new BulkProductActionResult(affectedProducts, affectedVariants, warnings);
     }
 
     private List<Category> resolveCategories(List<UUID> ids) {

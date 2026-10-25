@@ -17,6 +17,17 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     boolean existsBySlug(String slug);
 
     /**
+     * Every product filed directly under this category (not its subcategories'), live, deleted and demo alike, with all of
+     * their categories loaded: moving a category's products has to take the deleted ones along, since they are what stops
+     * it being deleted.
+     */
+    @Query("""
+            SELECT DISTINCT p FROM Product p JOIN FETCH p.categories
+            WHERE p.id IN (SELECT p2.id FROM Product p2 JOIN p2.categories c WHERE c.id = :categoryId)
+            """)
+    List<Product> findAllFiledDirectlyIn(@Param("categoryId") UUID categoryId);
+
+    /**
      * A targeted column update, deliberately bypassing the managed entity (not
      * {@code product.setPublished(...)} + {@code save()}) so publishing does NOT bump
      * {@code updatedAt} — see {@link com.nbh.backend.catalog.service.ProductService#setPublished}
