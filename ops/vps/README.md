@@ -19,7 +19,7 @@ database without the owner's word.
 
 Addresses it serves: `https://img.trendyshaccosmetic.com/o/<key>` (the stored original) and `/w<width>/<key>` (a WebP copy); the S3 API for
 the backend at `https://s3.trendyshaccosmetic.com`. A key is the Cloudinary path without its `v123` segment. **Not public until** the DNS
-records `img` and `s3` (A records to 158.220.99.163, at GoDaddy) exist and `EDGE_PUBLIC=true` is set in `/opt/nbh/media/.env`
+records `img` and `s3` (A records to 158.220.99.163, at Namecheap, Advanced DNS) exist and `EDGE_PUBLIC=true` is set in `/opt/nbh/media/.env`
 (`cd /opt/nbh/media && docker compose --env-file .env up -d edge`); the existing proxy then gets the two certificates by itself.
 
 Secrets (the store's read/write key, the read-only key imgproxy uses, Garage's RPC and admin tokens) are generated on the server by

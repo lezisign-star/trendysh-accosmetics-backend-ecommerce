@@ -37,11 +37,15 @@ path (`<folder>/<name>.<ext>`, the `v123` version segment dropped), the store's 
 compares sha256 (0 problems) and a decode check that asks imgproxy for a 64 px WebP of every photo (0 problems). The bucket holds 2,311 objects / 2.2 GB; disk 18 GB of 290 GB used.
 Not covered by this list (the public API does not show them, the backend job must): image drafts, old orders' picture snapshots, hidden/inactive/deleted products, brand logos, profession pictures.
 
+**26 Oct, midday: ON HOLD.** The owner asked to hold the move to the VPS and verify and test the rename/moves release first. Nothing more
+was changed on the server after 09:07; the photo stack runs idle (not public, about 45 MB of memory).
+
 ### To undo all of it
 `cd /opt/nbh/media && docker compose down` (the photos stay in `data/` until deleted by hand), then `docker network rm nbh_media` if it is left, then `rm -rf /opt/nbh`.
 
 ### Still to do on the server
-1. The owner adds DNS A records `img` and `s3` (trendyshaccosmetic.com) to 158.220.99.163 at GoDaddy.
+1. The owner adds DNS A records `img` and `s3` (trendyshaccosmetic.com) to 158.220.99.163 at Namecheap (Advanced DNS). Not there yet (checked 26 Oct 10:00).
 2. Set `EDGE_PUBLIC=true` in `/opt/nbh/media/.env`, `docker compose --env-file .env up -d edge`: Traefik then gets the two certificates (HTTP challenge).
 3. Check https from outside (certificate, CORS, headers).
-4. Copy the photos from Cloudinary (verified copy, nothing on Cloudinary touched), then an offsite backup of the bucket before Cloudinary is ever emptied.
+4. ~~Copy the photos from Cloudinary~~ done (above); what the public API does not show is for the backend job. Then an offsite backup of the bucket
+   before Cloudinary is ever emptied (the owner decides where, later).

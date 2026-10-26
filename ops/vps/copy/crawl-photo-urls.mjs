@@ -89,7 +89,9 @@ if (packages == null) {
 packages = packages ?? [];
 collect(packages, "packages");
 for (const pk of packages) {
-  if (pk.slug) collect(await get(`${pkgPath}/${encodeURIComponent(pk.slug)}`), "package-page");
+  // a package is addressed by its product's slug (the list's `productSlug`)
+  const slug = pk.slug ?? pk.productSlug;
+  if (slug) collect(await get(`${pkgPath}/${encodeURIComponent(slug)}`), "package-page");
 }
 console.log(`packages: ${packages.length}`);
 
