@@ -7,6 +7,10 @@
 -- Names are looked up before they are renamed, so a database whose constraints were named differently (an older
 -- Postgres, a hand-made one) still migrates; whatever is not found is simply left as it is.
 
+-- Renaming needs a lock on each table. If a long transaction of the instance still running holds one, give up after 15
+-- seconds (the whole migration rolls back and the deploy can be tried again) rather than freeze the shop behind a queue.
+SET LOCAL lock_timeout = '15s';
+
 ALTER TABLE kit RENAME TO product_package;
 ALTER TABLE kit_component RENAME TO package_component;
 ALTER TABLE kit_extra_profession RENAME TO package_extra_profession;
@@ -18,6 +22,7 @@ ALTER TABLE product_variant RENAME COLUMN is_kit TO is_package;
 DO $$
 DECLARE
     r RECORD;
+    new_name text;
 BEGIN
     -- Indexes. Renaming the index behind a primary key or a unique constraint renames the constraint with it.
     FOR r IN SELECT * FROM (VALUES
@@ -56,6 +61,29 @@ BEGIN
            AND NOT EXISTS (SELECT 1 FROM pg_constraint k
                            WHERE k.conrelid = (current_schema() || '.' || r.table_name)::regclass AND k.conname = r.new_name) THEN
             EXECUTE format('ALTER TABLE %I RENAME CONSTRAINT %I TO %I', r.table_name, r.old_name, r.new_name);
+        END IF;
+    END LOOP;
+
+    -- NOT NULL constraints. PostgreSQL 18 lists them in pg_constraint, named <table>_<column>_not_null when the column was
+    -- made; renaming the table or the column does not rename them. Older versions have none, so this finds nothing there.
+    FOR r IN
+        SELECT c.relname AS table_name, k.conname AS old_name
+        FROM pg_constraint k
+        JOIN pg_class c ON c.oid = k.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = current_schema() AND k.contype = 'n' AND k.conname LIKE '%kit%'
+          AND c.relname IN ('product_package', 'package_component', 'package_extra_profession', 'product_variant')
+    LOOP
+        new_name := replace(replace(replace(replace(r.old_name,
+                'kit_extra_profession', 'package_extra_profession'), 'kit_component', 'package_component'),
+                '_kit_id_', '_package_id_'), '_is_kit_', '_is_package_');
+        IF left(new_name, 4) = 'kit_' THEN
+            new_name := 'product_package_' || substr(new_name, 5);
+        END IF;
+        IF new_name <> r.old_name
+           AND NOT EXISTS (SELECT 1 FROM pg_constraint k
+                           WHERE k.conrelid = (current_schema() || '.' || r.table_name)::regclass AND k.conname = new_name) THEN
+            EXECUTE format('ALTER TABLE %I RENAME CONSTRAINT %I TO %I', r.table_name, r.old_name, new_name);
         END IF;
     END LOOP;
 END $$;

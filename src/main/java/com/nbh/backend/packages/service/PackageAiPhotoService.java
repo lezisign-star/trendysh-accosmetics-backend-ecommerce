@@ -83,7 +83,8 @@ public class PackageAiPhotoService {
     /** What Gemini is asked: the photos are the real products, so they must look like themselves. */
     static String prompt(Style style, AiPhotoInputs in, int count, String note) {
         String products = String.join(", ", in.productNames().subList(0, count));
-        String common = "The " + count + " photos are the real products of a beauty-supply package called \"" + in.packageName()
+        // "set", not "package": to a picture model a package is a parcel
+        String common = "The " + count + " photos are the real products of a beauty-supply set called \"" + in.packageName()
                 + "\" for a " + in.professionLabel() + " (" + products + "). Keep every product exactly as it looks in its"
                 + " photo: the same shape, colours, packaging and labels; do not invent products, brands or text. No"
                 + " words, logos, prices or watermarks in the picture. Portrait, 4:5, sharp, warm natural light, the kind"

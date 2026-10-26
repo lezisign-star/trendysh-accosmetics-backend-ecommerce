@@ -519,7 +519,11 @@ public class ProductService {
      */
     @Transactional
     public BulkProductActionResult bulk(BulkProductActionRequest request) {
-        List<Product> products = productRepository.findAllById(request.productIds());
+        // a move needs every ticked product's categories: load them in one query instead of one per product
+        List<Product> products = request.action() == BulkProductActionRequest.Action.MOVE_CATEGORY
+                ? (request.productIds() == null || request.productIds().isEmpty()
+                        ? List.of() : productRepository.findAllWithCategoriesByIdIn(request.productIds()))
+                : productRepository.findAllById(request.productIds());
         List<String> warnings = new ArrayList<>();
         int affectedVariants = 0;
         int affectedProducts = products.size();

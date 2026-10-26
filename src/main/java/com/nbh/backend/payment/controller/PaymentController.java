@@ -255,7 +255,7 @@ public class PaymentController {
         paymentService.markFailed(paymentRecordId, request.reason(), toJson(note));
     }
 
-    /** rawRequest/rawResponse are mapped as jsonb — every caller must go through here, never a bare function toString() { [native code] }(). */
+    /** rawRequest/rawResponse are mapped as jsonb — every caller must go through here, never a bare toString(). */
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);

@@ -12,9 +12,11 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -37,10 +39,17 @@ public class CategoryController {
     @GetMapping
     @Transactional(readOnly = true)
     public List<CategoryDto> list() {
-        Map<UUID, Long> direct = new HashMap<>();
-        for (Object[] row : categoryRepository.liveProductCountsByCategory()) {
-            direct.merge((UUID) row[0], (Long) row[1], Long::sum);
+        // A product counts once per category even when it is in it two ways: filed under it, and through a variant that
+        // has it as its own category (a range whose categories differ).
+        Map<UUID, Set<UUID>> productsIn = new HashMap<>();
+        for (Object[] row : categoryRepository.liveProductCategoryPairs()) {
+            productsIn.computeIfAbsent((UUID) row[0], k -> new HashSet<>()).add((UUID) row[1]);
         }
+        for (Object[] row : categoryRepository.liveVariantCategoryPairs()) {
+            productsIn.computeIfAbsent((UUID) row[0], k -> new HashSet<>()).add((UUID) row[1]);
+        }
+        Map<UUID, Long> direct = new HashMap<>();
+        productsIn.forEach((categoryId, products) -> direct.put(categoryId, (long) products.size()));
         boolean demoOn = categoryRepository.demoDataOn();
         List<Category> all = categoryRepository.findAll().stream()
                 .filter(c -> (c.getParent() == null && !c.isMockData()) || c.isMockData() == demoOn)
@@ -99,7 +108,7 @@ public class CategoryController {
             }
         }
         if (request.sortOrder() != null) category.setSortOrder(request.sortOrder());
-        if (request.imageUrl() != null) category.setImageUrl(request.imageUrl().isBlank() ? null : request.imageUrl().trim());
+        if (request.imageUrl() != null) category.setImageUrl(cleanImageUrl(request.imageUrl()));
         if (request.isPublished() != null) category.setPublished(request.isPublished());
         return CategoryDto.from(categoryRepository.save(category));
     }
@@ -120,6 +129,12 @@ public class CategoryController {
         if (products > 0) {
             throw new ConflictException("\"" + category.getName() + "\" still has " + products
                     + (products == 1 ? " product" : " products") + " — move them to another category first");
+        }
+        long variants = categoryRepository.countVariantsFiledUnder(id);
+        if (variants > 0) {
+            throw new ConflictException("\"" + category.getName() + "\" still has " + variants
+                    + (variants == 1 ? " variant" : " variants") + " filed under it (a range whose categories differ)"
+                    + " — move its products to another category first");
         }
         categoryRepository.delete(category);
     }
@@ -154,6 +169,15 @@ public class CategoryController {
         if (name.isEmpty()) throw new IllegalArgumentException("A category needs a name");
         if (name.length() > 150) throw new IllegalArgumentException("That name is too long (150 characters at most)");
         return name;
+    }
+
+    /** Blank clears the picture. Anything else must be an https address that fits the column (a pasted link, an upload's address). */
+    private static String cleanImageUrl(String raw) {
+        String url = raw.trim();
+        if (url.isEmpty()) return null;
+        if (url.length() > 500) throw new IllegalArgumentException("That picture address is too long (500 characters at most)");
+        if (!url.regionMatches(true, 0, "https://", 0, 8)) throw new IllegalArgumentException("A picture address must start with https://");
+        return url;
     }
 
     /** name-based slug, suffixed -2, -3… when another category already has it. */

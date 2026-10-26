@@ -44,7 +44,12 @@ class PackageRenameMigrationTest {
     private final UUID looseVariant = UUID.randomUUID();
     private final UUID packageProduct = UUID.randomUUID();
     private final UUID packageVariant = UUID.randomUUID();
+    private final UUID collidingPackageProduct = UUID.randomUUID();
+    private final UUID collidingPackageVariant = UUID.randomUUID();
+    private final UUID takenProduct = UUID.randomUUID();
+    private final UUID takenVariant = UUID.randomUUID();
     private final UUID pkg = UUID.randomUUID();
+    private final UUID collidingPkg = UUID.randomUUID();
     private final UUID mainTrade = UUID.randomUUID();
     private final UUID extraTrade = UUID.randomUUID();
     private final UUID polishLine = UUID.randomUUID();
@@ -102,6 +107,14 @@ class PackageRenameMigrationTest {
                     + "', '" + pkg + "', 2, '" + lampVariant + "', 1)");
             s.execute("INSERT INTO kit_extra_profession (kit_id, profession_id) VALUES ('" + pkg + "', '" + extraTrade + "')");
 
+            // A package whose new SKU is already taken by another variant (SKUs are unique): it must keep its old one.
+            product(s, takenProduct, "pkg-shaped-thing", "Pkg Shaped Thing");
+            variant(s, takenVariant, takenProduct, "PKG-000777", false);
+            product(s, collidingPackageProduct, "second-package", "Second Package");
+            variant(s, collidingPackageVariant, collidingPackageProduct, "KIT-000777", true);
+            s.execute("INSERT INTO kit (id, variant_id, profession_id, description) VALUES ('" + collidingPkg + "', '"
+                    + collidingPackageVariant + "', '" + mainTrade + "', 'Second one')");
+
             s.execute("INSERT INTO customer_order (id, order_no, guest_email, guest_phone, fulfilment_type, status, subtotal,"
                     + " vat_total, grand_total, delivery_address, customer_name) VALUES ('" + order + "', 'KR-1', 'legacy@example.com',"
                     + " '254711222333', 'PICKUP', 'PAID', 5000, 0, 5000, 'Kilimani', 'Legacy Customer')");
@@ -153,24 +166,32 @@ class PackageRenameMigrationTest {
     void noIndexOrConstraintIsStillNamedAfterAKit() throws Exception {
         assertThat(one("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
                 + " WHERE n.nspname = current_schema() AND c.relname LIKE '%kit%'")).isEqualTo("0");
-        // PostgreSQL 18 lists NOT NULL constraints (named after the column) too; those are named after columns, not kits.
+        // Every kind of constraint, NOT NULL ones included: PostgreSQL 18 lists them (named <table>_<column>_not_null at
+        // creation) and V76 renames those too; older versions have none, so there is nothing to find there.
         assertThat(one("SELECT count(*) FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace"
-                + " WHERE n.nspname = current_schema() AND k.conname LIKE '%kit%' AND k.contype <> 'n'")).isEqualTo("0");
+                + " WHERE n.nspname = current_schema() AND k.conname LIKE '%kit%'")).isEqualTo("0");
+    }
+
+    @Test
+    void aPackagesSkuIsLeftAloneWhenAnotherVariantAlreadyHoldsTheNewPrefix() throws Exception {
+        // the rename would have made two variants share a SKU, which is unique: that package keeps its old one
+        assertThat(one("SELECT sku FROM product_variant WHERE id = '" + collidingPackageVariant + "'")).isEqualTo("KIT-000777");
+        assertThat(one("SELECT sku FROM product_variant WHERE id = '" + takenVariant + "'")).isEqualTo("PKG-000777");
     }
 
     @Test
     void everyRowKeepsItsIdAndItsMeaning() throws Exception {
-        assertThat(one("SELECT count(*) FROM product_package")).isEqualTo("1");
+        assertThat(one("SELECT count(*) FROM product_package")).isEqualTo("2");
         assertThat(one("SELECT id FROM product_package WHERE variant_id = '" + packageVariant + "'")).isEqualTo(pkg.toString());
-        assertThat(one("SELECT description FROM product_package")).isEqualTo("First nail station");
-        assertThat(one("SELECT profession_id FROM product_package")).isEqualTo(mainTrade.toString());
+        assertThat(one("SELECT description FROM product_package WHERE id = '" + pkg + "'")).isEqualTo("First nail station");
+        assertThat(one("SELECT profession_id FROM product_package WHERE id = '" + pkg + "'")).isEqualTo(mainTrade.toString());
         assertThat(one("SELECT count(*) FROM package_component WHERE package_id = '" + pkg + "'")).isEqualTo("2");
         assertThat(one("SELECT qty::int || '/' || line_no FROM package_component WHERE id = '" + polishLine + "'")).isEqualTo("2/1");
         assertThat(one("SELECT qty::int || '/' || line_no FROM package_component WHERE id = '" + lampLine + "'")).isEqualTo("1/2");
         assertThat(one("SELECT profession_id FROM package_extra_profession WHERE package_id = '" + pkg + "'"))
                 .isEqualTo(extraTrade.toString());
         assertThat(one("SELECT is_package FROM product_variant WHERE id = '" + packageVariant + "'")).isEqualTo("t");
-        assertThat(one("SELECT count(*) FROM product_variant WHERE is_package")).isEqualTo("1");
+        assertThat(one("SELECT count(*) FROM product_variant WHERE is_package")).isEqualTo("2");
     }
 
     @Test

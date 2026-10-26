@@ -1,9 +1,11 @@
 package com.nbh.backend.catalog.repository;
 
+import com.nbh.backend.catalog.entity.Category;
 import com.nbh.backend.catalog.entity.ProductVariant;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -45,6 +47,21 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     List<ProductVariant> findByProductIdAndDeletedFalseOrderBySortOrderAsc(UUID productId);
 
     List<ProductVariant> findByProductIdInAndDeletedFalse(Collection<UUID> productIds);
+
+    /**
+     * Which of these products have a variant filed under {@code categoryId} as its OWN category (a range whose categories
+     * differ, V68). Deleted variants count too: they keep the reference, and it blocks deleting the category.
+     */
+    @Query("SELECT DISTINCT v.product.id FROM ProductVariant v WHERE v.category.id = :categoryId AND v.product.id IN :productIds")
+    List<UUID> productIdsFiledUnder(@Param("categoryId") UUID categoryId, @Param("productIds") Collection<UUID> productIds);
+
+    /**
+     * Re-files the own category of these products' variants from one category to another. A bulk statement, so the caller
+     * marks the products as changed ({@code ProductRepository.touch}) and tells the live screens itself.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("UPDATE ProductVariant v SET v.category = :to WHERE v.category.id = :fromId AND v.product.id IN :productIds")
+    int refileOwnCategory(@Param("fromId") UUID fromId, @Param("to") Category to, @Param("productIds") Collection<UUID> productIds);
 
     /** Backs auto-generated SKUs (see {@code ProductService.generateSku}) — atomic, race-free. */
     @Query(value = "SELECT nextval('variant_sku_seq')", nativeQuery = true)

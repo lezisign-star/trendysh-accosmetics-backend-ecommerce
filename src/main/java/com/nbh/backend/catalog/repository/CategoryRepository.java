@@ -27,19 +27,38 @@ public interface CategoryRepository extends JpaRepository<Category, UUID> {
     List<Category> findByParentIsNullAndNameIgnoreCase(String name);
 
     /**
-     * Live products directly in a category (however many categories each belongs to — Phase 3,
-     * 2026-09-24). Rows: [categoryId, count]. A caller that wants a top-level category's count to
-     * include its subcategories' products sums this with the same query filtered to its children.
+     * Which live products are directly in which category (however many categories each belongs to — Phase 3,
+     * 2026-09-24). Rows: [categoryId, productId]. A caller that wants a top-level category's count to include its
+     * subcategories' products adds up its children's. Pairs rather than counts, so a product that is in a category both
+     * ways (see {@link #liveVariantCategoryPairs}) is counted once.
      */
     @Query("""
-            SELECT c.id, COUNT(DISTINCT p)
+            SELECT c.id, p.id
             FROM Product p JOIN p.categories c
             WHERE p.deleted = false AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
-            GROUP BY c.id
             """)
-    List<Object[]> liveProductCountsByCategory();
+    List<Object[]> liveProductCategoryPairs();
+
+    /**
+     * The same for a range whose categories differ (V68): the shop lists such a variant under its own category, so its
+     * product is in that category too. Rows: [categoryId, productId].
+     */
+    @Query("""
+            SELECT v.category.id, p.id
+            FROM ProductVariant v JOIN v.product p
+            WHERE v.category IS NOT NULL AND p.categoryVaries = true AND v.deleted = false AND p.deleted = false
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
+            """)
+    List<Object[]> liveVariantCategoryPairs();
 
     /** Every product (including soft-deleted ones) still in this category — these block deleting it. */
     @Query("SELECT COUNT(DISTINCT p) FROM Product p JOIN p.categories c WHERE c.id = :id")
     long countProductsReferencing(UUID id);
+
+    /**
+     * Every variant (deleted ones too) that has this category as its own (V68): a foreign key, so it blocks deleting the
+     * category just like a product does.
+     */
+    @Query("SELECT COUNT(v) FROM ProductVariant v WHERE v.category.id = :id")
+    long countVariantsFiledUnder(UUID id);
 }

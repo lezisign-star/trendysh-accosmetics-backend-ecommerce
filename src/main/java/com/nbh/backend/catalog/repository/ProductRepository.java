@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,6 +27,20 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             WHERE p.id IN (SELECT p2.id FROM Product p2 JOIN p2.categories c WHERE c.id = :categoryId)
             """)
     List<Product> findAllFiledDirectlyIn(@Param("categoryId") UUID categoryId);
+
+    /**
+     * Products with a variant that is filed under this category as the variant's OWN category (a range whose categories differ,
+     * V68), with all their categories loaded. A category's products, for a move, are these plus {@link #findAllFiledDirectlyIn}.
+     */
+    @Query("""
+            SELECT DISTINCT p FROM Product p LEFT JOIN FETCH p.categories
+            WHERE p.id IN (SELECT v.product.id FROM ProductVariant v WHERE v.category.id = :categoryId)
+            """)
+    List<Product> findAllWithVariantsFiledIn(@Param("categoryId") UUID categoryId);
+
+    /** These products with all their categories loaded in one query, for a bulk action over many ticked products. */
+    @Query("SELECT DISTINCT p FROM Product p LEFT JOIN FETCH p.categories WHERE p.id IN :ids")
+    List<Product> findAllWithCategoriesByIdIn(@Param("ids") Collection<UUID> ids);
 
     /**
      * A targeted column update, deliberately bypassing the managed entity (not
