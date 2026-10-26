@@ -102,7 +102,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
                 v.reorderLevel,
                 CASE WHEN v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel
                      THEN true ELSE false END,
-                v.isPackage)
+                v.isPackage, v.stockBasis, p.sellWithoutStock)
             FROM ProductVariant v
             JOIN v.product p
             LEFT JOIN StockBalance b ON b.variant = v AND b.account = com.nbh.backend.stock.entity.StockAccount.SHOP
@@ -110,7 +110,11 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
               AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
               AND (:belowReorderOnly = false
                    OR (v.reorderLevel IS NOT NULL AND COALESCE(b.onHandQty, 0) <= v.reorderLevel))
-              AND (:outOfStockOnly = false OR (COALESCE(b.onHandQty, 0) <= 0 AND v.isPackage = false))
+              AND (:outOfStockOnly = false OR (COALESCE(b.onHandQty, 0) <= 0 AND v.isPackage = false
+                   AND NOT (v.stockBasis = com.nbh.backend.catalog.entity.StockBasis.NONE
+                            AND (:everywhere = true OR p.sellWithoutStock = true
+                                 OR EXISTS (SELECT 1 FROM Product p2 JOIN p2.categories c LEFT JOIN c.parent pc
+                                            WHERE p2.id = p.id AND (c.sellWithoutStock = true OR pc.sellWithoutStock = true))))))
               AND (:productId IS NULL OR p.id = :productId)
               AND (:q IS NULL
                    OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
@@ -119,6 +123,7 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
             """)
     Page<InventoryLineDto> browseInventory(@Param("belowReorderOnly") boolean belowReorderOnly,
                                             @Param("outOfStockOnly") boolean outOfStockOnly,
+                                            @Param("everywhere") boolean everywhere,
                                             @Param("productId") UUID productId,
                                             @Param("q") String q,
                                             Pageable pageable);

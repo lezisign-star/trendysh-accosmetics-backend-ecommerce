@@ -63,6 +63,43 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     @Query("UPDATE ProductVariant v SET v.category = :to WHERE v.category.id = :fromId AND v.product.id IN :productIds")
     int refileOwnCategory(@Param("fromId") UUID fromId, @Param("to") Category to, @Param("productIds") Collection<UUID> productIds);
 
+    /**
+     * Of these options, the ones with no stock number yet ({@code stockBasis} NONE) that a "sell without stock" switch covers
+     * (V78): the shop's ({@code everywhere}), the product's own, or a category the product is filed under or that
+     * category's parent. Packages are left out: theirs is worked out from their parts.
+     */
+    @Query("""
+            SELECT v.id FROM ProductVariant v JOIN v.product p
+            WHERE v.id IN :ids AND v.stockBasis = :none AND v.isPackage = false
+              AND (:everywhere = true OR p.sellWithoutStock = true
+                   OR EXISTS (SELECT 1 FROM Product p2 JOIN p2.categories c LEFT JOIN c.parent pc
+                              WHERE p2.id = p.id AND (c.sellWithoutStock = true OR pc.sellWithoutStock = true)))
+            """)
+    List<UUID> untrackedAmong(@Param("ids") Collection<UUID> ids, @Param("none") com.nbh.backend.catalog.entity.StockBasis none,
+                              @Param("everywhere") boolean everywhere);
+
+    /**
+     * The options a stock action covers (V78): every real option in the shop ({@code everything}), or those of these products,
+     * or of products filed under these categories (a top-level category takes its subcategories' products too). Deleted
+     * options and products, packages (their stock is their parts') and demo products are left out. Pass a list holding one
+     * unused id rather than an empty one.
+     */
+    @Query("""
+            SELECT DISTINCT v.id FROM ProductVariant v JOIN v.product p LEFT JOIN p.categories c LEFT JOIN c.parent pc
+            WHERE v.deleted = false AND v.isPackage = false AND p.deleted = false AND p.isMockData = false
+              AND (:everything = true OR p.id IN :productIds OR c.id IN :categoryIds OR pc.id IN :categoryIds)
+            """)
+    List<UUID> idsInScope(@Param("everything") boolean everything, @Param("categoryIds") Collection<UUID> categoryIds,
+                          @Param("productIds") Collection<UUID> productIds);
+
+    /** How many real options (as {@link #idsInScope} counts them) have each stock basis: rows of [StockBasis, count]. */
+    @Query("""
+            SELECT v.stockBasis, COUNT(v) FROM ProductVariant v JOIN v.product p
+            WHERE v.deleted = false AND v.isPackage = false AND p.deleted = false AND p.isMockData = false
+            GROUP BY v.stockBasis
+            """)
+    List<Object[]> countByStockBasis();
+
     /** Backs auto-generated SKUs (see {@code ProductService.generateSku}) — atomic, race-free. */
     @Query(value = "SELECT nextval('variant_sku_seq')", nativeQuery = true)
     long nextSkuSequence();

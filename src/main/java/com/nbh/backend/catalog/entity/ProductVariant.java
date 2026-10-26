@@ -161,6 +161,11 @@ public class ProductVariant extends BaseEntity {
     @JoinColumn(name = "category_id")
     private Category category;
 
+    /** Where its stock number comes from (V78): none yet, estimated in bulk, or counted. See {@link StockBasis}. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "stock_basis", nullable = false, length = 12)
+    private StockBasis stockBasis = StockBasis.NONE;
+
     /** The colour family the shop filters this variant under: staff's choice, else what its dot looks like; null = no colour. */
     public ColorFamily effectiveColorFamily() {
         ColorFamily chosen = ColorFamily.ofStored(colorFamily);

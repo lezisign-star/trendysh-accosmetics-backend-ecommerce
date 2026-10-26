@@ -47,7 +47,10 @@ public class StockAvailabilityService {
         return available(java.util.List.of(variantId)).getOrDefault(variantId, BigDecimal.ZERO);
     }
 
-    /** Sellable quantity per variant, batched — variants never received are simply absent from the map. */
+    /**
+     * Sellable quantity per variant, batched — variants never received are simply absent from the map. An option that is
+     * not tracked yet (see {@link StockTrackingService}) reports {@link StockTrackingService#UNTRACKED_AVAILABLE}.
+     */
     @Transactional(readOnly = true)
     public Map<UUID, BigDecimal> available(Collection<UUID> variantIds) {
         Map<UUID, BigDecimal> result = new HashMap<>();
@@ -57,8 +60,17 @@ public class StockAvailabilityService {
         for (StockBalanceRepository.VariantAvailability a : balanceRepository.availabilityForVariants(variantIds)) {
             result.put(a.getVariantId(), a.getAvailable());
         }
+        if (tracking != null) {
+            for (UUID untracked : tracking.untracked(variantIds)) {
+                result.put(untracked, StockTrackingService.UNTRACKED_AVAILABLE);
+            }
+        }
         return result;
     }
+
+    /** Optional so a test can build this service on its own (then nothing is untracked). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private StockTrackingService tracking;
 
     /** The current moving-average cost for a variant's SHOP stock — used to snapshot a sale's cost at dispatch time. */
     @Transactional(readOnly = true)
@@ -77,7 +89,15 @@ public class StockAvailabilityService {
     @Transactional(readOnly = true)
     public Page<InventoryLineDto> browse(String q, boolean belowReorderOnly, boolean outOfStockOnly,
                                          UUID productId, Pageable pageable) {
-        return balanceRepository.browseInventory(belowReorderOnly, outOfStockOnly, productId, q, pageable);
+        // an option that is not tracked yet can be ordered: it is not "out of stock" (V78), and the list says which it is
+        boolean everywhere = tracking != null && tracking.sellingWithoutStockEverywhere();
+        Page<InventoryLineDto> page = balanceRepository.browseInventory(belowReorderOnly, outOfStockOnly, everywhere,
+                productId, q, pageable);
+        if (tracking == null || page.isEmpty()) {
+            return page;
+        }
+        java.util.Set<UUID> untracked = tracking.untracked(page.map(InventoryLineDto::variantId).getContent());
+        return page.map(line -> line.withUntracked(untracked.contains(line.variantId())));
     }
 
     @Transactional(readOnly = true)

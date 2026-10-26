@@ -258,7 +258,10 @@ public class OrderFulfilmentService {
             itemsInLineOrder.add(item);
         }
 
-        postingService.post(document);
+        // An order of options sold while not tracked yet (V78) holds nothing, so there may be no stock to move at all.
+        if (!document.getLines().isEmpty()) {
+            postingService.post(document);
+        }
 
         // Phase 0 fix (2026-09-27): the COGS snapshot now comes from what posting actually
         // locked and used (StockDocumentLine.postedUnitCost), not a pre-posting avgCost()

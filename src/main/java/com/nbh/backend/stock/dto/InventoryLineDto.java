@@ -26,5 +26,25 @@ public record InventoryLineDto(
         BigDecimal availableQty,
         BigDecimal reorderLevel,
         boolean belowReorderLevel,
-        boolean isPackage
-) {}
+        boolean isPackage,
+        /** Where its number comes from (V78): NONE, ESTIMATED or COUNTED. */
+        com.nbh.backend.catalog.entity.StockBasis stockBasis,
+        /** The product's own "sell without stock" switch (V78). */
+        boolean productSellWithoutStock,
+        /** Not tracked yet: no number and a "sell without stock" switch covers it, so customers can order it freely. */
+        boolean untracked
+) {
+    /** What the stock list query builds; {@code untracked} is worked out afterwards (it depends on the shop switch). */
+    public InventoryLineDto(UUID variantId, UUID productId, String sku, String variantName, String productName,
+                            BigDecimal onHandQty, BigDecimal reservedQty, BigDecimal availableQty, BigDecimal reorderLevel,
+                            boolean belowReorderLevel, boolean isPackage, com.nbh.backend.catalog.entity.StockBasis stockBasis,
+                            boolean productSellWithoutStock) {
+        this(variantId, productId, sku, variantName, productName, onHandQty, reservedQty, availableQty, reorderLevel,
+                belowReorderLevel, isPackage, stockBasis, productSellWithoutStock, false);
+    }
+
+    public InventoryLineDto withUntracked(boolean value) {
+        return new InventoryLineDto(variantId, productId, sku, variantName, productName, onHandQty, reservedQty, availableQty,
+                reorderLevel, belowReorderLevel, isPackage, stockBasis, productSellWithoutStock, value);
+    }
+}

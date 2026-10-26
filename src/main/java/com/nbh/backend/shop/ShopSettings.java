@@ -25,4 +25,8 @@ public class ShopSettings extends BaseEntity {
 
     @Column(name = "changed_by", length = 200)
     private String changedBy;
+
+    /** Every option in the shop with no stock number yet can be ordered without a stock limit until it is counted (V78). */
+    @Column(name = "sell_without_stock", nullable = false)
+    private boolean sellWithoutStock = false;
 }

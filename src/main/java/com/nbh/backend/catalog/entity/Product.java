@@ -130,6 +130,10 @@ public class Product extends BaseEntity {
     @Column(name = "category_varies", nullable = false)
     private boolean categoryVaries = false;
 
+    /** Its options with no stock number yet can be ordered without a stock limit until they are counted (V78). */
+    @Column(name = "sell_without_stock", nullable = false)
+    private boolean sellWithoutStock = false;
+
     /** When staff confirmed the range's configuration; until then its variants are left exactly as they are. */
     @Column(name = "range_reviewed_at")
     private Instant rangeReviewedAt;

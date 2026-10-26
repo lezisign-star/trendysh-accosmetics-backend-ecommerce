@@ -31,6 +31,10 @@ public class Category extends BaseEntity {
     @Column(nullable = false)
     private boolean isPublished = true;
 
+    /** Its products' options with no stock number yet (its subcategories' too) can be ordered without a stock limit (V78). */
+    @Column(name = "sell_without_stock", nullable = false)
+    private boolean sellWithoutStock = false;
+
     /** Developer-toggleable demo content (2026-09-29) — see MockDataSeederService. */
     @Column(nullable = false)
     private boolean isMockData = false;

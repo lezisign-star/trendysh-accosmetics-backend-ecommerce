@@ -79,8 +79,11 @@ public class OrderReturnService {
                 // A package's own summary line (or any line with no backing reservation) never posted
                 // a stock movement of its own — see OrderFulfilmentService.fulfil's skip for the
                 // same reason. Nothing to reverse here; its real components are separate lines.
-                throw new UnprocessableException(
-                        item.soldSku() + " never posted its own stock movement — return its components instead");
+                throw new UnprocessableException(item.getVariant().isPackage()
+                        ? item.soldSku() + " never posted its own stock movement — return its components instead"
+                        // sold while its stock was not tracked yet (V78): nothing was taken off, so nothing goes back
+                        : item.soldSku() + " was sold while its stock was not counted yet, so no stock was taken off for it"
+                                + " and there is none to put back");
             }
 
             BigDecimal qty = new BigDecimal(reqLine.qty());

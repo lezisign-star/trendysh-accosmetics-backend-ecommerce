@@ -3,6 +3,8 @@ package com.nbh.backend.stock.controller;
 import com.nbh.backend.stock.dto.StockCountDtos.ApplyCountRequest;
 import com.nbh.backend.stock.dto.StockCountDtos.CreateCountRequest;
 import com.nbh.backend.stock.dto.StockCountDtos.RecordCountRequest;
+import com.nbh.backend.stock.dto.StockCountDtos.RecordCountsRequest;
+import com.nbh.backend.stock.dto.StockCountDtos.ScopeCountRequest;
 import com.nbh.backend.stock.dto.StockCountDtos.StockCountDto;
 import com.nbh.backend.stock.entity.StockCount;
 import com.nbh.backend.stock.entity.StockCountStatus;
@@ -33,9 +35,35 @@ public class StockCountController {
     private static final String ADJUST_AUTHORITY = "PERM_STOCK_ADJUST";
 
     private final StockCountService countService;
+    private final com.nbh.backend.catalog.repository.ProductImageRepository imageRepository;
 
-    public StockCountController(StockCountService countService) {
+    public StockCountController(StockCountService countService,
+                                com.nbh.backend.catalog.repository.ProductImageRepository imageRepository) {
         this.countService = countService;
+        this.imageRepository = imageRepository;
+    }
+
+    /** A photo per counted option: its own, else its product's main one, else the product's first (for the counting screen). */
+    private Map<UUID, String> images(StockCount count) {
+        java.util.Set<UUID> productIds = new java.util.HashSet<>();
+        count.getLines().forEach(l -> productIds.add(l.getVariant().getProduct().getId()));
+        if (productIds.isEmpty()) return Map.of();
+        Map<UUID, String> byVariant = new java.util.HashMap<>();
+        Map<UUID, String> byProduct = new java.util.HashMap<>();
+        for (var image : imageRepository.findByProductIdInOrderBySortOrderAsc(productIds)) {
+            String url = image.getThumbnailUrl() != null ? image.getThumbnailUrl() : image.getUrl();
+            if (url == null) continue;
+            if (image.getVariant() != null) byVariant.putIfAbsent(image.getVariant().getId(), url);
+            UUID productId = image.getProduct().getId();
+            if (image.isPrimary()) byProduct.put(productId, url); else byProduct.putIfAbsent(productId, url);
+        }
+        Map<UUID, String> result = new java.util.HashMap<>();
+        for (var line : count.getLines()) {
+            UUID variantId = line.getVariant().getId();
+            String url = byVariant.getOrDefault(variantId, byProduct.get(line.getVariant().getProduct().getId()));
+            if (url != null) result.put(variantId, url);
+        }
+        return result;
     }
 
     @PreAuthorize("hasAuthority('PERM_STOCK_COUNT') or hasAuthority('PERM_STOCK_ADJUST')")
@@ -52,7 +80,8 @@ public class StockCountController {
     @GetMapping("/{id}")
     @Transactional(readOnly = true)
     public StockCountDto get(@PathVariable UUID id, @AuthenticationPrincipal StaffUser staff) {
-        return StockCountDto.from(countService.get(id), canAdjust(staff));
+        StockCount count = countService.get(id);
+        return StockCountDto.from(count, canAdjust(staff), images(count));
     }
 
     @PreAuthorize("hasAuthority('PERM_STOCK_COUNT') or hasAuthority('PERM_STOCK_ADJUST')")
@@ -61,7 +90,27 @@ public class StockCountController {
     public StockCountDto create(@Valid @RequestBody CreateCountRequest request, @AuthenticationPrincipal StaffUser staff) {
         StockCount count = countService.create(
                 request.variantIds(), request.blind(), request.reason(), request.assignedTo(), staff.getId());
-        return StockCountDto.from(count, canAdjust(staff));
+        return StockCountDto.from(count, canAdjust(staff), images(count));
+    }
+
+    /** A stock take of the whole shop, some categories or some products (owner, 2026-10-26). */
+    @PreAuthorize("hasAuthority('PERM_STOCK_COUNT') or hasAuthority('PERM_STOCK_ADJUST')")
+    @PostMapping("/for-scope")
+    @Transactional
+    public StockCountDto createForScope(@RequestBody ScopeCountRequest request, @AuthenticationPrincipal StaffUser staff) {
+        StockCount count = countService.createForScope(request.everything(), request.categoryIds(), request.productIds(),
+                request.blind(), request.reason(), staff.getId());
+        return StockCountDto.from(count, canAdjust(staff), images(count));
+    }
+
+    /** Several lines at once ("set all its options to 20"). */
+    @PreAuthorize("hasAuthority('PERM_STOCK_COUNT') or hasAuthority('PERM_STOCK_ADJUST')")
+    @PutMapping("/{id}/lines")
+    @Transactional
+    public StockCountDto recordCounts(@PathVariable UUID id, @Valid @RequestBody RecordCountsRequest request,
+                                      @AuthenticationPrincipal StaffUser staff) {
+        StockCount count = countService.recordCounts(id, request.counted(), staff.getId());
+        return StockCountDto.from(count, canAdjust(staff), images(count));
     }
 
     @PreAuthorize("hasAuthority('PERM_STOCK_COUNT') or hasAuthority('PERM_STOCK_ADJUST')")
@@ -71,7 +120,7 @@ public class StockCountController {
                                       @Valid @RequestBody RecordCountRequest request,
                                       @AuthenticationPrincipal StaffUser staff) {
         StockCount count = countService.recordCount(id, variantId, request.countedQty(), request.note(), staff.getId());
-        return StockCountDto.from(count, canAdjust(staff));
+        return StockCountDto.from(count, canAdjust(staff), images(count));
     }
 
     @PreAuthorize("hasAuthority('PERM_STOCK_ADJUST')")

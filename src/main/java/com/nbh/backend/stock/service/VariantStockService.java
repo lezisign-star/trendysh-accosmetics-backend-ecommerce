@@ -122,6 +122,8 @@ public class VariantStockService {
         StockBalance locked = balanceRepository.lockByVariantIdAndAccount(variantId, StockAccount.SHOP).orElse(null);
         BigDecimal currentOnHand = locked != null ? locked.getOnHandQty() : BigDecimal.ZERO;
         BigDecimal delta = targetOnHand.subtract(currentOnHand);
+        // a number staff typed for this option is one they stand behind: it is counted from now on (V78)
+        variant.setStockBasis(com.nbh.backend.catalog.entity.StockBasis.COUNTED);
         if (delta.signum() == 0) {
             return new Result(currentOnHand, currentOnHand, null);
         }

@@ -25,7 +25,8 @@ ALTER TABLE package_extra_profession RENAME TO kit_extra_profession;
 ALTER TABLE package_component RENAME TO kit_component;
 ALTER TABLE product_package RENAME TO kit;
 
--- every migration from V76 on: later ones (V77: customers can always choose a package product's option) only change values
--- the old code reads as they are, and they all apply again, in order, when the new code comes back
+-- every migration from V76 on: later ones (V77: customers can always choose a package product's option; V78: stock basis and
+-- selling without a number, columns the old code never reads and V78 adds again only if missing) are left in place, and
+-- they all apply again, in order, when the new code comes back
 DELETE FROM flyway_schema_history WHERE version ~ '^[0-9]+$' AND version::int >= 76;
 COMMIT;

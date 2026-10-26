@@ -123,6 +123,38 @@ public class StockCountService {
         return saved;
     }
 
+    /**
+     * A stock take of a whole part of the shop (owner, 2026-10-26): every real option in the shop, or of these categories
+     * (subcategories included), or of these products. See {@link ProductVariantRepository#idsInScope}.
+     */
+    @Transactional
+    public StockCount createForScope(boolean everything, List<UUID> categoryIds, List<UUID> productIds, boolean blind,
+                                     String reason, UUID staffUserId) {
+        List<UUID> cats = categoryIds == null || categoryIds.isEmpty() ? List.of(NO_ID) : categoryIds;
+        List<UUID> prods = productIds == null || productIds.isEmpty() ? List.of(NO_ID) : productIds;
+        if (!everything && cats.get(0).equals(NO_ID) && prods.get(0).equals(NO_ID)) {
+            throw new IllegalArgumentException("Choose what to count: the whole shop, some categories or some products");
+        }
+        List<UUID> variantIds = variantRepository.idsInScope(everything, cats, prods);
+        if (variantIds.isEmpty()) {
+            throw new UnprocessableException("There is nothing to count in that choice");
+        }
+        return create(variantIds, blind, reason, null, staffUserId);
+    }
+
+    /** Stands in for an empty id list in a JPQL {@code IN} (it matches nothing). */
+    private static final UUID NO_ID = new UUID(0L, 0L);
+
+    /** Records several lines at once ("set all its options to 20"); each as {@link #recordCount} would. */
+    @Transactional
+    public StockCount recordCounts(UUID countId, Map<UUID, BigDecimal> countedByVariant, UUID staffUserId) {
+        StockCount count = get(countId);
+        for (Map.Entry<UUID, BigDecimal> e : countedByVariant.entrySet()) {
+            count = recordCount(countId, e.getKey(), e.getValue(), null, staffUserId);
+        }
+        return count;
+    }
+
     /** Records (or corrects) one line's counted quantity — any number of times while still DRAFT. */
     @Transactional
     public StockCount recordCount(UUID countId, UUID variantId, BigDecimal countedQty, String note, UUID staffUserId) {
@@ -211,8 +243,11 @@ public class StockCountService {
         document.setNotes(count.getReason() != null ? count.getReason() : ("Stock count " + count.getCountNo()));
 
         int lineNo = 1;
+        List<String> unknownCost = new ArrayList<>();
         for (StockCountLine line : countedLines) {
             UUID variantId = line.getVariant().getId();
+            // counted in a stock take: a number the shop stands behind from now on (V78), and so no longer "not tracked"
+            line.getVariant().setStockBasis(com.nbh.backend.catalog.entity.StockBasis.COUNTED);
             StockBalance balance = lockedBalances.get(variantId);
             BigDecimal currentOnHand = onHandOf(balance);
 
@@ -239,8 +274,10 @@ public class StockCountService {
                 BigDecimal resolvedCost = currentAvg != null && currentAvg.signum() > 0
                         ? currentAvg : line.getVariant().getStandardCost();
                 if (resolvedCost == null) {
-                    throw new UnprocessableException(line.getVariant().getSku()
-                            + ": a unit cost is required — no current average or standard cost to fall back on");
+                    // A shop-floor count must go through even where no cost was ever entered (owner, 2026-10-26: one
+                    // person counts and applies); it is valued at 0 and the document says so, as the stock list does.
+                    resolvedCost = BigDecimal.ZERO;
+                    unknownCost.add(line.getVariant().getSku());
                 }
                 docLine.setSourceAccount(StockAccount.ADJUSTMENT);
                 docLine.setTargetAccount(StockAccount.SHOP);
@@ -252,6 +289,12 @@ public class StockCountService {
             document.getLines().add(docLine);
         }
 
+        if (!unknownCost.isEmpty()) {
+            String skus = unknownCost.size() <= 10 ? String.join(", ", unknownCost)
+                    : String.join(", ", unknownCost.subList(0, 10)) + " and " + (unknownCost.size() - 10) + " more";
+            String note = document.getNotes() + " (cost not known, valued at 0: " + skus + ")";
+            document.setNotes(note.length() > 480 ? note.substring(0, 477) + "..." : note);
+        }
         StockDocument posted = document.getLines().isEmpty() ? null : postingService.post(document);
 
         count.setStatus(StockCountStatus.APPLIED);

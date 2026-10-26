@@ -73,6 +73,9 @@ public class CheckoutService {
     private final CustomerOrderRepository orderRepository;
     private final PaymentRecordRepository paymentRecordRepository;
     private final StockReservationService reservationService;
+    /** Optional so the unit tests can build this service by hand (then every option is tracked). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.stock.service.StockTrackingService stockTracking;
     private final OrderNoGenerator orderNoGenerator;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
@@ -296,9 +299,15 @@ public class CheckoutService {
         record ReservedComponent(ProductVariant variant, BigDecimal qty, StockReservation reservation, int position) {}
         java.util.Map<CartItem, StockReservation> reservationByCartItem = new java.util.LinkedHashMap<>();
         java.util.Map<CartItem, List<ReservedComponent>> componentsByCartItem = new java.util.LinkedHashMap<>();
+        // An option that is not tracked yet (no stock number, a "sell without stock" switch on) is sold without a hold: its
+        // line carries no reservation, so dispatch, cancelling and returns move no stock for it (StockTrackingService).
+        java.util.Set<java.util.UUID> untracked = stockTracking == null ? java.util.Set.of()
+                : stockTracking.untracked(targets.stream().map(t -> t.variant().getId()).toList());
         for (ReservationTarget target : targets) {
             StockReservation reservation;
-            try {
+            if (untracked.contains(target.variant().getId())) {
+                reservation = null;
+            } else try {
                 reservation = reservationService.reserve(
                         target.variant(), target.qty(),
                         StockReservation.ReservationSource.ONLINE_CART,
