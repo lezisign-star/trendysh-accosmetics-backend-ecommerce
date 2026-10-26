@@ -34,5 +34,5 @@ public class PackageComponent extends BaseEntity {
      * and its quantity never change. Off unless staff switch it on for this product (owner, 2026-10-23).
      */
     @Column(name = "customer_can_change", nullable = false)
-    private boolean customerCanChange = false;
+    private boolean customerCanChange = true;
 }

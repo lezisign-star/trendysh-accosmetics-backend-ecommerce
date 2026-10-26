@@ -22,7 +22,7 @@ public final class PackageDtos {
 
     /**
      * {@code customerCanChange} is whether a shopper may pick another colour or size of this product inside the package;
-     * left out it means no: swapping is off unless staff switch it on (owner, 2026-10-23).
+     * left out it means YES: the customer can always choose (owner, 2026-10-26, reversing 23 Oct's "off unless switched on").
      */
     public record ComponentInput(@NotNull UUID variantId, @NotBlank String qty, Boolean customerCanChange) {
         public ComponentInput(UUID variantId, String qty) {
@@ -30,7 +30,7 @@ public final class PackageDtos {
         }
 
         public boolean canChange() {
-            return Boolean.TRUE.equals(customerCanChange);
+            return !Boolean.FALSE.equals(customerCanChange);
         }
     }
 

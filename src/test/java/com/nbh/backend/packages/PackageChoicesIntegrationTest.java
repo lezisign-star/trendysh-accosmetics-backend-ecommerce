@@ -676,21 +676,22 @@ class PackageChoicesIntegrationTest {
     }
 
     @Test
-    void swappingIsOffUnlessStaffSwitchItOn() throws Exception {
-        Map<String, String> lashes = newProduct(unique("Off Lashes"), new String[]{"Ruby Red", "500"},
+    void theCustomerCanChooseEvenWhenStaffAddedOneParticularOption() throws Exception {
+        // owner, 2026-10-26: a product added to a package without saying anything lets the customer choose its colour or size
+        Map<String, String> lashes = newProduct(unique("Open Lashes"), new String[]{"Ruby Red", "500"},
                 new String[]{"Rose Pink", "650"});
         String red = lashes.get("Ruby Red"), pink = lashes.get("Rose Pink");
         receiveStock(Map.of(red, new BigDecimal("10"), pink, new BigDecimal("10")));
-        JsonNode pkg = ok(post("/api/v1/admin/packages"), packageBody(unique("Off Package"), newProfession(), newCategory(), "450",
+        JsonNode pkg = ok(post("/api/v1/admin/packages"), packageBody(unique("Open Package"), newProfession(), newCategory(), "450",
                 "{\"variantId\":\"" + red + "\",\"qty\":\"1\"}"));
-        assertThat(pkg.get("components").get(0).get("customerCanChange").asBoolean()).isFalse();
+        assertThat(pkg.get("components").get(0).get("customerCanChange").asBoolean()).isTrue();
 
         String slug = jdbc.queryForObject("SELECT slug FROM product WHERE id = ?::uuid", String.class, pkg.get("productId").asText());
         JsonNode page = json.readTree(mvc.perform(get("/api/v1/catalog/packages/" + slug)).andReturn().getResponse().getContentAsString());
-        assertThat(page.get("items").get(0).get("canChange").asBoolean()).isFalse();
-        MvcResult refused = cartRaw(post("/api/v1/cart/items"),
-                addBody(pkg.get("variantId").asText(), 1, Map.of(red, pink)), "off-" + UUID.randomUUID());
-        assertThat(refused.getResponse().getStatus()).isEqualTo(422);
+        assertThat(page.get("items").get(0).get("canChange").asBoolean()).isTrue();
+        MvcResult chosen = cartRaw(post("/api/v1/cart/items"),
+                addBody(pkg.get("variantId").asText(), 1, Map.of(red, pink)), "open-" + UUID.randomUUID());
+        assertThat(chosen.getResponse().getStatus()).as(chosen.getResponse().getContentAsString()).isEqualTo(200);
     }
 
     @Test

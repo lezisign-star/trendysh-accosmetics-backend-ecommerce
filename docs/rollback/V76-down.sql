@@ -7,8 +7,8 @@
 --  3. Deploy the old code.
 --
 -- What it does not do: it leaves the index and constraint names as V76 renamed them (Hibernate does not look at those names,
--- and V76 skips a rename whose target name is already taken, so applying V76 again afterwards works). It removes V76 from
--- Flyway's history, so the next deploy of the new code applies V76 again.
+-- and V76 skips a rename whose target name is already taken, so applying V76 again afterwards works). It removes V76 and every later
+-- migration from Flyway's history, so the next deploy of the new code applies them again.
 -- A package made after V76 gets the kit SKU prefix back too (KIT-n); orders keep the SKU they were placed with either way.
 -- Proven by PackageRenameRollbackTest: V76, this file, the old table and column names answering queries, then V76 again.
 BEGIN;
@@ -25,5 +25,7 @@ ALTER TABLE package_extra_profession RENAME TO kit_extra_profession;
 ALTER TABLE package_component RENAME TO kit_component;
 ALTER TABLE product_package RENAME TO kit;
 
-DELETE FROM flyway_schema_history WHERE version = '76';
+-- every migration from V76 on: later ones (V77: customers can always choose a package product's option) only change values
+-- the old code reads as they are, and they all apply again, in order, when the new code comes back
+DELETE FROM flyway_schema_history WHERE version ~ '^[0-9]+$' AND version::int >= 76;
 COMMIT;

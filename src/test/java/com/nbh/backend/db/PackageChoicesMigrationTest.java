@@ -147,11 +147,11 @@ class PackageChoicesMigrationTest {
     }
 
     @Test
-    void swappingIsOffForEveryExistingPackageProductUntilStaffSwitchItOn() throws Exception {
+    void afterV77TheCustomerCanChooseForEveryExistingPackageProduct() throws Exception {
         assertThat(one("SELECT count(*) FROM package_component")).isEqualTo("2");
-        assertThat(one("SELECT count(*) FROM package_component WHERE customer_can_change")).isEqualTo("0");
+        assertThat(one("SELECT count(*) FROM package_component WHERE customer_can_change")).isEqualTo("2");
         assertThat(one("SELECT column_default FROM information_schema.columns WHERE table_schema = current_schema()"
-                + " AND table_name = 'package_component' AND column_name = 'customer_can_change'")).isEqualTo("false");
+                + " AND table_name = 'package_component' AND column_name = 'customer_can_change'")).isEqualTo("true");
     }
 
     @Test

@@ -119,7 +119,7 @@ class PackageRenameRollbackTest {
         assertThat(one("SELECT sku FROM product_variant WHERE id = '" + newPackageVariant + "'")).isEqualTo("KIT-000200");
         assertThat(one("SELECT sku FROM product_variant WHERE id = '" + componentVariant + "'")).isEqualTo("GP-1");
         assertThat(one("SELECT to_regclass('" + SCHEMA + ".product_package') IS NULL")).isEqualTo("t");
-        assertThat(one("SELECT count(*) FROM flyway_schema_history WHERE version = '76'")).isEqualTo("0");
+        assertThat(one("SELECT count(*) FROM flyway_schema_history WHERE version IN ('76', '77')")).isEqualTo("0");
 
         // and the new code can come back: V76 is applied again, over the names the script left behind
         flyway("latest").migrate();
