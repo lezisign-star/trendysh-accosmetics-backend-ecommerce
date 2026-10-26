@@ -1,0 +1,112 @@
+# Nairobi Beauty Hub: the photo stack on the Contabo server (26 Oct 2026).
+#
+# Demarcation from every other project on this server (the Moments projects run here too):
+#  * its own private network `nbh_media`; the garage and imgproxy containers are on it and nowhere else;
+#  * exactly ONE container, `nbh-edge` (nginx), also joins Coolify's shared proxy network `coolify`, so Traefik can give it HTTPS;
+#  * its own folder (/opt/nbh/media) for configuration, data and cache; no Docker volume or network is shared with anything else;
+#  * a memory and CPU limit on every container, and capped logs, so nothing here can starve or fill up what else runs on the server;
+#  * every container carries the label com.nbh.project=nairobi-beauty-hub.
+# The edge is NOT announced to the shared proxy until EDGE_PUBLIC=true in /opt/nbh/media/.env (set once the DNS records exist),
+# so the proxy never asks Let's Encrypt for a certificate for a host name that does not point here yet.
+# Remove it all with:  cd /opt/nbh/media && docker compose down   (the data stays in /opt/nbh/media/data until it is deleted by hand).
+name: nbh-media
+
+services:
+  garage:
+    image: dxflrs/garage:v2.5.0
+    container_name: nbh-garage
+    restart: unless-stopped
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_DEFAULT_ACCESS_KEY}
+      GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_DEFAULT_SECRET_KEY}
+      GARAGE_DEFAULT_BUCKET: nbh-media
+    volumes:
+      - /opt/nbh/media/garage.toml:/etc/garage.toml:ro
+      - /opt/nbh/media/data/meta:/var/lib/garage/meta
+      - /opt/nbh/media/data/blocks:/var/lib/garage/data
+    networks: [nbh_media]
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    mem_limit: 1g
+    cpus: 1.0
+    logging: &logs
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    labels: &labels
+      com.nbh.project: nairobi-beauty-hub
+
+  imgproxy:
+    image: darthsim/imgproxy:v4.0.19
+    container_name: nbh-imgproxy
+    restart: unless-stopped
+    env_file:
+      - /opt/nbh/media/imgproxy.env
+    networks: [nbh_media]
+    depends_on: [garage]
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    mem_limit: 2g
+    cpus: 3.0
+    logging: *logs
+    labels: *labels
+
+  edge:
+    image: nginx:1.27-alpine
+    container_name: nbh-edge
+    restart: unless-stopped
+    # The configuration folder is mounted as a whole, not file by file: a file replaced on the host is not seen through a
+    # single-file mount (it keeps pointing at the old file). After changing a file in /opt/nbh/media/nginx:
+    #   docker exec nbh-edge nginx -t -c /etc/nginx/nbh/nginx.conf && docker exec nbh-edge nginx -s reload
+    command: ["nginx", "-c", "/etc/nginx/nbh/nginx.conf", "-g", "daemon off;"]
+    volumes:
+      - /opt/nbh/media/nginx:/etc/nginx/nbh:ro
+      - /opt/nbh/media/data/cache:/var/cache/nginx
+    networks: [nbh_media, coolify]
+    depends_on: [garage, imgproxy]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    mem_limit: 512m
+    cpus: 1.0
+    logging: *logs
+    labels:
+      com.nbh.project: nairobi-beauty-hub
+      # false until the DNS records exist (see the header)
+      traefik.enable: "${EDGE_PUBLIC:-false}"
+      traefik.docker.network: coolify
+      traefik.http.services.nbh-edge.loadbalancer.server.port: "80"
+      # https for each photo host, each with its own certificate (from the proxy's existing Let's Encrypt resolver)
+      traefik.http.routers.nbh-img.rule: Host(`img.trendyshaccosmetic.com`)
+      traefik.http.routers.nbh-img.entrypoints: https
+      traefik.http.routers.nbh-img.tls: "true"
+      traefik.http.routers.nbh-img.tls.certresolver: letsencrypt
+      traefik.http.routers.nbh-img.service: nbh-edge
+      traefik.http.routers.nbh-s3.rule: Host(`s3.trendyshaccosmetic.com`)
+      traefik.http.routers.nbh-s3.entrypoints: https
+      traefik.http.routers.nbh-s3.tls: "true"
+      traefik.http.routers.nbh-s3.tls.certresolver: letsencrypt
+      traefik.http.routers.nbh-s3.service: nbh-edge
+      # plain http only redirects to https
+      traefik.http.middlewares.nbh-edge-https.redirectscheme.scheme: https
+      traefik.http.routers.nbh-edge-http.rule: Host(`img.trendyshaccosmetic.com`) || Host(`s3.trendyshaccosmetic.com`)
+      traefik.http.routers.nbh-edge-http.entrypoints: http
+      traefik.http.routers.nbh-edge-http.middlewares: nbh-edge-https
+      traefik.http.routers.nbh-edge-http.service: nbh-edge
+
+networks:
+  nbh_media:
+    name: nbh_media
+  coolify:
+    external: true
