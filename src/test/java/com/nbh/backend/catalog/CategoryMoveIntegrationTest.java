@@ -38,8 +38,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@org.springframework.test.context.event.RecordApplicationEvents
 class CategoryMoveIntegrationTest {
 
+    @Autowired private org.springframework.test.context.event.ApplicationEvents applicationEvents;
     @Autowired private MockMvc mvc;
     @Autowired private ObjectMapper json;
     @Autowired private JwtService jwtService;
@@ -358,6 +360,51 @@ class CategoryMoveIntegrationTest {
         assertThat(moved.getCategory().getId().toString()).isEqualTo(to);
         // the product's own list was not touched: the variant was the only thing filed under the source
         assertThat(categoriesOf(product)).containsExactly(shared);
+    }
+
+    @Test
+    void aMoveTellsTheLiveScreensEvenWhenOnlyAVariantsOwnCategoryChanged() throws Exception {
+        String from = newCategory(unique("Live from"), null);
+        String to = newCategory(unique("Live to"), null);
+        String shared = newCategory(unique("Live shared"), null);
+        String product = newProduct(unique("Live product"), shared);
+        var variantId = variants.findByProductId(UUID.fromString(product)).get(0).getId();
+        new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(status -> {
+            var p = products.findById(UUID.fromString(product)).orElseThrow();
+            p.setCategoryVaries(true);
+            products.save(p);
+            var v = variants.findById(variantId).orElseThrow();
+            v.setCategory(categories.findById(UUID.fromString(from)).orElseThrow());
+            variants.save(v);
+        });
+
+        // a move that moves nothing is quiet: the product is not in "to", so moving it from there to "shared" changes nothing
+        applicationEvents.clear();
+        ok(post("/api/v1/products/bulk"), bulkMove(to, shared, product));
+        assertThat(topics()).as("nothing was in the source").isEmpty();
+
+        // the product's own row is not written (its categories are not touched), so only the explicit events can tell the screens
+        applicationEvents.clear();
+        ok(post("/api/v1/products/bulk"), bulkMove(from, to, product));
+        assertThat(topics()).contains(com.nbh.backend.common.event.DataChangedEvent.Topic.PRODUCTS,
+                com.nbh.backend.common.event.DataChangedEvent.Topic.CATALOG);
+        assertThat(variants.findById(variantId).orElseThrow().getCategory().getId().toString()).isEqualTo(to);
+    }
+
+    @Test
+    void aMovedProductsRowCarriesItsOwnChangeToo() throws Exception {
+        String from = newCategory(unique("Row from"), null);
+        String to = newCategory(unique("Row to"), null);
+        String product = newProduct(unique("Row product"), from);
+        applicationEvents.clear();
+        ok(post("/api/v1/categories/" + from + "/move-products"), "{\"toCategoryId\":\"" + to + "\"}");
+        assertThat(topics()).contains(com.nbh.backend.common.event.DataChangedEvent.Topic.PRODUCTS);
+        assertThat(categoriesOf(product)).containsExactly(to);
+    }
+
+    private java.util.List<com.nbh.backend.common.event.DataChangedEvent.Topic> topics() {
+        return applicationEvents.stream(com.nbh.backend.common.event.DataChangedEvent.class)
+                .map(com.nbh.backend.common.event.DataChangedEvent::topic).distinct().toList();
     }
 
     @Test
