@@ -3,12 +3,16 @@ package com.nbh.backend.order.service;
 import com.nbh.backend.order.entity.CustomerOrder;
 import com.nbh.backend.order.entity.OrderStatus;
 import com.nbh.backend.order.repository.CustomerOrderRepository;
+import com.nbh.backend.payment.entity.PaymentRecord;
+import com.nbh.backend.payment.repository.PaymentRecordRepository;
 import com.nbh.backend.stock.entity.StockReservation;
 import com.nbh.backend.stock.service.StockReservationService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -34,10 +38,15 @@ public class OrderExpiryService {
 
     private final CustomerOrderRepository orderRepository;
     private final StockReservationService reservationService;
+    private final PaymentRecordRepository paymentRecordRepository;
+    private final Clock clock;
 
-    public OrderExpiryService(CustomerOrderRepository orderRepository, StockReservationService reservationService) {
+    public OrderExpiryService(CustomerOrderRepository orderRepository, StockReservationService reservationService,
+                              PaymentRecordRepository paymentRecordRepository, Clock clock) {
         this.orderRepository = orderRepository;
         this.reservationService = reservationService;
+        this.paymentRecordRepository = paymentRecordRepository;
+        this.clock = clock;
     }
 
     public List<UUID> unpaidOrderIds() {
@@ -61,12 +70,26 @@ public class OrderExpiryService {
                 .filter(Objects::nonNull)
                 .map(StockReservation::getId)
                 .toList();
-        // No holds at all means nothing to lapse — leave it for staff rather than guess.
-        if (holds.isEmpty() || reservationService.anyActive(holds)) {
+        if (holds.isEmpty()) {
+            // Nothing held: every item was sold while its stock was not tracked yet (V78). Its payment window decides
+            // instead, the same one the holds were given and that a "I have paid" claim extends. No window at all is
+            // left for staff rather than guessed.
+            if (!paymentWindowPassed(orderId)) {
+                return false;
+            }
+        } else if (reservationService.anyActive(holds)) {
             return false;
         }
         order.setStatus(OrderStatus.EXPIRED);
         orderRepository.save(order);
         return true;
+    }
+
+    private boolean paymentWindowPassed(UUID orderId) {
+        List<Instant> windows = paymentRecordRepository.findByOrderId(orderId).stream()
+                .map(PaymentRecord::getExpiresAt)
+                .toList();
+        Instant now = Instant.now(clock);
+        return !windows.isEmpty() && windows.stream().allMatch(w -> w != null && w.isBefore(now));
     }
 }

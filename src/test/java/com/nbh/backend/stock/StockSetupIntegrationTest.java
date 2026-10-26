@@ -41,6 +41,7 @@ class StockSetupIntegrationTest {
     @Autowired private JwtService jwtService;
     @Autowired private StaffUserRepository staffUsers;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.nbh.backend.order.service.OrderExpiryService orderExpiry;
 
     private String token;
 
@@ -126,6 +127,15 @@ class StockSetupIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM customer_order_item WHERE variant_id = ?::uuid AND reservation_id IS NULL",
                 Integer.class, item.variantId())).isEqualTo(1);
         assertThat(onHand(item)).isEqualByComparingTo("0");
+
+        // with nothing held, the unpaid order lapses when its payment window does
+        UUID orderId = jdbc.queryForObject("SELECT order_id FROM customer_order_item WHERE variant_id = ?::uuid",
+                UUID.class, item.variantId());
+        assertThat(orderExpiry.expireIfLapsed(orderId)).as("window still open").isFalse();
+        jdbc.update("UPDATE payment_record SET expires_at = now() - interval '1 minute' WHERE order_id = ?", orderId);
+        assertThat(orderExpiry.expireIfLapsed(orderId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM customer_order WHERE id = ?", String.class, orderId))
+                .isEqualTo("EXPIRED");
 
         // a number for it makes it tracked like any other
         setStock(item, 3);
