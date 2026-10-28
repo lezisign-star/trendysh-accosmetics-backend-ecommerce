@@ -47,6 +47,11 @@ public interface PaymentClaimRepository extends JpaRepository<PaymentClaim, UUID
 
     boolean existsByPaymentIdAndStatus(UUID paymentId, PaymentClaim.ClaimStatus status);
 
+    /** An approved claim on another payment with this same code (an ending of five, typically). */
+    @EntityGraph(attributePaths = {"payment", "payment.order"})
+    Optional<PaymentClaim> findFirstByTransactionCodeIgnoreCaseAndStatusAndPaymentIdNot(
+            String transactionCode, PaymentClaim.ClaimStatus status, UUID paymentId);
+
     /** Same transaction code twice for one payment is a double-submit, not a second claim. */
     boolean existsByPaymentIdAndTransactionCodeIgnoreCase(UUID paymentId, String transactionCode);
 

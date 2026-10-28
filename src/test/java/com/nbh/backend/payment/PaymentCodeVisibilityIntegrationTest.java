@@ -190,8 +190,9 @@ class PaymentCodeVisibilityIntegrationTest {
     }
 
     @Test
-    void aCodeUnderSixCharactersIsRefusedAndNothingIsRecorded() throws Exception {
-        for (String tooShort : List.of("PAID", "ABC12", "   AB1  ", "")) {
+    void aCodeUnderFiveCharactersIsRefusedAndNothingIsRecorded() throws Exception {
+        // The last five characters are the floor (owner, 2026-10-28).
+        for (String tooShort : List.of("PAID", "ABC1", "   AB1  ", "")) {
             mvc.perform(post("/api/v1/payments/pay/" + orderNo + "/claim").param("ref", reference)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"transactionCode\":\"" + tooShort + "\",\"amount\":500}"))

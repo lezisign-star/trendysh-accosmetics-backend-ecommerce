@@ -154,6 +154,16 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "alert_acknowledged_by", length = 120)
     private String alertAcknowledgedBy;
 
+    /** What staff noted after calling the customer about paying ("called, will pay at 3pm"), who and when (V80). */
+    @Column(name = "chase_note", length = 300)
+    private String chaseNote;
+
+    @Column(name = "chase_note_by", length = 120)
+    private String chaseNoteBy;
+
+    @Column(name = "chase_note_at")
+    private Instant chaseNoteAt;
+
     /** The Terms of use and Privacy notice versions the shopper ticked at checkout, and when (V79); null for staff orders. */
     @Column(name = "terms_version", length = 20)
     private String termsVersion;

@@ -41,10 +41,13 @@ public class PaymentClaimService {
     /** Stops a bot or a confused customer flooding the review queue. */
     static final int MAX_PENDING_CLAIMS_PER_PAYMENT = 3;
     /**
-     * The shortest M-PESA code taken. Entering one is what finishes placing an order, and the owner chose to keep the
-     * rule loose (2026-10-06): it only keeps out an empty box or "paid", and staff check every code against the statement.
+     * The shortest M-PESA code taken: its last five characters (owner, 2026-10-28), the part of a code that differs most
+     * from one payment to the next. Staff check every code against the statement, where the order's own account
+     * reference and amount already tie the payment to the order; a customer may still send the whole code.
      */
-    static final int MIN_CODE_LENGTH = 6;
+    static final int MIN_CODE_LENGTH = 5;
+    /** A whole M-PESA code is 10 characters; anything this long or longer is taken as the whole code, not an ending. */
+    static final int FULL_CODE_LENGTH = 8;
 
     /**
      * Whether a customer may report paying an amount other than the order's, or from someone else's name. Off
@@ -154,7 +157,26 @@ public class PaymentClaimService {
 
     @Transactional
     public PaymentClaim approve(UUID claimId, String staffEmail, String note) {
+        return approve(claimId, staffEmail, note, null);
+    }
+
+    /**
+     * {@code fullCode} is the whole M-PESA code staff may type from the statement for the record (optional, owner
+     * 2026-10-28: one tap is enough). It must end with what the customer sent.
+     */
+    @Transactional
+    public PaymentClaim approve(UUID claimId, String staffEmail, String note, String fullCode) {
         PaymentClaim claim = lockPending(claimId);
+        String typed = fullCode == null ? "" : fullCode.trim().toUpperCase(Locale.ROOT);
+        if (!typed.isEmpty()) {
+            if (typed.length() < FULL_CODE_LENGTH || !typed.chars().allMatch(Character::isLetterOrDigit)) {
+                throw new IllegalArgumentException("Type the whole M-PESA code from the statement, or leave it empty");
+            }
+            if (!typed.endsWith(claim.getTransactionCode())) {
+                throw new IllegalArgumentException("The code " + typed + " does not end in " + claim.getTransactionCode()
+                        + ", which the customer sent. Check the statement again");
+            }
+        }
         PaymentRecord payment = claim.getPayment();
         // Approving marks the whole order paid, so when the customer reported a different amount the person
         // approving has to say what they agreed (balance in cash, part payment accepted) and it is kept.
@@ -167,7 +189,11 @@ public class PaymentClaimService {
         }
         // confirmSuccess is idempotent on an already-SUCCESS payment and throws (rolling this whole
         // approval back) if the hold already lapsed, in which case staff must re-check stock first.
-        paymentService.confirmSuccess(payment.getId(), claim.getTransactionCode(),
+        // The payment keeps a whole code as its reference, where "one code pays one order" is checked. Only the last five
+        // (the customer's, with nothing typed by staff) are not kept there: two different payments can share an ending.
+        String reference = !typed.isEmpty() ? typed
+                : claim.getTransactionCode().length() >= FULL_CODE_LENGTH ? claim.getTransactionCode() : null;
+        paymentService.confirmSuccess(payment.getId(), reference,
                 "{\"type\":\"claim_approved\",\"claimId\":\"" + claim.getId() + "\"}",
                 PaymentRecord.PaymentMethod.BANK);
         resolve(claim, PaymentClaim.ClaimStatus.APPROVED, staffEmail, note);

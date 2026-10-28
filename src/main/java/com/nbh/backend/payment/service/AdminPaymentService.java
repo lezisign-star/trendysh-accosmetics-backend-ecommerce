@@ -1,5 +1,6 @@
 package com.nbh.backend.payment.service;
 
+import com.nbh.backend.common.exception.NotFoundException;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.AwaitingPaymentDto;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.ClaimDto;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.CreditDto;
@@ -85,12 +86,46 @@ public class AdminPaymentService {
 
     @Transactional(readOnly = true)
     public List<ClaimDto> pendingClaims() {
-        return claimService.pending().stream().map(ClaimDto::from).toList();
+        return claimService.pending().stream().map(c -> ClaimDto.from(c, sameEndingOrderNo(c))).toList();
+    }
+
+    /**
+     * The order another payment with the same code ending was already approved for, if any. A customer may send only
+     * the last five characters (owner, 2026-10-28), which two different payments can share, so this is a reason for
+     * staff to look twice at the statement, not a refusal.
+     */
+    private String sameEndingOrderNo(PaymentClaim claim) {
+        UUID paymentId = claim.getPayment().getId();
+        String code = claim.getTransactionCode();
+        return paymentRecordRepository.findFirstByProviderReferenceEndingWithIgnoreCaseAndIdNot(code, paymentId)
+                .map(p -> p.getOrder().getOrderNo())
+                .or(() -> claimRepository
+                        .findFirstByTransactionCodeIgnoreCaseAndStatusAndPaymentIdNot(
+                                code, PaymentClaim.ClaimStatus.APPROVED, paymentId)
+                        .map(c -> c.getPayment().getOrder().getOrderNo()))
+                .orElse(null);
     }
 
     @Transactional
     public ClaimDto approveClaim(UUID id, String staffEmail, String note) {
-        return ClaimDto.from(claimService.approve(id, staffEmail, note));
+        return approveClaim(id, staffEmail, note, null);
+    }
+
+    @Transactional
+    public ClaimDto approveClaim(UUID id, String staffEmail, String note, String fullCode) {
+        return ClaimDto.from(claimService.approve(id, staffEmail, note, fullCode));
+    }
+
+    /** Keeps what staff noted after calling a customer about an unpaid order; an empty note clears it. */
+    @Transactional
+    public void saveChaseNote(UUID paymentId, String staffEmail, String note) {
+        PaymentRecord payment = paymentRecordRepository.findById(paymentId)
+                .orElseThrow(() -> new NotFoundException("No such payment: " + paymentId));
+        var order = payment.getOrder();
+        String text = note == null ? "" : note.trim();
+        order.setChaseNote(text.isEmpty() ? null : text);
+        order.setChaseNoteBy(text.isEmpty() ? null : staffEmail);
+        order.setChaseNoteAt(text.isEmpty() ? null : Instant.now(clock));
     }
 
     @Transactional

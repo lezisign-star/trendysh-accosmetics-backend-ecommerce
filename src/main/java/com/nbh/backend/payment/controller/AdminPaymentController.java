@@ -2,6 +2,7 @@ package com.nbh.backend.payment.controller;
 
 import com.nbh.backend.payment.dto.AdminPaymentDtos.AllocateRequest;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.AwaitingPaymentDto;
+import com.nbh.backend.payment.dto.AdminPaymentDtos.ChaseNoteRequest;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.ClaimDto;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.CreditDto;
 import com.nbh.backend.payment.dto.AdminPaymentDtos.RecordCreditRequest;
@@ -50,7 +51,14 @@ public class AdminPaymentController {
     @PostMapping("/claims/{id}/approve")
     public ClaimDto approve(@PathVariable UUID id, @AuthenticationPrincipal StaffUser staff,
                             @Valid @RequestBody(required = false) ResolveRequest body) {
-        return service.approveClaim(id, staff.getEmail(), body == null ? null : body.note());
+        return service.approveClaim(id, staff.getEmail(), body == null ? null : body.note(),
+                body == null ? null : body.fullCode());
+    }
+
+    @PostMapping("/{paymentId}/chase-note")
+    public void chaseNote(@PathVariable UUID paymentId, @AuthenticationPrincipal StaffUser staff,
+                          @Valid @RequestBody ChaseNoteRequest body) {
+        service.saveChaseNote(paymentId, staff.getEmail(), body.note());
     }
 
     @PostMapping("/claims/{id}/reject")

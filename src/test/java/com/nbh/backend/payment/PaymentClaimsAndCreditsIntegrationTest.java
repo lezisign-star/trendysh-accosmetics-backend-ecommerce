@@ -8,6 +8,7 @@ import com.nbh.backend.payment.entity.BankCredit;
 import com.nbh.backend.payment.entity.PaymentClaim;
 import com.nbh.backend.payment.entity.PaymentRecord;
 import com.nbh.backend.payment.repository.PaymentRecordRepository;
+import com.nbh.backend.payment.service.AdminPaymentService;
 import com.nbh.backend.payment.service.BankCreditService;
 import com.nbh.backend.payment.service.PaymentClaimService;
 import com.nbh.backend.payment.service.PaymentReferenceGenerator;
@@ -54,6 +55,7 @@ class PaymentClaimsAndCreditsIntegrationTest {
     @Autowired private PaymentClaimService claimService;
     @Autowired private BankCreditService creditService;
     @Autowired private PaymentService paymentService;
+    @Autowired private AdminPaymentService adminPaymentService;
 
     private String orderNo;
     private String reference;
@@ -124,6 +126,59 @@ class PaymentClaimsAndCreditsIntegrationTest {
     void aClaimForTheWrongReferenceIs404() throws Exception {
         mvc.perform(post("/api/v1/payments/pay/" + orderNo + "/claim").param("ref", "BCDFGH0")
                 .contentType(MediaType.APPLICATION_JSON).content(claimBody(uniq("QW")))).andExpect(status().isNotFound());
+    }
+
+    private String lastFive() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 5).toUpperCase();
+    }
+
+    /** Owner, 2026-10-28: the last five characters of the M-PESA code are enough; staff confirm in one tap. */
+    @Test
+    void theLastFiveCharactersAreTakenAndOneTapApprovalKeepsNoPartialCodeAsTheReference() throws Exception {
+        String ending = lastFive();
+        mvc.perform(post("/api/v1/payments/pay/" + orderNo + "/claim").param("ref", reference)
+                        .contentType(MediaType.APPLICATION_JSON).content(claimBody(ending)))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/payments/pay/" + orderNo + "/claim").param("ref", reference)
+                        .contentType(MediaType.APPLICATION_JSON).content(claimBody("AB12")))
+                .andExpect(status().isBadRequest());
+
+        PaymentClaim claim = claimService.pending().stream()
+                .filter(c -> orderNo.equals(c.getPayment().getOrder().getOrderNo())).findFirst().orElseThrow();
+        claimService.approve(claim.getId(), "staff@example.com", null);
+
+        assertEquals(OrderStatus.PAID, orderRepository.findByOrderNo(orderNo).orElseThrow().getStatus());
+        // Two payments can share an ending, so five characters never become the "one code, one order" reference.
+        assertNull(paymentRecordRepository.findById(payment.getId()).orElseThrow().getProviderReference());
+    }
+
+    @Test
+    void aWholeCodeStaffTypeMustEndWithTheCustomersFiveAndIsKeptAsTheReference() {
+        String ending = lastFive();
+        PaymentClaim claim = claimService.submit(orderNo, reference, ending, new BigDecimal("500"), null, "Jane");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> claimService.approve(claim.getId(), "staff@example.com", null, "SGH7AZZZZZ"));
+        String whole = "SGH7A" + ending;
+        claimService.approve(claim.getId(), "staff@example.com", null, whole.toLowerCase());
+
+        assertEquals(whole, paymentRecordRepository.findById(payment.getId()).orElseThrow().getProviderReference());
+    }
+
+    @Test
+    void aPendingFiveCharacterClaimSharingAnEndingWithAnApprovedOneNamesThatOrder() {
+        String ending = lastFive();
+        PaymentClaim first = claimService.submit(orderNo, reference, ending, new BigDecimal("500"), null, "Jane");
+        claimService.approve(first.getId(), "staff@example.com", null);
+
+        String otherNo = "CLAIM-" + UUID.randomUUID().toString().substring(0, 8);
+        String otherRef = referenceGenerator.generate();
+        newBankPayment(otherNo, otherRef);
+        claimService.submit(otherNo, otherRef, ending, new BigDecimal("500"), null, "Ann");
+
+        var listed = adminPaymentService.pendingClaims().stream()
+                .filter(c -> otherNo.equals(c.orderNo())).findFirst().orElseThrow();
+        assertEquals(orderNo, listed.sameEndingOrderNo());
     }
 
     @Test

@@ -30,6 +30,9 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, UU
     /** Another payment (not {@code id}) carrying this code, ignoring case: the "already used elsewhere" check. */
     Optional<PaymentRecord> findFirstByProviderReferenceIgnoreCaseAndIdNot(String providerReference, UUID id);
 
+    /** Another payment (not {@code id}) whose code ends with these characters: a claim of only the last five is checked against it. */
+    Optional<PaymentRecord> findFirstByProviderReferenceEndingWithIgnoreCaseAndIdNot(String ending, UUID id);
+
     /**
      * Staff "awaiting payment" queue: bank orders not yet paid, oldest first (order fetched, no N+1).
      * Includes orders that EXPIRED within the last window ({@code expiredSince}) — a customer can still
