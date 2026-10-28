@@ -23,6 +23,9 @@ import java.math.BigDecimal;
  *
  * <p>{@code deliveryDetails} are the optional extras about a delivery (where exactly, how to find it, who receives it,
  * when). They are kept only for a delivery, and only the ones that suit its {@code deliveryMethod}.
+ *
+ * <p>{@code termsVersion}/{@code privacyVersion} are the versions of the Terms of use and the Privacy notice the shopper
+ * ticked at checkout (the date each page was last changed). Optional, so an older client that sends neither still orders.
  */
 public record CheckoutRequest(
         @NotBlank @Size(max = 200) String customerName,
@@ -38,19 +41,21 @@ public record CheckoutRequest(
         /** Who the rider should call at drop-off, if different from {@code guestPhone}. Optional — null means "same as above". */
         String deliveryContactPhone,
         /** Optional extras about a delivery; null means the customer gave none. */
-        @Valid DeliveryDetails deliveryDetails
+        @Valid DeliveryDetails deliveryDetails,
+        @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}", message = "termsVersion must be a date like 2026-10-28") String termsVersion,
+        @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}", message = "privacyVersion must be a date like 2026-10-28") String privacyVersion
 ) {
     /** The request as it was before the drop-off point existed: delivery arranged by phone. */
     public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
                            String deliveryAddress, String deliveryMethod) {
-        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod, null, null, null, null, null, null);
+        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod, null, null, null, null, null, null, null, null);
     }
 
     /** The request as it was before the shown-price check existed. */
     public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
                            String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng) {
         this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
-                dropoffLat, dropoffLng, null, null, null, null);
+                dropoffLat, dropoffLng, null, null, null, null, null, null);
     }
 
     /** The request as it was before the delivery-contact phone existed. */
@@ -58,7 +63,7 @@ public record CheckoutRequest(
                            String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng,
                            BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee) {
         this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
-                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, null, null);
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, null, null, null, null);
     }
 
     /** The request as it was before the optional delivery details existed. */
@@ -66,6 +71,15 @@ public record CheckoutRequest(
                            String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng,
                            BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee, String deliveryContactPhone) {
         this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
-                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, deliveryContactPhone, null);
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, deliveryContactPhone, null, null, null);
+    }
+
+    /** The request as it was before the Terms of use and Privacy notice boxes existed. */
+    public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
+                           String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng,
+                           BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee, String deliveryContactPhone,
+                           DeliveryDetails deliveryDetails) {
+        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, deliveryContactPhone, deliveryDetails, null, null);
     }
 }

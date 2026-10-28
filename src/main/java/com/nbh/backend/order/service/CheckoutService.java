@@ -200,6 +200,12 @@ public class CheckoutService {
             order.setAlertAcknowledgedAt(Instant.now(clock));
             order.setAlertAcknowledgedBy(placement.staffEmail());
         }
+        // What the shopper agreed to with the two boxes at checkout. Staff orders go through a form without them.
+        if (!placement.byStaff() && (request.termsVersion() != null || request.privacyVersion() != null)) {
+            order.setTermsVersion(request.termsVersion());
+            order.setPrivacyVersion(request.privacyVersion());
+            order.setPoliciesAcceptedAt(Instant.now(clock));
+        }
         order.setFulfilmentType(request.fulfilmentType());
         order.setDeliveryAddress(request.deliveryAddress());
         // Blank/same-as-main-phone is stored as null -- TumaBodaBookingService falls back to

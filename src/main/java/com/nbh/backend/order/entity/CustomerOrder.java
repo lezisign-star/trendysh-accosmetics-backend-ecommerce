@@ -154,6 +154,16 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "alert_acknowledged_by", length = 120)
     private String alertAcknowledgedBy;
 
+    /** The Terms of use and Privacy notice versions the shopper ticked at checkout, and when (V79); null for staff orders. */
+    @Column(name = "terms_version", length = 20)
+    private String termsVersion;
+
+    @Column(name = "privacy_version", length = 20)
+    private String privacyVersion;
+
+    @Column(name = "policies_accepted_at")
+    private Instant policiesAcceptedAt;
+
     /** When staff told the shopper which transporter has it and where to collect; null until they have (V59). */
     @Column(name = "customer_informed_at")
     private Instant customerInformedAt;

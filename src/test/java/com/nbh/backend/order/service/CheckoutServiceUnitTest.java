@@ -345,6 +345,31 @@ class CheckoutServiceUnitTest {
     }
 
     @Test
+    void theTermsAndPrivacyVersionsTheShopperTickedAreStoredWithTheOrder() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var request = new CheckoutRequest("Test Customer", "n@example.com", "254700000000", FulfilmentType.PICKUP,
+                null, null, null, null, null, null, null, null, "2026-10-28", "2026-10-27");
+        var order = checkoutService.checkout(SESSION_ID, request).order();
+
+        assertThat(order.getTermsVersion()).isEqualTo("2026-10-28");
+        assertThat(order.getPrivacyVersion()).isEqualTo("2026-10-27");
+        assertThat(order.getPoliciesAcceptedAt()).isNotNull();
+    }
+
+    @Test
+    void anOrderFromAnOlderClientWithoutTheBoxesStoresNoConsent() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+
+        var order = checkoutService.checkout(SESSION_ID, request()).order();
+
+        assertThat(order.getTermsVersion()).isNull();
+        assertThat(order.getPoliciesAcceptedAt()).isNull();
+    }
+
+    @Test
     void deliveryMethodIsDroppedForPickupOrders() {
         when(cartItemRepository.findByCartId(cart.getId()))
                 .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
