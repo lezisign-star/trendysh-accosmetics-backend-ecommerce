@@ -42,6 +42,13 @@ public class CatalogService {
     private final ProductOptionValueRepository optionRepository;
     private final Clock clock;
 
+    /** How far back a card's recent sales go. */
+    static final java.time.Duration RECENT_SALES = java.time.Duration.ofDays(30);
+
+    /** Sales before this never count as recent: the real shop opened on Monday 2 November 2026, 07:00 Nairobi. */
+    @org.springframework.beans.factory.annotation.Value("${app.shop.sales-count-from:2026-11-02T04:00:00Z}")
+    private Instant popularSince = Instant.parse("2026-11-02T04:00:00Z");
+
     /** The deal pictures staff chose (owner, 2026-10-24); optional so hand-built instances in unit tests still work. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.nbh.backend.dealphotos.DealPhotoService dealPhotos;
@@ -98,12 +105,13 @@ public class CatalogService {
         Map<UUID, Cover> imageByVariant = imageByVariant(pageVariants);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(variantIds);
+        Map<UUID, BigDecimal> recentByVariant = recentSoldByVariant(variantIds);
         Map<UUID, BigDecimal> availableByVariant = availability(pageVariants);
         Map<UUID, String> dealPhotoByVariant = dealPhotoUrls(variantIds);
         PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         return page.map(v -> toCard(v, activeCampaign, sellableCountByProduct, imageByVariant, ratingByProduct,
-                soldByVariant, availableByVariant, dealPhotoByVariant));
+                soldByVariant, recentByVariant, availableByVariant, dealPhotoByVariant));
     }
 
     /** A single variant's own product-detail page — its price, its siblings, its own + the product's description. */
@@ -126,13 +134,14 @@ public class CatalogService {
         Map<UUID, Cover> imageByVariant = imageByVariant(siblings);
         Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct = ratingSummaries(productIds);
         Map<UUID, BigDecimal> soldByVariant = soldSummariesByVariant(siblingIds);
+        Map<UUID, BigDecimal> recentByVariant = recentSoldByVariant(siblingIds);
         Map<UUID, BigDecimal> availableByVariant = availability(siblings);
         Map<UUID, String> dealPhotoByVariant = dealPhotoUrls(siblingIds);
         PromoCampaign activeCampaign = promoCampaignService.getActiveOrNull();
 
         List<CatalogVariantCardDto> siblingCards = siblings.stream()
                 .map(v -> toCard(v, activeCampaign, sellableCountByProduct, imageByVariant, ratingByProduct,
-                        soldByVariant, availableByVariant, dealPhotoByVariant))
+                        soldByVariant, recentByVariant, availableByVariant, dealPhotoByVariant))
                 .toList();
         CatalogVariantCardDto card = siblingCards.stream()
                 .filter(c -> c.variantId().equals(variantId))
@@ -208,7 +217,8 @@ public class CatalogService {
     private CatalogVariantCardDto toCard(ProductVariant v, PromoCampaign activeCampaign,
                                           Map<UUID, Long> sellableCountByProduct, Map<UUID, Cover> imageByVariant,
                                           Map<UUID, ProductReviewRepository.RatingSummary> ratingByProduct,
-                                          Map<UUID, BigDecimal> soldByVariant, Map<UUID, BigDecimal> availableByVariant,
+                                          Map<UUID, BigDecimal> soldByVariant, Map<UUID, BigDecimal> recentByVariant,
+                                          Map<UUID, BigDecimal> availableByVariant,
                                           Map<UUID, String> dealPhotoByVariant) {
         Product p = v.getProduct();
         long sellableCount = sellableCountByProduct.getOrDefault(p.getId(), 1L);
@@ -244,7 +254,8 @@ public class CatalogService {
                 v.getSizePosition(), p.getBrand() == null ? null : p.getBrand().getName(),
                 cover == null ? null : cover.focus(), v.isPackage(),
                 // A deal picture staff chose, only while the product's own flash deal is live (not a site-wide campaign).
-                price.source() == EffectivePriceResolver.Source.PRODUCT_DEAL ? dealPhotoByVariant.get(v.getId()) : null);
+                price.source() == EffectivePriceResolver.Source.PRODUCT_DEAL ? dealPhotoByVariant.get(v.getId()) : null,
+                recentByVariant.getOrDefault(v.getId(), BigDecimal.ZERO));
     }
 
     /** An option's cover photo and where on it the part that changes sits ("x% y%", V66; null = the middle). */
@@ -321,6 +332,19 @@ public class CatalogService {
     private Map<UUID, BigDecimal> soldSummariesByVariant(List<UUID> variantIds) {
         if (variantIds.isEmpty()) return Map.of();
         return saleEventRepository.aggregateUnitsSoldByVariant(variantIds).stream()
+                .collect(Collectors.toMap(ProductSaleEventRepository.VariantSoldSummary::getVariantId,
+                        ProductSaleEventRepository.VariantSoldSummary::getTotalQty));
+    }
+
+    /**
+     * Units sold per variant in the last {@link #RECENT_SALES} days, counting nothing before {@code popularSince}, the
+     * moment the shop opened (owner, 2026-10-28: test orders before the launch are not sales).
+     */
+    private Map<UUID, BigDecimal> recentSoldByVariant(List<UUID> variantIds) {
+        if (variantIds.isEmpty()) return Map.of();
+        Instant windowStart = Instant.now(clock).minus(RECENT_SALES);
+        Instant since = windowStart.isAfter(popularSince) ? windowStart : popularSince;
+        return saleEventRepository.aggregateUnitsSoldByVariantSince(variantIds, since).stream()
                 .collect(Collectors.toMap(ProductSaleEventRepository.VariantSoldSummary::getVariantId,
                         ProductSaleEventRepository.VariantSoldSummary::getTotalQty));
     }

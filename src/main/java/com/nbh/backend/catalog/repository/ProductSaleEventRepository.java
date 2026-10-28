@@ -49,6 +49,16 @@ public interface ProductSaleEventRepository extends JpaRepository<ProductSaleEve
         BigDecimal getTotalQty();
     }
 
+    /** Same as {@link #aggregateUnitsSoldByVariant}, counting only sales since {@code since} (the card's recent sales). */
+    @Query("""
+            SELECT s.variant.id AS variantId, COALESCE(SUM(s.qty), 0) AS totalQty
+            FROM ProductSaleEvent s
+            WHERE s.variant.id IN :variantIds AND s.occurredAt >= :since
+            GROUP BY s.variant.id
+            """)
+    List<VariantSoldSummary> aggregateUnitsSoldByVariantSince(@Param("variantIds") List<UUID> variantIds,
+                                                              @Param("since") Instant since);
+
     /** Units sold per variant since {@code since} — the demand the stock forecast averages over. */
     @Query("""
             SELECT s.variant.id AS variantId, COALESCE(SUM(s.qty), 0) AS totalQty

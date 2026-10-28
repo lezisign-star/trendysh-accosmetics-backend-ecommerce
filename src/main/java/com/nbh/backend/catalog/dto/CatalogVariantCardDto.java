@@ -85,7 +85,12 @@ public record CatalogVariantCardDto(
         /** A package's own line: it has its own page ({@code /packages/{productSlug}}), not a product page. */
         boolean isPackage,
         /** The promotional picture staff chose for its flash deal, while the deal is live; null otherwise (owner, 2026-10-24). */
-        String dealImageUrl
+        String dealImageUrl,
+        /**
+         * Units sold in the last 30 days, counting nothing before the shop opened (owner, 2026-10-28: "Popular" shows only
+         * real sales, and test orders before the launch never count). {@code unitsSold} stays the all-time figure.
+         */
+        BigDecimal recentUnitsSold
 ) {
     /** True for a variant name that adds no information beyond the product name itself. */
     public static boolean isMeaninglessName(String variantName) {
