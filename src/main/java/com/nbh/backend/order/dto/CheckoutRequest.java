@@ -43,8 +43,24 @@ public record CheckoutRequest(
         /** Optional extras about a delivery; null means the customer gave none. */
         @Valid DeliveryDetails deliveryDetails,
         @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}", message = "termsVersion must be a date like 2026-10-28") String termsVersion,
-        @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}", message = "privacyVersion must be a date like 2026-10-28") String privacyVersion
+        @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}", message = "privacyVersion must be a date like 2026-10-28") String privacyVersion,
+        /** A Metro delivery: the operator chosen and where it should be dropped (V82). Optional. */
+        @Valid Transport transport,
+        /** What the checkout keeps for a signed-in shopper's next order, as it sent it; at most 4,000 characters. */
+        @Size(max = 4000) String deliveryProfile
 ) {
+    public record Transport(java.util.UUID operatorId, @Size(max = 200) String stop) {}
+
+    /** The request as it was before Metro operators and the saved delivery existed. */
+    public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
+                           String deliveryAddress, String deliveryMethod, BigDecimal dropoffLat, BigDecimal dropoffLng,
+                           BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee, String deliveryContactPhone,
+                           DeliveryDetails deliveryDetails, String termsVersion, String privacyVersion) {
+        this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, deliveryContactPhone, deliveryDetails,
+                termsVersion, privacyVersion, null, null);
+    }
+
     /** The request as it was before the drop-off point existed: delivery arranged by phone. */
     public CheckoutRequest(String customerName, String guestEmail, String guestPhone, FulfilmentType fulfilmentType,
                            String deliveryAddress, String deliveryMethod) {
@@ -80,6 +96,7 @@ public record CheckoutRequest(
                            BigDecimal expectedSubtotal, BigDecimal expectedDeliveryFee, String deliveryContactPhone,
                            DeliveryDetails deliveryDetails) {
         this(customerName, guestEmail, guestPhone, fulfilmentType, deliveryAddress, deliveryMethod,
-                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, deliveryContactPhone, deliveryDetails, null, null);
+                dropoffLat, dropoffLng, expectedSubtotal, expectedDeliveryFee, deliveryContactPhone, deliveryDetails, null, null,
+                null, null);
     }
 }

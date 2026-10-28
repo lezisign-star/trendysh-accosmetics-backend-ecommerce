@@ -50,6 +50,13 @@ public class CustomerAccount extends BaseEntity implements UserDetails {
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
 
+    /**
+     * The delivery this shopper last used at checkout, as the checkout sent it (V82, owner 2026-10-28: the next order is
+     * filled in for them). Only read back by the shopper's own checkout.
+     */
+    @Column(name = "saved_delivery", columnDefinition = "TEXT")
+    private String savedDelivery;
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority(AUTHORITY));

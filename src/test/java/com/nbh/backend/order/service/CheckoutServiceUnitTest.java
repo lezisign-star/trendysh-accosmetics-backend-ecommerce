@@ -344,6 +344,33 @@ class CheckoutServiceUnitTest {
         verify(orderRepository, never()).save(any());
     }
 
+    /** Owner, 2026-10-28: a Metro order carries the operator, the tidied location and its likely fare; the delivery is saved. */
+    @Test
+    void aMetroOrderCarriesTheOperatorTheTidiedLocationAndItsFareAndTheDeliveryIsSavedForNextTime() {
+        when(cartItemRepository.findByCartId(cart.getId()))
+                .thenReturn(List.of(cartItem(new BigDecimal("500.00"), BigDecimal.ONE, new BigDecimal("0.1600"), false)));
+        var transport = org.mockito.Mockito.mock(com.nbh.backend.delivery.transport.TransportService.class);
+        var accounts = org.mockito.Mockito.mock(com.nbh.backend.customer.repository.CustomerAccountRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(checkoutService, "transport", transport);
+        org.springframework.test.util.ReflectionTestUtils.setField(checkoutService, "customerAccounts", accounts);
+        UUID operatorId = UUID.randomUUID();
+        when(transport.resolveForOrder(operatorId, "kencom"))
+                .thenReturn(new com.nbh.backend.delivery.transport.TransportService.Resolved(
+                        operatorId, "Super Metro", "Kencom Stage", new BigDecimal("150"), new BigDecimal("200")));
+        var customer = new com.nbh.backend.customer.entity.CustomerAccount();
+        customer.setId(UUID.randomUUID());
+
+        var request = new CheckoutRequest("Test Customer", "n@example.com", "254700000000",
+                FulfilmentType.DELIVERY_COURIER, "Super Metro — kencom", "MATATU", null, null, null, null, null, null,
+                null, null, new CheckoutRequest.Transport(operatorId, "kencom"), "{\"mode\":\"metro\"}");
+        var order = checkoutService.checkout(SESSION_ID, request, customer, CheckoutService.Placement.SHOPPER).order();
+
+        assertThat(order.getDeliveryAddress()).isEqualTo("Super Metro — Kencom Stage");
+        assertThat(order.getTransportOperatorId()).isEqualTo(operatorId);
+        assertThat(order.getDeliveryFareMin()).isEqualByComparingTo("150");
+        verify(accounts).saveDelivery(customer.getId(), "{\"mode\":\"metro\"}");
+    }
+
     @Test
     void theTermsAndPrivacyVersionsTheShopperTickedAreStoredWithTheOrder() {
         when(cartItemRepository.findByCartId(cart.getId()))

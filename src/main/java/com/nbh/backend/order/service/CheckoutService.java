@@ -81,6 +81,11 @@ public class CheckoutService {
     private com.nbh.backend.stock.service.StockShortfallService shortfalls;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.nbh.backend.stock.service.StockAvailabilityService availability;
+    /** Optional for the same reason: Metro operators and their drop-off locations (V82). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.delivery.transport.TransportService transport;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.customer.repository.CustomerAccountRepository customerAccounts;
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CheckoutService.class);
     private final OrderNoGenerator orderNoGenerator;
     private final Clock clock;
@@ -230,6 +235,25 @@ public class CheckoutService {
                         ? request.deliveryDetails().cleanedFor(request.deliveryMethod())
                         : null,
                 order);
+        // A Metro (V82): the operator chosen and where it is dropped, tidied and kept for the next shopper of that
+        // operator, with the likely fare the shopper was shown (paid to the conductor on delivery).
+        if (transport != null && request.transport() != null
+                && request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER && "MATATU".equals(request.deliveryMethod())) {
+            var resolved = transport.resolveForOrder(request.transport().operatorId(), request.transport().stop());
+            if (resolved != null) {
+                order.setTransportOperatorId(resolved.operatorId());
+                order.setDeliveryFareMin(resolved.fareMin());
+                order.setDeliveryFareMax(resolved.fareMax());
+                if (resolved.stopName() != null) {
+                    order.setDeliveryAddress(resolved.operatorName() + " — " + resolved.stopName());
+                }
+            }
+        }
+        // A signed-in shopper's next order starts from this one's delivery (owner, 2026-10-28).
+        if (customer != null && !placement.byStaff() && customerAccounts != null
+                && request.deliveryProfile() != null && !request.deliveryProfile().isBlank()) {
+            customerAccounts.saveDelivery(customer.getId(), request.deliveryProfile());
+        }
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(BigDecimal.ZERO);
         order.setVatTotal(BigDecimal.ZERO);

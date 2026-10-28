@@ -59,7 +59,10 @@ public record AdminOrderDetailDto(
         /** The member of staff who entered this order for a customer; null for an order the customer placed. */
         String placedBy,
         /** Lines whose price staff changed while entering the order (V72), with the reason and the verbal OK; empty for none. */
-        List<PriceChangeDtos.PriceChangeView> priceChanges
+        List<PriceChangeDtos.PriceChangeView> priceChanges,
+        /** A Metro's likely fare the shopper was shown, paid to the conductor (V82); null when none was known. */
+        java.math.BigDecimal deliveryFareMin,
+        java.math.BigDecimal deliveryFareMax
 ) {
     /**
      * Who the order is attached to, so staff can see at a glance whether it counts toward a customer's account
@@ -170,7 +173,8 @@ public record AdminOrderDetailDto(
                 Account.from(o.getCustomerAccount()),
                 claims.stream().map(Claim::from).toList(),
                 o.getPlacedBy(),
-                List.of());
+                List.of(),
+                o.getDeliveryFareMin(), o.getDeliveryFareMax());
     }
 
     /** The same order with the price changes recorded on it (kept in their own table, so the factories above leave them out). */
@@ -179,6 +183,6 @@ public record AdminOrderDetailDto(
                 guestPhone, deliveryAddress, deliveryContactPhone, deliveryDetails, subtotal, vatTotal, deliveryFee,
                 grandTotal, createdAt, placedAt, transporterName, transporterPhone, agreedDeliveryPrice, handoffStage,
                 handoffReference, handoffNote, customerInformedAt, tumaboda, items, payments, account, claims, placedBy,
-                changes);
+                changes, deliveryFareMin, deliveryFareMax);
     }
 }

@@ -154,6 +154,16 @@ public class CustomerOrder extends BaseEntity {
     @Column(name = "alert_acknowledged_by", length = 120)
     private String alertAcknowledgedBy;
 
+    /** The Metro operator the shopper chose and the likely fare they were shown, paid to the conductor (V82). */
+    @Column(name = "transport_operator_id")
+    private java.util.UUID transportOperatorId;
+
+    @Column(name = "delivery_fare_min", precision = 10, scale = 2)
+    private BigDecimal deliveryFareMin;
+
+    @Column(name = "delivery_fare_max", precision = 10, scale = 2)
+    private BigDecimal deliveryFareMax;
+
     /** What staff noted after calling the customer about paying ("called, will pay at 3pm"), who and when (V80). */
     @Column(name = "chase_note", length = 300)
     private String chaseNote;
