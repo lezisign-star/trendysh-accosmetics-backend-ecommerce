@@ -9,12 +9,14 @@ public record DataChangedEvent(Topic topic) {
     public enum Topic {
         DELIVERY_PLACES, DELIVERY_SUGGESTIONS, PRODUCTS, CATALOG, STOCK, IMAGE_CLEANUP, ORDER_ALERTS,
         /** Variant generation jobs (V64): progress, pauses, finishes. Staff only. */
-        VARIANT_JOBS;
+        VARIANT_JOBS,
+        /** The critical alerts banner (V81: a customer could not order). Staff only. */
+        CRITICAL_ALERTS;
 
         /** Whether storefront visitors, not just staff, should be told. */
         public boolean isPublic() {
             return this != DELIVERY_SUGGESTIONS && this != IMAGE_CLEANUP && this != ORDER_ALERTS
-                    && this != VARIANT_JOBS;
+                    && this != VARIANT_JOBS && this != CRITICAL_ALERTS;
         }
     }
 }

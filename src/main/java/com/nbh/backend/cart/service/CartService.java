@@ -47,6 +47,12 @@ import java.util.UUID;
 @Service
 public class CartService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CartService.class);
+
+    /** Optional so the unit tests can build this service by hand (then refusals are not written down). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.stock.service.StockShortfallService shortfalls;
+
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
     private final ProductVariantRepository variantRepository;
@@ -208,7 +214,7 @@ public class CartService {
                 });
         // The whole line, not just this click: with 3 in stock and 2 already in the basket,
         // adding 2 more used to pass because each add was compared to stock on its own.
-        checkCourtesyAvailability(variant, item.getQty().add(qty), item.getChoices());
+        checkCourtesyAvailability(variant, item.getQty().add(qty), item.getChoices(), sessionId);
         item.setQty(item.getQty().add(qty));
         applyPriceForQty(item);
         item.setProductNameSnapshot(variant.getProduct().getName());
@@ -230,7 +236,7 @@ public class CartService {
 
         requireSellable(item.getVariant());
         QuantityRules.requireSensible(item.getVariant().getProduct().getName(), item.getVariant(), qty);
-        checkCourtesyAvailability(item.getVariant(), qty, item.getChoices());
+        checkCourtesyAvailability(item.getVariant(), qty, item.getChoices(), sessionId);
         item.setQty(qty);
         // Repriced here rather than left to toDto's refresh: crossing a wholesale threshold is the
         // shopper's own doing, not a price that moved under them, so it must not come back flagged
@@ -349,7 +355,8 @@ public class CartService {
      */
     private static final BigDecimal LOW_STOCK_THRESHOLD = new BigDecimal("5");
 
-    private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty, Map<UUID, UUID> picks) {
+    private void checkCourtesyAvailability(ProductVariant variant, BigDecimal requestedQty, Map<UUID, UUID> picks,
+                                           String sessionId) {
         // A package holds no StockBalance of its own — what it can sell is however many whole packages its components
         // can still make up (with the shopper's picks, from the shelves of the colours and sizes they chose).
         // Checkout still reserves each component and is the final word.
@@ -366,6 +373,7 @@ public class CartService {
             return;
         }
         String name = variant.displayLabel();
+        recordShortfall(variant, name, requestedQty, available, sessionId);
         if (available.signum() <= 0) {
             throw new IllegalArgumentException(name + " is out of stock");
         }
@@ -374,6 +382,18 @@ public class CartService {
                     "Only " + available.stripTrailingZeros().toPlainString() + " of " + name + " left");
         }
         throw new IllegalArgumentException("That quantity of " + name + " isn't available right now");
+    }
+
+    /** Staff are told a shopper could not have it (owner, 2026-10-28); a failure to write it down never changes the answer. */
+    private void recordShortfall(ProductVariant variant, String name, BigDecimal asked, BigDecimal left, String sessionId) {
+        if (shortfalls == null) return;
+        try {
+            shortfalls.record(variant.getId(), name, asked, left,
+                    com.nbh.backend.stock.entity.StockShortfallEvent.Source.CART, sessionId,
+                    null, null, null);
+        } catch (RuntimeException e) {
+            log.warn("Could not record a stock shortfall for {}: {}", variant.getId(), e.getMessage());
+        }
     }
 
     /** The parts a shelf is counted against: for each product of the package, the variant that will be packed. */

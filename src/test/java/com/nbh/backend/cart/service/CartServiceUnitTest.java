@@ -195,6 +195,22 @@ class CartServiceUnitTest {
                 .thenReturn(java.util.Map.of(variant.getId(), new BigDecimal(wholePackages)));
     }
 
+    /** Owner, 2026-10-28: a shopper refused for stock is written down for staff, and the shopper is told the same as before. */
+    @Test
+    void aRefusalForStockIsWrittenDownForStaffWithoutChangingWhatTheShopperIsTold() {
+        var shortfalls = org.mockito.Mockito.mock(com.nbh.backend.stock.service.StockShortfallService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(cartService, "shortfalls", shortfalls);
+        variantIsAPackageMaking("0");
+        org.mockito.Mockito.doThrow(new RuntimeException("database down")).when(shortfalls)
+                .record(any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        assertThatThrownBy(() -> cartService.addItem(SESSION, variant.getId(), BigDecimal.ONE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Gel polish (Red) is out of stock");
+        verify(shortfalls).record(variant.getId(), "Gel polish (Red)", BigDecimal.ONE, BigDecimal.ZERO,
+                com.nbh.backend.stock.entity.StockShortfallEvent.Source.CART, SESSION, null, null, null);
+    }
+
     @Test
     void aPackageWhoseComponentsAreSoldOutCannotBeAddedToTheCart() {
         variantIsAPackageMaking("0");

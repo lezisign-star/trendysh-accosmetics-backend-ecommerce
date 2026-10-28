@@ -76,6 +76,12 @@ public class CheckoutService {
     /** Optional so the unit tests can build this service by hand (then every option is tracked). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.nbh.backend.stock.service.StockTrackingService stockTracking;
+    /** Optional for the same reason: a shopper refused for stock is written down for staff (V81). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.stock.service.StockShortfallService shortfalls;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.stock.service.StockAvailabilityService availability;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CheckoutService.class);
     private final OrderNoGenerator orderNoGenerator;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
@@ -323,6 +329,9 @@ public class CheckoutService {
                 // one of its package components — the customer never added that component SKU directly
                 // and shouldn't need to know it exists.
                 CartItem cartItem = target.cartItem();
+                if (!placement.byStaff()) {
+                    recordShortfall(cartItem, sessionId, request);
+                }
                 throw new InsufficientAvailabilityException(cartItem.getVariant().displayLabel()
                         + (placement.byStaff() ? " is not available in that quantity right now"
                                 : " just went out of stock — please update your cart"));
@@ -449,6 +458,25 @@ public class CheckoutService {
         if (request.fulfilmentType() == FulfilmentType.DELIVERY_COURIER
                 && (request.deliveryAddress() == null || request.deliveryAddress().isBlank())) {
             throw new IllegalArgumentException("Tell us where to deliver the order");
+        }
+    }
+
+    /**
+     * Tells staff a shopper could not order this line for stock (owner, 2026-10-28), with the details they typed so
+     * someone can call them. A failure to write it down never changes what the shopper is told.
+     */
+    private void recordShortfall(CartItem cartItem, String sessionId, CheckoutRequest request) {
+        if (shortfalls == null) return;
+        try {
+            var variant = cartItem.getVariant();
+            // A package has no shelf of its own (its parts do), so what is left of it is not one number: 0 is shown.
+            BigDecimal left = variant.isPackage() || availability == null
+                    ? BigDecimal.ZERO : availability.available(variant.getId());
+            shortfalls.record(variant.getId(), variant.displayLabel(), cartItem.getQty(), left,
+                    com.nbh.backend.stock.entity.StockShortfallEvent.Source.CHECKOUT, sessionId,
+                    request.customerName(), request.guestPhone(), request.guestEmail());
+        } catch (RuntimeException e) {
+            log.warn("Could not record a stock shortfall at checkout: {}", e.getMessage());
         }
     }
 

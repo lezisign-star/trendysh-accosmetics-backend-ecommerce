@@ -43,6 +43,9 @@ public interface PaymentClaimRepository extends JpaRepository<PaymentClaim, UUID
 
     long countByPaymentIdAndStatus(UUID paymentId, PaymentClaim.ClaimStatus status);
 
+    /** Claims in one state across all payments: the critical banner's "payment codes to check". */
+    long countByStatus(PaymentClaim.ClaimStatus status);
+
     long countByPaymentId(UUID paymentId);
 
     boolean existsByPaymentIdAndStatus(UUID paymentId, PaymentClaim.ClaimStatus status);
