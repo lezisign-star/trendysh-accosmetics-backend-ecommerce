@@ -1,5 +1,6 @@
 package com.nbh.backend.catalog.controller;
 
+import com.nbh.backend.catalog.service.NameTidyService;
 import com.nbh.backend.catalog.service.ProductCombineService;
 import com.nbh.backend.catalog.service.ProductCombineService.CombineDto;
 import com.nbh.backend.catalog.service.ProductCombineService.CombineRequest;
@@ -14,15 +15,24 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
-/** Combining products into one and splitting them back (owner, 2026-10-29); see {@link ProductCombineService}. */
+/** Combining products into one and splitting them back, and tidying names (owner, 2026-10-29); see {@link ProductCombineService}. */
 @RestController
 @RequestMapping("/api/v1/products")
 public class ProductCombineController {
 
     private final ProductCombineService combine;
+    private final NameTidyService names;
 
-    public ProductCombineController(ProductCombineService combine) {
+    public ProductCombineController(ProductCombineService combine, NameTidyService names) {
         this.combine = combine;
+        this.names = names;
+    }
+
+    /** "Tidy names" (owner, 2026-10-29): saves names with tidy capitals; only capitals may change. */
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PostMapping("/tidy-names")
+    public NameTidyService.Result tidyNames(@RequestBody NameTidyService.Request request) {
+        return names.tidy(request);
     }
 
     @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")

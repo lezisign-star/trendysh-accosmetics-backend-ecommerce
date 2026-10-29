@@ -329,9 +329,13 @@ public class CatalogService {
                 .collect(Collectors.toMap(ProductReviewRepository.RatingSummary::getProductId, r -> r));
     }
 
+    /**
+     * Units sold per variant since the shop opened ({@code popularSince}): the "N sold" a shopper sees (owner,
+     * 2026-10-29: only real orders since the opening, never the test orders before it).
+     */
     private Map<UUID, BigDecimal> soldSummariesByVariant(List<UUID> variantIds) {
         if (variantIds.isEmpty()) return Map.of();
-        return saleEventRepository.aggregateUnitsSoldByVariant(variantIds).stream()
+        return saleEventRepository.aggregateUnitsSoldByVariantSince(variantIds, popularSince).stream()
                 .collect(Collectors.toMap(ProductSaleEventRepository.VariantSoldSummary::getVariantId,
                         ProductSaleEventRepository.VariantSoldSummary::getTotalQty));
     }

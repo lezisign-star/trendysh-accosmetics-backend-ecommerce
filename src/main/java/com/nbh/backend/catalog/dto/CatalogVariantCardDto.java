@@ -88,7 +88,7 @@ public record CatalogVariantCardDto(
         String dealImageUrl,
         /**
          * Units sold in the last 30 days, counting nothing before the shop opened (owner, 2026-10-28: "Popular" shows only
-         * real sales, and test orders before the launch never count). {@code unitsSold} stays the all-time figure.
+         * real sales, and test orders before the launch never count). {@code unitsSold} counts every sale since the opening.
          */
         BigDecimal recentUnitsSold
 ) {
