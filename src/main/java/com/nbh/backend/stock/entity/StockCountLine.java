@@ -39,6 +39,10 @@ public class StockCountLine extends BaseEntity {
     @Column(length = 500)
     private String note;
 
+    /** The counter chose to leave it as it was (V85): not changed when the count is applied. */
+    @Column(nullable = false)
+    private boolean skipped = false;
+
     @Transient
     public boolean isCounted() {
         return countedQty != null;

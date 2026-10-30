@@ -65,7 +65,9 @@ public class StockCountDtos {
     public record StockCountDto(
             UUID id, String countNo, String status, boolean blind, String reason,
             UUID assignedToUserId, UUID createdByUserId, UUID appliedByUserId, Instant appliedAt,
-            String appliedDocumentNo, List<StockCountLineDto> lines
+            String appliedDocumentNo, List<StockCountLineDto> lines,
+            /** The category-by-category stock take it belongs to (V85); null for a count made on its own. */
+            UUID takeId
     ) {
         public static StockCountDto from(StockCount count, boolean revealSystemQty) {
             return from(count, revealSystemQty, Map.of());
@@ -79,7 +81,8 @@ public class StockCountDtos {
                     count.getAppliedDocument() != null ? count.getAppliedDocument().getDocumentNo() : null,
                     count.getLines().stream()
                             .map(l -> StockCountLineDto.from(l, revealSystemQty, images.get(l.getVariant().getId())))
-                            .toList());
+                            .toList(),
+                    count.getTakeId());
         }
     }
 }

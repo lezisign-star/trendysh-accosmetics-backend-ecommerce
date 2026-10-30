@@ -57,6 +57,17 @@ public class StockCount extends BaseEntity {
     @Column(nullable = false)
     private long version;
 
+    /** The stock take it is part of (V85), and the top-level category it counts; null for a count made on its own. */
+    @Column(name = "take_id")
+    private UUID takeId;
+
+    @Column(name = "category_id")
+    private UUID categoryId;
+
+    /** Who has counted in it, as names ("Mary, John"): a category can be counted by several people. */
+    @Column(name = "counted_by_names", length = 500)
+    private String countedByNames;
+
     @OneToMany(mappedBy = "stockCount", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<StockCountLine> lines = new ArrayList<>();
 }

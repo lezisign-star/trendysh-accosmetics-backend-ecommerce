@@ -171,6 +171,7 @@ public class StockCountService {
 
         QuantityRules.requireSensible(line.getVariant().getSku(), line.getVariant(), countedQty);
         line.setCountedQty(countedQty);
+        line.setSkipped(false);
         line.setNote(note);
         line.setCountedByUserId(staffUserId);
         line.setCountedAt(Instant.now(clock));
@@ -178,6 +179,46 @@ public class StockCountService {
             count.setStatus(StockCountStatus.IN_PROGRESS);
         }
         return countRepository.save(count);
+    }
+
+    /**
+     * "Skip" (V85): the counter looked and leaves this item as it was. It is not changed when the count is applied, but it
+     * is no longer "still to count".
+     */
+    @Transactional
+    public StockCount skip(UUID countId, UUID variantId, UUID staffUserId) {
+        StockCount count = get(countId);
+        assertMutable(count);
+        StockCountLine line = count.getLines().stream()
+                .filter(l -> l.getVariant().getId().equals(variantId))
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException(variantId + " isn't on this count"));
+        line.setCountedQty(null);
+        line.setSkipped(true);
+        line.setCountedByUserId(staffUserId);
+        line.setCountedAt(Instant.now(clock));
+        if (count.getStatus() == StockCountStatus.DRAFT) {
+            count.setStatus(StockCountStatus.IN_PROGRESS);
+        }
+        return countRepository.save(count);
+    }
+
+    /** Puts an option on a count that is still open (a product added while counting), counted already. */
+    @Transactional
+    public StockCount addLine(UUID countId, UUID variantId, BigDecimal countedQty, UUID staffUserId) {
+        StockCount count = get(countId);
+        assertMutable(count);
+        if (count.getLines().stream().noneMatch(l -> l.getVariant().getId().equals(variantId))) {
+            ProductVariant variant = variantRepository.findById(variantId)
+                    .orElseThrow(() -> new NotFoundException("No such option: " + variantId));
+            StockCountLine line = new StockCountLine();
+            line.setStockCount(count);
+            line.setVariant(variant);
+            line.setSystemQtyAtStart(currentOnHand(variantId));
+            count.getLines().add(line);
+            countRepository.save(count);
+        }
+        return recordCount(countId, variantId, countedQty, null, staffUserId);
     }
 
     @Transactional
