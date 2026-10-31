@@ -115,6 +115,13 @@ public class PromoBannerController {
         return banners.deletePicture(id, pictureId);
     }
 
+    @PreAuthorize("hasAuthority('PERM_PRODUCT_MANAGE')")
+    @PostMapping("/api/v1/admin/promo-banners/{id}/words/suggest")
+    public List<PromoBannerService.WordSuggestion> suggestWords(@PathVariable UUID id,
+                                                              @RequestBody(required = false) PromoBannerService.WordsRequest in) {
+        return banners.suggestWords(id, in);
+    }
+
     private static String name(StaffUser staff) {
         return staff == null ? null : staff.getFullName();
     }

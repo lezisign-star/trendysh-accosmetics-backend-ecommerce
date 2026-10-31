@@ -148,7 +148,7 @@ class PromoBannerIntegrationTest extends PhotoStudioTestContext {
         b = waitForPictures(id);
         assertThat(b.get("pictures")).hasSize(2);
         assertThat(b.get("pictures").get(0).get("status").asText()).isEqualTo("READY");
-        verify(gemini, times(2)).edit(any(), anyList(), contains("soft pink glam"), eq("16:9"));
+        verify(gemini, times(2)).edit(any(), anyList(), contains("soft pink glam"), eq("21:9"));
         String pictureId = b.get("pictures").get(0).get("id").asText();
         b = ok(post("/api/v1/admin/promo-banners/" + id + "/pictures/" + pictureId + "/choose"), null);
         assertThat(b.get("imageUrl").asText()).startsWith("https://res.cloudinary.com/demo/promo-hero-");

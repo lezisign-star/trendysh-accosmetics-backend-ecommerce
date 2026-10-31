@@ -54,7 +54,7 @@ public class PromoPictureMaker {
 
     /** What one picture is made from. */
     record Job(PromoBanner.Placement placement, List<String> photoUrls, List<String> productNames, String brief,
-               String theme, String bannerName) {}
+               String theme, String themeColor, int variant, String bannerName) {}
 
     @Async
     public void make(UUID pictureId) {
@@ -78,7 +78,8 @@ public class PromoPictureMaker {
         try {
             List<Image> refs = new ArrayList<>();
             for (String url : job.photoUrls()) refs.add(images.download(url));
-            String prompt = PromoBannerPrompts.picture(job.placement(), job.productNames(), job.brief(), job.theme());
+            String prompt = PromoBannerPrompts.picture(job.placement(), job.productNames(), job.brief(), job.theme(),
+                    job.themeColor(), job.variant());
             Image picture = images.edit(refs.get(0), refs.subList(1, refs.size()), prompt,
                     PromoBannerPrompts.aspectRatio(job.placement()));
             String url = cloudinary.upload(picture.bytes(), "promo-banners",
@@ -126,9 +127,16 @@ public class PromoPictureMaker {
                     """).setParameter("c", category).getResultList());
             if (url != null) urls.add(url);
         }
-        String theme = b.getOccasionId() == null ? null
-                : occasions.findById(b.getOccasionId()).map(Occasion::getName).orElse(null);
-        return new Job(b.getPlacement(), urls, names, p.getBrief(), theme, b.getName());
+        Occasion occasion = b.getOccasionId() == null ? null : occasions.findById(b.getOccasionId()).orElse(null);
+        String theme = occasion == null ? null : occasion.getName();
+        // the shop's own pink when no occasion lends a colour
+        String color = occasion == null ? "#C2185B" : occasion.getColors().split(",")[0].strip();
+        // this banner's how-many-th AI picture, so the pictures of one request each get a different look
+        int variant = (int) pictures.findByBannerIdOrderByCreatedAtDesc(b.getId()).stream()
+                .filter(x -> x.getSource() == PromoBannerPicture.Source.AI && x.getCreatedAt() != null
+                        && p.getCreatedAt() != null && x.getCreatedAt().isBefore(p.getCreatedAt()))
+                .count();
+        return new Job(b.getPlacement(), urls, names, p.getBrief(), theme, color, variant, b.getName());
     }
 
     private static String first(List<?> rows) {

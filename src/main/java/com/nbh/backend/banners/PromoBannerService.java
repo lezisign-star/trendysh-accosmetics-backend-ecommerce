@@ -40,6 +40,9 @@ public class PromoBannerService {
     private final PromoPictureMaker maker;
     private final CloudinaryUploader cloudinary;
     private final ImageCleanupConfig gemini;
+    /** Set by Spring; tests and hand-built instances may leave it out. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nbh.backend.imagecleanup.GeminiTextClient text;
     private final EntityManager em;
     private final TransactionTemplate tx;
     private final ApplicationEventPublisher events;
@@ -100,6 +103,11 @@ public class PromoBannerService {
 
     public record Upload(String imageUrl) {}
 
+    public record WordsRequest(String hint) {}
+
+    /** One set of words Gemini suggests; staff pick one and can still change it. */
+    public record WordSuggestion(String headline, String subline, String ctaLabel) {}
+
     // ---------------------------------------------------------------- staff: banners
 
     public List<AdminView> list() {
@@ -121,6 +129,8 @@ public class PromoBannerService {
             b.setName(name);
             b.setPlacement(placement);
             b.setCtaLabel(placement == PromoBanner.Placement.CIRCLE ? null : "Shop now");
+            // the pictures are bright pastel studio shots (PromoBannerPrompts): dark words read best on them
+            b.setTextTone("dark");
             b.setCreatedBy(staff);
             Instant now = clock.instant();
             b.setStartsAt(now);
@@ -364,6 +374,58 @@ public class PromoBannerService {
         p.setImageUrl(url);
         p.setNote(note);
         return pictures.save(p);
+    }
+
+    // ---------------------------------------------------------------- staff: words
+
+    /**
+     * Three sets of sales words for the banner as it is saved (owner, 2026-10-31), from its products, prices, offer and
+     * occasion; {@code hint} is staff's optional idea. Nothing is saved: staff pick one into the form.
+     */
+    public List<WordSuggestion> suggestWords(UUID id, WordsRequest in) {
+        if (text == null || !gemini.geminiConfigured()) {
+            throw new UnprocessableException("Gemini is not set up, so words can't be suggested.");
+        }
+        String prompt = tx.execute(s -> {
+            PromoBanner b = find(id);
+            List<ProductCard> cards = products(List.of(id)).getOrDefault(id, List.of());
+            List<String> lines = cards.stream().map(c -> c.name()
+                    + (c.price() == null ? "" : " — KSh " + c.price().setScale(0, RoundingMode.HALF_UP).toPlainString())
+                    + (c.dealPrice() == null ? "" : " (deal KSh " + c.dealPrice().setScale(0, RoundingMode.HALF_UP).toPlainString() + ")"))
+                    .toList();
+            String theme = b.getOccasionId() == null ? null
+                    : occasions.findById(b.getOccasionId()).map(Occasion::getName).orElse(null);
+            return PromoBannerPrompts.words(b.getPlacement(), lines, offer(b, cards), theme,
+                    in == null ? null : in.hint());
+        });
+        com.fasterxml.jackson.databind.JsonNode answer;
+        try {
+            answer = text.ask(null, prompt, PromoBannerPrompts.wordsSchema());
+        } catch (com.nbh.backend.imagecleanup.GeminiImageClient.GeminiException e) {
+            throw new UnprocessableException(e.isQuotaExceeded()
+                    ? "Gemini's limit for now is used up. Try again later." : e.getMessage());
+        }
+        List<WordSuggestion> out = new ArrayList<>();
+        for (com.fasterxml.jackson.databind.JsonNode s : answer.path("suggestions")) {
+            String headline = tidyWords(s.path("headline").asText(""), 80);
+            if (headline == null) continue;
+            out.add(new WordSuggestion(headline, tidyWords(s.path("subline").asText(""), 140),
+                    tidyWords(s.path("cta").asText(""), 30)));
+            if (out.size() == 3) break;
+        }
+        if (out.isEmpty()) throw new UnprocessableException("Gemini gave no usable words; try again.");
+        return out;
+    }
+
+    /** One line, no quotation marks, cut at a word to fit the field. */
+    static String tidyWords(String s, int max) {
+        if (s == null) return null;
+        String t = s.replaceAll("[\"“”]", "").replaceAll("\\s+", " ").strip();
+        if (t.length() > max) {
+            int cut = t.lastIndexOf(' ', max);
+            t = t.substring(0, cut > max / 2 ? cut : max).strip();
+        }
+        return t.isEmpty() ? null : t;
     }
 
     // ---------------------------------------------------------------- the shop
