@@ -183,6 +183,20 @@ public interface StockBalanceRepository extends JpaRepository<StockBalance, UUID
         java.math.BigDecimal getAvailable();
     }
 
+    /** SHOP on-hand and reserved per variant, batched — variants never received are absent. Backs the quick-edit table. */
+    @Query("""
+            SELECT b.variant.id AS variantId, b.onHandQty AS onHand, b.reservedQty AS reserved
+            FROM StockBalance b
+            WHERE b.account = com.nbh.backend.stock.entity.StockAccount.SHOP AND b.variant.id IN :variantIds
+            """)
+    List<VariantShelf> shelfForVariants(@Param("variantIds") java.util.Collection<UUID> variantIds);
+
+    interface VariantShelf {
+        UUID getVariantId();
+        java.math.BigDecimal getOnHand();
+        java.math.BigDecimal getReserved();
+    }
+
     /**
      * The admin analytics dashboard's "low stock" tile — same eligibility as
      * {@code browseInventory}'s filter, including the same Phase 1 fix (2026-09-27): starts

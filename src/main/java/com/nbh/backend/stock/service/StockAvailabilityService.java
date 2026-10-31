@@ -68,6 +68,29 @@ public class StockAvailabilityService {
         return result;
     }
 
+    /** What is on the shelf and how much of it is held for orders, for one variant. */
+    public record Shelf(BigDecimal onHand, BigDecimal reserved, boolean untracked) {}
+
+    /**
+     * On-hand and reserved per variant, batched, for the quick-edit table. A variant never received is on the shelf at
+     * zero; {@code untracked} is {@link StockTrackingService}'s "no number yet, and it may be sold without one".
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, Shelf> shelf(Collection<UUID> variantIds) {
+        Map<UUID, Shelf> result = new HashMap<>();
+        if (variantIds.isEmpty()) {
+            return result;
+        }
+        java.util.Set<UUID> untracked = tracking != null ? tracking.untracked(variantIds) : java.util.Set.of();
+        for (UUID id : variantIds) {
+            result.put(id, new Shelf(BigDecimal.ZERO, BigDecimal.ZERO, untracked.contains(id)));
+        }
+        for (StockBalanceRepository.VariantShelf s : balanceRepository.shelfForVariants(variantIds)) {
+            result.put(s.getVariantId(), new Shelf(s.getOnHand(), s.getReserved(), untracked.contains(s.getVariantId())));
+        }
+        return result;
+    }
+
     /** Optional so a test can build this service on its own (then nothing is untracked). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private StockTrackingService tracking;

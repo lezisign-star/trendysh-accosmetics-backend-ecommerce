@@ -202,4 +202,43 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
               AND p.optionsReviewedAt IS NULL
             """)
     List<ProductVariant> findForOptionsReview();
+
+    /**
+     * The quick-edit table (one row per option): every live option that is not a package, grouped by product (name,
+     * then the product's own option order). {@code q} matches the product name, the SKU or the option's name;
+     * {@code categoryId} matches a product filed in that category or one of its subcategories, or an option filed
+     * there on its own (V68). Both category tests are subqueries, not a path like {@code v.category.id}, which would
+     * inner-join and drop every option with no category of its own. Demo products only while demo data is switched
+     * on, as on the Stock levels list.
+     */
+    @Query(value = """
+            SELECT v FROM ProductVariant v JOIN FETCH v.product p
+            WHERE v.deleted = false AND v.isPackage = false AND p.deleted = false
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
+              AND (:q IS NULL
+                   OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+              AND (:categoryId IS NULL
+                   OR EXISTS (SELECT 1 FROM Product p2 JOIN p2.categories c LEFT JOIN c.parent pc
+                              WHERE p2.id = p.id AND (c.id = :categoryId OR pc.id = :categoryId))
+                   OR EXISTS (SELECT 1 FROM ProductVariant v2 JOIN v2.category vc LEFT JOIN vc.parent vcp
+                              WHERE v2.id = v.id AND (vc.id = :categoryId OR vcp.id = :categoryId)))
+            ORDER BY LOWER(p.name) ASC, p.id ASC, v.sortOrder ASC, v.sku ASC
+            """,
+            countQuery = """
+            SELECT COUNT(v) FROM ProductVariant v JOIN v.product p
+            WHERE v.deleted = false AND v.isPackage = false AND p.deleted = false
+              AND ((p.isMockData = true AND EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)) OR (p.isMockData = false AND NOT EXISTS (SELECT 1 FROM Product mp WHERE mp.isMockData = true AND mp.isPublished = true)))
+              AND (:q IS NULL
+                   OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+                   OR LOWER(v.variantName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+              AND (:categoryId IS NULL
+                   OR EXISTS (SELECT 1 FROM Product p2 JOIN p2.categories c LEFT JOIN c.parent pc
+                              WHERE p2.id = p.id AND (c.id = :categoryId OR pc.id = :categoryId))
+                   OR EXISTS (SELECT 1 FROM ProductVariant v2 JOIN v2.category vc LEFT JOIN vc.parent vcp
+                              WHERE v2.id = v.id AND (vc.id = :categoryId OR vcp.id = :categoryId)))
+            """)
+    Page<ProductVariant> findForQuickEdit(@Param("q") String q, @Param("categoryId") UUID categoryId, Pageable pageable);
 }
