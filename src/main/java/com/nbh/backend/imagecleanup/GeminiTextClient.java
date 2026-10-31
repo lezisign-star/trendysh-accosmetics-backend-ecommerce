@@ -38,7 +38,8 @@ public class GeminiTextClient {
         this.json = json;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5_000);
-        factory.setReadTimeout(60_000);
+        // A minute was too short: answers about a photo in a fixed shape timed out (2026-10-30). See thinkingLevel below.
+        factory.setReadTimeout(150_000);
         this.http = new RestTemplate(factory);
     }
 
@@ -77,12 +78,29 @@ public class GeminiTextClient {
             parts.add(Map.of("inlineData", Map.of("mimeType", photo.mimeType(),
                     "data", Base64.getEncoder().encodeToString(photo.bytes()))));
         }
-        Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of("parts", parts)),
-                "generationConfig", Map.of(
-                        "responseMimeType", "application/json",
-                        "responseSchema", schema,
-                        "temperature", 0.4));
+        String level = config.getDescriptionThinkingLevel();
+        if (level == null || level.isBlank()) return send(body(parts, schema, null));
+        try {
+            return send(body(parts, schema, level.strip()));
+        } catch (GeminiImageClient.GeminiException e) {
+            // A model that takes no thinking setting answers 400 naming it: ask again without one rather than fail.
+            String m = e.getMessage() == null ? "" : e.getMessage().toLowerCase(Locale.ROOT);
+            if (!m.contains("http 400") || !m.contains("thinking")) throw e;
+            log.warn("Gemini model {} refused thinkingLevel {}; asking without it", config.getDescriptionModel(), level);
+            return send(body(parts, schema, null));
+        }
+    }
+
+    private static Map<String, Object> body(List<Object> parts, Map<String, Object> schema, String thinkingLevel) {
+        Map<String, Object> generation = new java.util.LinkedHashMap<>();
+        generation.put("responseMimeType", "application/json");
+        generation.put("responseSchema", schema);
+        generation.put("temperature", 0.4);
+        if (thinkingLevel != null) generation.put("thinkingConfig", Map.of("thinkingLevel", thinkingLevel));
+        return Map.of("contents", List.of(Map.of("parts", parts)), "generationConfig", generation);
+    }
+
+    private JsonNode send(Map<String, Object> body) {
         try {
             return attempt(body);
         } catch (HttpServerErrorException | ResourceAccessException first) {
@@ -90,7 +108,7 @@ public class GeminiTextClient {
             try {
                 return attempt(body);
             } catch (HttpServerErrorException | ResourceAccessException e) {
-                throw new GeminiImageClient.GeminiException("Gemini couldn't be reached for the description: "
+                throw new GeminiImageClient.GeminiException("Gemini couldn't be reached for the text: "
                         + e.getMessage(), false);
             } catch (HttpClientErrorException e) {
                 throw rejected(e);

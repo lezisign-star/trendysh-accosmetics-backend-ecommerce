@@ -49,8 +49,16 @@ public class BannerService {
     /** How far ahead a scheduled sale is teased. */
     static final Duration TEASE_AHEAD = Duration.ofHours(72);
 
-    private static final List<Banner.Status> TAKEN =
-            List.of(Banner.Status.WAITING, Banner.Status.PICKED, Banner.Status.REJECTED, Banner.Status.FAILED);
+    /**
+     * After a failed attempt the job leaves a slot alone this long, then tries again. Failures used to count as made
+     * for good, so one Gemini timeout left a slot empty until the offers changed (2026-10-31).
+     */
+    static final Duration RETRY_AFTER = Duration.ofHours(1);
+    /** How long a failed version stays on the staff page, with its reason. */
+    static final Duration FAILED_SHOWN = Duration.ofDays(2);
+
+    private static final List<Banner.Status> TRIED = List.of(Banner.Status.WAITING, Banner.Status.PICKED,
+            Banner.Status.REJECTED, Banner.Status.FAILED);
     private static final List<Banner.Style> CARD_STYLES = List.of(Banner.Style.FAMILY, Banner.Style.CARTOON_JOKE,
             Banner.Style.PRODUCT_OFFER, Banner.Style.ANIMAL, Banner.Style.HAPPY_PEOPLE, Banner.Style.GREETING);
 
@@ -157,12 +165,14 @@ public class BannerService {
                 .findFirst().orElse(null));
         if (top == null) return;
         int made = 0;
+        Instant retryBefore = clock.instant().minus(RETRY_AFTER);
         for (Target t : tx.execute(s -> targets())) {
             if (made >= PER_RUN) break;
             boolean taken = Boolean.TRUE.equals(tx.execute(s -> banners
-                    .findByOccasionIdAndSlotAndStatusIn(top.getId(), t.slot(), TAKEN).stream()
+                    .findByOccasionIdAndSlotAndStatusIn(top.getId(), t.slot(), TRIED).stream()
                     .anyMatch(b -> Objects.equals(b.getCategoryId(), t.categoryId())
-                            && t.signature().equals(b.getOfferSignature()))));
+                            && t.signature().equals(b.getOfferSignature())
+                            && (b.getStatus() != Banner.Status.FAILED || b.getCreatedAt().isAfter(retryBefore)))));
             if (taken) continue;
             try {
                 makeSet(top, t);
@@ -274,17 +284,22 @@ public class BannerService {
         }
     }
 
-    /** Makes {@link #VERSIONS} versions for one slot and files them for staff. */
-    void makeSet(Occasion o, Target t) {
+    /** What one set came to: how many versions are waiting for staff, and the last reason one failed. */
+    record SetResult(int made, String problem) {}
+
+    /** Makes {@link #VERSIONS} versions for one slot and files them for staff, failures included with their reason. */
+    SetResult makeSet(Occasion o, Target t) {
         boolean circle = t.slot() == Banner.Slot.CIRCLE;
         Image reference;
         try {
             reference = images.download(t.photoUrl());
         } catch (RuntimeException e) {
-            record(o, t, Banner.Style.PRODUCT_OFFER, null, null, null, null, null, Banner.Status.FAILED,
-                    "The photo could not be fetched: " + e.getMessage());
-            return;
+            String problem = "The photo could not be fetched: " + e.getMessage();
+            failed(o, t, Banner.Style.PRODUCT_OFFER, null, null, problem);
+            return new SetResult(0, problem);
         }
+        int made = 0;
+        String problem = null;
         int seed = Math.abs(Objects.hash(o.getCode(), t.slot(), t.categoryId(), t.signature()));
         for (int v = 0; v < VERSIONS; v++) {
             Banner.Style style = circle ? Banner.Style.PRODUCT_OFFER : CARD_STYLES.get((seed + v) % CARD_STYLES.size());
@@ -299,8 +314,8 @@ public class BannerService {
                 String container = circle ? "circle" : BannerPrompts.container(fit.path("calmArea").asText("none"),
                         fit.path("busyness").asInt(10), fit.path("hasText").asBoolean(false));
                 if (container == null || (circle && fit.path("hasText").asBoolean(false))) {
-                    record(o, t, style, null, line, null, null, fit.toString(), Banner.Status.FAILED,
-                            "The picture had no calm place for the words, or had words in it, so it was dropped.");
+                    problem = "The picture had no calm place for the words, or had words in it, so it was dropped.";
+                    failed(o, t, style, line, fit.toString(), problem);
                     continue;
                 }
                 String tone = tone(picture, container);
@@ -308,11 +323,23 @@ public class BannerService {
                         "banner-" + o.getCode() + "-" + t.slot().name().toLowerCase(Locale.ROOT) + "-" + clock.millis())
                         .url();
                 record(o, t, style, container, line, url, tone, fit.toString(), Banner.Status.WAITING, null);
+                made++;
             } catch (GeminiException e) {
                 if (e.isQuotaExceeded()) throw new QuotaReached(e.getMessage());
-                record(o, t, style, null, null, null, null, null, Banner.Status.FAILED, e.getMessage());
+                problem = e.getMessage();
+                failed(o, t, style, null, null, problem);
+            } catch (RuntimeException e) {
+                // A failed upload or anything else unforeseen: file it with its reason rather than lose the set.
+                problem = "The banner could not be made: " + e.getMessage();
+                failed(o, t, style, null, null, problem);
             }
         }
+        return new SetResult(made, problem);
+    }
+
+    private void failed(Occasion o, Target t, Banner.Style style, String line, String fit, String problem) {
+        log.warn("Banner version for {} {} {} failed: {}", o.getCode(), t.slot(), t.categoryId(), problem);
+        record(o, t, style, null, line, null, null, fit, Banner.Status.FAILED, problem);
     }
 
     /** Light words on a dark word area, dark on a light one; over a darkened half they are always light. */
@@ -372,8 +399,16 @@ public class BannerService {
                     "SELECT CAST(id AS VARCHAR), name FROM category WHERE parent_id IS NULL").getResultList()) {
                 categoryNames.put(UUID.fromString((String) row[0]), (String) row[1]);
             }
-            return banners.findByStatusInOrderByCreatedAtDesc(List.of(Banner.Status.WAITING, Banner.Status.PICKED))
-                    .stream().map(b -> {
+            // Failed versions show too, with their reason: the newest per slot, while recent. Hidden, a slot whose
+            // every try failed looked like "nothing made yet" for good.
+            Instant failedSince = now.minus(FAILED_SHOWN);
+            Set<String> failedShown = new HashSet<>();
+            return banners.findByStatusInOrderByCreatedAtDesc(
+                            List.of(Banner.Status.WAITING, Banner.Status.PICKED, Banner.Status.FAILED))
+                    .stream()
+                    .filter(b -> b.getStatus() != Banner.Status.FAILED || (b.getCreatedAt().isAfter(failedSince)
+                            && failedShown.add(b.getOccasionId() + "|" + b.getSlot() + "|" + b.getCategoryId())))
+                    .map(b -> {
                         Occasion o = byId.get(b.getOccasionId());
                         return new AdminBanner(b.getId(), b.getOccasionId(), o == null ? "?" : o.getName(),
                                 b.getSlot().name(), b.getCategoryId(),
@@ -429,7 +464,10 @@ public class BannerService {
         changed();
     }
 
-    /** "Make more" for one slot, now (staff wait for it: about a minute). */
+    /**
+     * "Make more" for one slot, now (staff wait for it: a minute or two). Refuses with Gemini's reason when no version
+     * came out, instead of answering as if new ones were waiting.
+     */
     public void makeNow(MakeRequest in) {
         if (!gemini.geminiConfigured() || !cloudinary.configured()) {
             throw new UnprocessableException("Gemini or photo storage is not set up, so banners can't be made.");
@@ -445,10 +483,14 @@ public class BannerService {
         Target t = tx.execute(s -> targets()).stream()
                 .filter(x -> x.slot() == slot && Objects.equals(x.categoryId(), in.categoryId()))
                 .findFirst().orElseThrow(() -> new UnprocessableException("There is nothing to make this banner from."));
+        SetResult result;
         try {
-            makeSet(o, t);
+            result = makeSet(o, t);
         } catch (QuotaReached e) {
             throw new UnprocessableException("Gemini's limit for now is used up. Try again later.");
+        }
+        if (result.made() == 0) {
+            throw new UnprocessableException("No version came out this time: " + result.problem());
         }
     }
 
