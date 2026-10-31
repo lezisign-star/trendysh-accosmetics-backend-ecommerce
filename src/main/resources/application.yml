@@ -150,6 +150,7 @@ app:
     gemini-base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
     gemini-model: ${GEMINI_IMAGE_MODEL:gemini-2.5-flash-image}
     description-model: ${GEMINI_DESCRIPTION_MODEL:gemini-3.8-flash}
+    description-thinking-level: ${GEMINI_DESCRIPTION_THINKING:low}
     cloudinary-upload-base-url: ${CLOUDINARY_UPLOAD_BASE_URL:https://api.cloudinary.com}
     background-hex: ${IMAGE_CLEANUP_BACKGROUND:#F3EBDD}
   cloudinary:

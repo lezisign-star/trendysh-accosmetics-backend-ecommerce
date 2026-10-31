@@ -28,6 +28,12 @@ public class ImageCleanupConfig {
      * Overridable with GEMINI_DESCRIPTION_MODEL so the next retirement needs a setting, not a release.
      */
     private String descriptionModel = "gemini-3.8-flash";
+    /**
+     * How hard the text model thinks before answering (Gemini's thinkingLevel). Left to itself a 3.x flash model with
+     * a photo and a fixed answer shape often took over a minute and timed out (descriptions and banner briefs, both
+     * 2026-10-30); "low" keeps it to seconds. Blank sends no thinking setting, for a model that refuses one.
+     */
+    private String descriptionThinkingLevel = "low";
     private String cloudinaryUploadBaseUrl = "https://api.cloudinary.com";
     /** Cleaned shots' studio backdrop. */
     private String backgroundHex = "#F3EBDD";
