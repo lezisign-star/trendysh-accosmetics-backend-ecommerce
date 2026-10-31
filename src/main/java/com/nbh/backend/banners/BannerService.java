@@ -75,12 +75,18 @@ public class BannerService {
     private final ApplicationEventPublisher events;
     private final Clock clock;
     private final boolean enabled;
+    private final PromoBannerService promos;
 
+    /**
+     * {@code app.banners.enabled} is off by default since the banner builder (owner, 2026-10-31): the job made pictures
+     * nobody asked for, and each one costs. Staff make banners on purpose in the builder instead.
+     */
     public BannerService(OccasionRepository occasions, BannerRepository banners, PromoCampaignRepository campaigns,
                          GeminiImageClient images, GeminiTextClient text, CloudinaryUploader cloudinary,
                          ImageCleanupConfig gemini, EntityManager em, ObjectMapper json,
                          PlatformTransactionManager transactions, ApplicationEventPublisher events, Clock clock,
-                         @Value("${app.banners.enabled:true}") boolean enabled) {
+                         @Value("${app.banners.enabled:false}") boolean enabled, PromoBannerService promos) {
+        this.promos = promos;
         this.occasions = occasions;
         this.banners = banners;
         this.campaigns = campaigns;
@@ -139,14 +145,34 @@ public class BannerService {
                             && c.getStartsAt().isBefore(now.plus(TEASE_AHEAD)))
                     .min(Comparator.comparing(PromoCampaign::getStartsAt))
                     .map(c -> new Teaser(c.getName(), c.getStartsAt())).orElse(null);
-            if (on.isEmpty()) return new ShopView(null, List.of(), teaser);
-            Occasion top = on.get(0);
-            List<PublicBanner> picked = banners.findByOccasionIdAndStatus(top.getId(), Banner.Status.PICKED).stream()
-                    .map(b -> new PublicBanner(b.getId(), b.getSlot().name(), b.getCategoryId(), b.getContainer(),
-                            b.getImageUrl(), b.getLine(), b.getTextTone()))
-                    .toList();
-            return new ShopView(view(top, now), picked, teaser);
+            // Builder banners for these slots come first and replace an occasion banner picked for the same place.
+            List<PromoBannerService.PublicView> built = promos.liveSmallSlots();
+            List<PublicBanner> out = new ArrayList<>(built.stream().map(BannerService::fromBuilder).toList());
+            Set<String> taken = new HashSet<>();
+            built.forEach(b -> taken.add(b.placement() + "|" + b.categoryId()));
+            OccasionView occasion = on.isEmpty() ? null : view(on.get(0), now);
+            if (!on.isEmpty()) {
+                banners.findByOccasionIdAndStatus(on.get(0).getId(), Banner.Status.PICKED).stream()
+                        .filter(b -> !taken.contains(b.getSlot().name() + "|" + b.getCategoryId()))
+                        .map(b -> new PublicBanner(b.getId(), b.getSlot().name(), b.getCategoryId(), b.getContainer(),
+                                b.getImageUrl(), b.getLine(), b.getTextTone()))
+                        .forEach(out::add);
+            }
+            if (occasion == null && !built.isEmpty()) {
+                // The shop draws these slots in an occasion's frame; with none on, the first banner's theme is it.
+                PromoBannerService.Theme t = built.get(0).theme();
+                occasion = new OccasionView(t.occasionId(), "shop", t.name(), built.get(0).countdownEndsAt(),
+                        t.mainColor(), t.lightColor(), built.get(0).headline() == null ? t.name() : built.get(0).headline());
+            }
+            return new ShopView(occasion, out, teaser);
         });
+    }
+
+    private static PublicBanner fromBuilder(PromoBannerService.PublicView b) {
+        String container = "CIRCLE".equals(b.placement()) ? "circle"
+                : "dark".equals(b.textTone()) ? "card-words-bottom" : "card-words-over";
+        return new PublicBanner(b.id(), b.placement(), b.categoryId(), container, b.imageUrl(), b.headline(),
+                b.textTone());
     }
 
     private static OccasionView view(Occasion o, Instant now) {
