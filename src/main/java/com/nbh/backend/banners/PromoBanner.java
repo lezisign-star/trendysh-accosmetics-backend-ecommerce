@@ -95,6 +95,10 @@ public class PromoBanner extends BaseEntity {
     @Column(name = "focus_y", nullable = false)
     private short focusY = 50;
 
+    /** Staff's advanced look as JSON (V87), or null for the automatic one. See {@link PromoBannerService.Style}. */
+    @Column(columnDefinition = "TEXT")
+    private String style;
+
     @Column(name = "starts_at")
     private Instant startsAt;
 

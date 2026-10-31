@@ -24,6 +24,9 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # Only matters after docs/rollback/V76-down.sql: it takes V76..V85 out of the history but leaves V86 on recorded, so
+    # bringing the new code back has to apply those lower versions after higher ones (PackageRenameRollbackTest).
+    out-of-order: true
 
   task:
     scheduling:

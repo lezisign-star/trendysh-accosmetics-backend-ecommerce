@@ -84,20 +84,60 @@ public class PromoBannerService {
                             String imageUrl, int focusX, int focusY, Instant startsAt, Instant endsAt, int sortOrder,
                             String status, String state, List<ProductCard> products, List<PictureView> pictures,
                             List<String> missing, String createdBy, String approvedBy, Instant approvedAt,
-                            Instant updatedAt) {}
+                            Instant updatedAt, Style style) {}
 
     /** What the shop draws. */
     public record PublicView(UUID id, String placement, UUID categoryId, String categorySlug, Link link,
                              String headline, String subline, String ctaLabel, String offer, Instant countdownEndsAt,
                              Theme theme, String textTone, String imageUrl, int focusX, int focusY,
-                             List<ProductCard> products) {}
+                             List<ProductCard> products, Style style) {}
 
     public record NewBanner(String name, String placement) {}
 
+    /** {@code style}: the advanced look; null leaves it as it is, an empty one goes back to the automatic look. */
     public record Edit(String name, String placement, UUID categoryId, String linkType, UUID linkCategoryId,
                        UUID linkVariantId, String headline, String subline, String ctaLabel, String offerMode,
                        String offerText, Boolean showCountdown, UUID occasionId, String textTone, Integer focusX,
-                       Integer focusY, Instant startsAt, Instant endsAt, Integer sortOrder, List<UUID> productIds) {}
+                       Integer focusY, Instant startsAt, Instant endsAt, Integer sortOrder, List<UUID> productIds,
+                       Style style) {}
+
+    /**
+     * The advanced look (owner, 2026-10-31), every part optional (null = automatic): colours as "#rrggbb";
+     * {@code headlineSize} S, M or L; {@code align} left or center (hero and strip); {@code shade} none, light or strong
+     * (behind the words); {@code font} sans or display.
+     */
+    public record Style(String headlineColor, String textColor, String headlineSize, String align, String shade,
+                        String backgroundColor, String buttonColor, String buttonTextColor, String font) {
+
+        private static final java.util.regex.Pattern HEX = java.util.regex.Pattern.compile("^#[0-9a-fA-F]{6}$");
+
+        /** Only what the shop knows how to draw; null when nothing is left (the automatic look). */
+        static Style clean(Style in) {
+            if (in == null) return null;
+            Style s = new Style(color(in.headlineColor), color(in.textColor),
+                    oneOf(in.headlineSize, "S", "M", "L"), oneOf(in.align, "left", "center"),
+                    oneOf(in.shade, "none", "light", "strong"), color(in.backgroundColor), color(in.buttonColor),
+                    color(in.buttonTextColor), oneOf(in.font, "sans", "display"));
+            boolean empty = s.headlineColor == null && s.textColor == null && s.headlineSize == null
+                    && s.align == null && s.shade == null && s.backgroundColor == null && s.buttonColor == null
+                    && s.buttonTextColor == null && s.font == null;
+            return empty ? null : s;
+        }
+
+        private static String color(String v) {
+            if (v == null || v.isBlank()) return null;
+            if (!HEX.matcher(v.strip()).matches()) {
+                throw new UnprocessableException("Colours are written like #C2185B: \"" + v + "\" isn't one.");
+            }
+            return v.strip().toUpperCase(Locale.ROOT);
+        }
+
+        private static String oneOf(String v, String... allowed) {
+            if (v == null || v.isBlank()) return null;
+            for (String a : allowed) if (a.equalsIgnoreCase(v.strip())) return a;
+            throw new UnprocessableException("\"" + v + "\" isn't one of " + String.join(", ", allowed) + ".");
+        }
+    }
 
     public record Generate(String brief, Integer count) {}
 
@@ -165,6 +205,7 @@ public class PromoBannerService {
             b.setEndsAt(in.endsAt());
             if (in.sortOrder() != null) b.setSortOrder(Math.max(0, in.sortOrder()));
             if (in.productIds() != null) setProducts(b.getId(), in.productIds());
+            if (in.style() != null) b.setStyle(writeStyle(Style.clean(in.style())));
             backToDraft(b);
         });
         changed();
@@ -240,6 +281,7 @@ public class PromoBannerService {
             b.setFocusX(from.getFocusX());
             b.setFocusY(from.getFocusY());
             b.setSortOrder(from.getSortOrder());
+            b.setStyle(from.getStyle());
             b.setCreatedBy(staff);
             UUID newId = banners.save(b).getId();
             setProducts(newId, products(List.of(id)).getOrDefault(id, List.of()).stream().map(ProductCard::variantId).toList());
@@ -455,7 +497,7 @@ public class PromoBannerService {
             return new PublicView(b.getId(), b.getPlacement().name(), b.getCategoryId(),
                     c.slugs().get(b.getCategoryId()), link(b, c), b.getHeadline(), b.getSubline(), b.getCtaLabel(),
                     offer(b, cards), countdown(b, cards), theme(b, c), b.getTextTone(), b.getImageUrl(), b.getFocusX(),
-                    b.getFocusY(), cards);
+                    b.getFocusY(), cards, readStyle(b.getStyle()));
         }).toList();
     }
 
@@ -491,7 +533,7 @@ public class PromoBannerService {
                 b.getOfferMode().name(), b.getOfferText(), offer(b, cards), b.isShowCountdown(), countdown(b, cards),
                 theme(b, c), b.getTextTone(), b.getImageUrl(), b.getFocusX(), b.getFocusY(), b.getStartsAt(),
                 b.getEndsAt(), b.getSortOrder(), b.getStatus().name(), state(b, c.now()), cards, pics, missing(b, cards),
-                b.getCreatedBy(), b.getApprovedBy(), b.getApprovedAt(), b.getUpdatedAt());
+                b.getCreatedBy(), b.getApprovedBy(), b.getApprovedAt(), b.getUpdatedAt(), readStyle(b.getStyle()));
     }
 
     static String state(PromoBanner b, Instant now) {
@@ -670,6 +712,30 @@ public class PromoBannerService {
         String t = optional(s, max);
         if (t == null) throw new UnprocessableException(message);
         return t;
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper STYLE_JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                    .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                    .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+    static String writeStyle(Style style) {
+        if (style == null) return null;
+        try {
+            return STYLE_JSON.writeValueAsString(style);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** A saved look the shop can't read (hand-edited, say) falls back to the automatic one rather than failing. */
+    static Style readStyle(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return STYLE_JSON.readValue(json, Style.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return null;
+        }
     }
 
     private void changed() {

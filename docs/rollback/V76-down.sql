@@ -7,8 +7,10 @@
 --  3. Deploy the old code.
 --
 -- What it does not do: it leaves the index and constraint names as V76 renamed them (Hibernate does not look at those names,
--- and V76 skips a rename whose target name is already taken, so applying V76 again afterwards works). It removes V76 and every later
--- migration from Flyway's history, so the next deploy of the new code applies them again.
+-- and V76 skips a rename whose target name is already taken, so applying V76 again afterwards works). It removes V76 to V85
+-- from Flyway's history, so the next deploy of the new code applies them again (out of order, which application.yml allows).
+-- V86 and later stay recorded and in place: they add things of their own (the banner builder's tables) that the old code
+-- never reads and that must keep their data, and they were not written to be applied twice.
 -- A package made after V76 gets the kit SKU prefix back too (KIT-n); orders keep the SKU they were placed with either way.
 -- Proven by PackageRenameRollbackTest: V76, this file, the old table and column names answering queries, then V76 again.
 BEGIN;
@@ -27,6 +29,7 @@ ALTER TABLE product_package RENAME TO kit;
 
 -- every migration from V76 on: later ones (V77: customers can always choose a package product's option; V78: stock basis and
 -- selling without a number, columns the old code never reads and V78 adds again only if missing) are left in place, and
--- they all apply again, in order, when the new code comes back
-DELETE FROM flyway_schema_history WHERE version ~ '^[0-9]+$' AND version::int >= 76;
+-- they all apply again, in order, when the new code comes back. Only up to V85: V86 (2026-10-31) created its tables without
+-- IF NOT EXISTS and is already applied in production, so it cannot be made re-runnable; its row and later ones stay.
+DELETE FROM flyway_schema_history WHERE version ~ '^[0-9]+$' AND version::int BETWEEN 76 AND 85;
 COMMIT;

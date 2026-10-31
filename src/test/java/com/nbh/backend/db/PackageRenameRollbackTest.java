@@ -45,7 +45,9 @@ class PackageRenameRollbackTest {
 
     private Flyway flyway(String target) {
         return Flyway.configure().dataSource(URL, USER, PASSWORD).schemas(SCHEMA).defaultSchema(SCHEMA).createSchemas(true)
-                .locations("classpath:db/migration").target(target).load();
+                .locations("classpath:db/migration").target(target)
+                // as application.yml: coming back after the down script applies V76..V85 after V86 and later
+                .outOfOrder(true).load();
     }
 
     private static void dropSchema() throws SQLException {
@@ -102,6 +104,12 @@ class PackageRenameRollbackTest {
                     + UUID.randomUUID() + "', '" + newPackage + "', 1, '" + componentVariant + "', 1)");
         }
 
+        // a banner made with the builder (V86, 2026-10-31): it must come through the way back and the return untouched
+        UUID banner = UUID.randomUUID();
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            s.execute("INSERT INTO promo_banner (id, name, placement) VALUES ('" + banner + "', 'Black November hero', 'HERO')");
+        }
+
         // the way back
         String down = Files.readString(Path.of("docs", "rollback", "V76-down.sql"));
         try (Connection c = connect(); Statement s = c.createStatement()) {
@@ -130,6 +138,9 @@ class PackageRenameRollbackTest {
         assertThat(one("SELECT sku FROM product_variant WHERE id = '" + newPackageVariant + "'")).isEqualTo("PKG-000200");
         assertThat(one("SELECT to_regclass('" + SCHEMA + ".kit') IS NULL")).isEqualTo("t");
         assertThat(one("SELECT count(*) FROM flyway_schema_history WHERE version = '76' AND success")).isEqualTo("1");
+        // V86 was never taken out of the history, so it was not run a second time, and its banner is still there
+        assertThat(one("SELECT count(*) FROM flyway_schema_history WHERE version = '86'")).isEqualTo("1");
+        assertThat(one("SELECT name FROM promo_banner WHERE id = '" + banner + "'")).isEqualTo("Black November hero");
     }
 
     private void seedProduct(Statement s, String slug, String name, UUID variantId, String sku, String flagColumn, boolean flag)
